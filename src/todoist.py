@@ -2,8 +2,8 @@ from todoist_api_python.api import TodoistAPI
 
 
 class Todoist:
-    def __init__(self):
-        self._api = TodoistAPI("e0d98fafff6c08d1744bb1b1be926f5adac1db16")
+    def __init__(self, api_token):
+        self._api = TodoistAPI(api_token)
 
     def _get_inbox_project(self):
         projects = self._api.get_projects()

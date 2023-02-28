@@ -1,11 +1,12 @@
 from todoist import Todoist
 from rpi import RPi
 import time
+import os
 
 
 class TodoistIndicator:
-    def __init__(self, rpi):
-        self._todoist = Todoist()
+    def __init__(self, rpi, todoist):
+        self._todoist = todoist
         self._red = rpi.get_led(4)
         self._yellow = rpi.get_led(17)
         self._green = rpi.get_led(18)
@@ -28,5 +29,5 @@ class TodoistIndicator:
 
 
 if __name__ == '__main__':
-    ind = TodoistIndicator(RPi())
+    ind = TodoistIndicator(RPi(), Todoist(os.environ['TODOIST_API_TOKEN'])
     ind.run()
