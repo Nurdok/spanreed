@@ -1,3 +1,4 @@
+import logging
 from todoist_api_python.api import TodoistAPI
 
 
@@ -20,3 +21,11 @@ class Todoist:
         # due time-of-day usually indicates _start_ time, not due time.
         query = "overdue | (today & no time) | due before:+0 hours"
         return self._api.get_tasks(filter=query)
+
+    def get_tasks_with_tag(self, tag):
+        query = f'@{tag}'
+        return self._api.get_tasks(filter=query)
+
+    def set_due_date_to_today(self, task):
+        logging.info(f'Updating task (ID={repr(task.id)}, content={repr(task.content)}) due date to today')
+        self._api.update_task(task.id, due_string="today")
