@@ -2,9 +2,14 @@ import logging
 from todoist_api_python.api import TodoistAPI
 
 
+def format_task(task):
+    return f'Task(id={repr(task.id)}, content={repr(task.content)})'
+
+
 class Todoist:
     def __init__(self, api_token):
         self._api = TodoistAPI(api_token)
+        self._logger = logging.getLogger(__name__)
 
     def _get_inbox_project(self):
         projects = self._api.get_projects()
@@ -23,9 +28,10 @@ class Todoist:
         return self._api.get_tasks(filter=query)
 
     def get_tasks_with_tag(self, tag):
+        # By default, only non-completed tasks are returned.
         query = f'@{tag}'
         return self._api.get_tasks(filter=query)
 
     def set_due_date_to_today(self, task):
-        logging.info(f'Updating task (ID={repr(task.id)}, content={repr(task.content)}) due date to today')
+        self._logger.info(f'Updating {format_task(task)} due date to today')
         self._api.update_task(task.id, due_string="today")
