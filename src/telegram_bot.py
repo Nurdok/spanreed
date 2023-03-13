@@ -1,70 +1,65 @@
-import logging
 import textwrap
-
-from telegram import Update, ForceReply, InlineKeyboardMarkup, InlineKeyboardButton, ParseMode
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
 import os
+import logging
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
 
-BUTTON = "Click me!"
+async def ask_journal(context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [
+            InlineKeyboardButton("Yes", callback_data="1"),
+            InlineKeyboardButton("Not yet", callback_data="2"),
+            InlineKeyboardButton("Not happening", callback_data="3"),
+        ],
+    ]
 
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-def menu(update: Update, context: CallbackContext) -> None:
-    preamble = textwrap.dedent("""\
-        <b>Spanreed</b>
-        What would you like to do?
-    """)
-
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(BUTTON, callback_data=BUTTON)
-    ]])
-
-    context.bot.send_message(
-        update.message.from_user.id,
-        menu,
-        parse_mode=ParseMode.HTML,
-        reply_markup=keyboard,
+    await context.bot.send_message(
+        context.job.chat_id,
+        text="Did you journal today?",
+        reply_markup=reply_markup
     )
 
 
-def button_tap(update: Update, context: CallbackContext) -> None:
-    data = update.callback_query.data
-    text = ''
-    markup = None
+def remove_job_if_exists(name: str,
+                         context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Remove job with given name. Returns whether job was removed."""
+    current_jobs = context.job_queue.get_jobs_by_name(name)
+    if not current_jobs:
+        return False
+    for job in current_jobs:
+        job.schedule_removal()
+    return True
 
-    if data != BUTTON:
-        raise RuntimeError("unexpected callback!")
 
-    # Close the query to end the client-side loading animation
-    update.callback_query.answer()
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_message.chat_id
 
-    # Update message content with corresponding menu section
-    update.callback_query.message.edit_text(
-        "Cool cool cool",
-        ParseMode.HTML,
-        reply_markup="",
-    )
+    remove_job_if_exists(str(chat_id), context)
+    context.job_queue.run_once(ask_journal, 10, chat_id=chat_id,
+                               name=str(chat_id))
+
+    text = "Subscribed to journaling questions!"
+    await update.effective_message.reply_text(text)
+
 
 def main():
-    updater = Updater(os.environ('TELEGRAM_API_TOKEN'))
+    application = ApplicationBuilder().token(
+        os.environ['TELEGRAM_API_TOKEN']).build()
 
-    # Get the dispatcher to register handlers
-    # Then, we register each handler and the conditions the update must meet to trigger it
-    dispatcher = updater.dispatcher
+    start_handler = CommandHandler('s', subscribe)
+    application.add_handler(start_handler)
 
-    # Register commands
-    dispatcher.add_handler(CommandHandler("menu", menu))
-
-    # Register handler for inline buttons
-    dispatcher.add_handler(CallbackQueryHandler(button_tap))
-
-    # Start the Bot
-    updater.start_polling()
-
-    # Run the bot until you press Ctrl-C
-    updater.idle()
+    application.run_polling()
 
 
 if __name__ == '__main__':
     main()
-
