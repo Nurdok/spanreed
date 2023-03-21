@@ -7,6 +7,7 @@ import csv
 import logging
 from enum import Enum
 from typing import List, NamedTuple, Optional
+from dataclasses import dataclass
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, \
@@ -17,6 +18,13 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+
+class UserData:
+    def __init__(self, user_id: int, chat_id: int):
+        self.user_id = user_id
+        self.chat_id = chat_id
+        self.event_storage = EventCsvStorage(user_id=self.user_id)
 
 
 class ActivityType(Enum):
@@ -37,8 +45,8 @@ class Event(NamedTuple):
 
 
 class EventCsvStorage:
-    def __init__(self, filepath=pathlib.Path('storage.csv')):
-        self._filepath = filepath
+    def __init__(self, *, base_path=pathlib.Path(''), user_id):
+        self._filepath = base_path / f'event_storage.user_id-{user_id}.csv'
         self._events: List[Event] = self._load_from_storage()
 
     def _load_from_storage(self) -> List[Event]:
@@ -55,7 +63,7 @@ class EventCsvStorage:
                                         EventType[row[2]]))
         return events
 
-    def add(self, event: Event):
+    def add(self, event: Event) -> None:
         self._events.append(event)
         self._write_to_storage()
 
@@ -65,7 +73,7 @@ class EventCsvStorage:
             if event.activity_type == activity_type and event.date == date:
                 return event.event_type
 
-    def _write_to_storage(self):
+    def _write_to_storage(self) -> None:
         with open(self._filepath, 'w') as f:
             writer = csv.writer(f)
             writer.writerows(
@@ -74,12 +82,12 @@ class EventCsvStorage:
 
 
 async def ask_journal(context: ContextTypes.DEFAULT_TYPE):
-    event_storage: EventCsvStorage = \
+    user_data: UserData = \
     context.application.user_data[context.job.chat_id][
-        EventCsvStorage.__name__]
+        UserData.__name__]
     activity_type: ActivityType = ActivityType.JOURNAL
 
-    if (event_type := event_storage.find_event(ActivityType.JOURNAL,
+    if (event_type := user_data.event_storage.find_event(ActivityType.JOURNAL,
                                                datetime.date.today())) is not None:
         logger.info(f'Skipping asking for {activity_type} because its '
                     f'status is {event_type}')
@@ -113,12 +121,12 @@ async def button(update: Update,
 
     if query.data == "1":
         text = "Awesome!"
-        context.user_data[EventCsvStorage.__name__].add(
+        context.user_data[UserData.__name__].event_storage.add(
             Event(datetime.date.today(), ActivityType.JOURNAL, EventType.DONE))
     elif query.data == "2":
         text = "Sure, I'll ask again later."
     elif query.data == "3":
-        context.user_data[EventCsvStorage.__name__].add(
+        context.user_data[UserData.__name__].event_storage.add(
             Event(datetime.date.today(), ActivityType.JOURNAL,
                   EventType.SKIPPED))
         text = "A'ight, I won't bother you again today."
@@ -139,6 +147,7 @@ def remove_job_if_exists(name: str,
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_message.chat_id
+    user_id = update.effective_message.from_user.id
 
     remove_job_if_exists(str(chat_id), context)
     context.job_queue.run_repeating(ask_journal,
@@ -146,7 +155,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     chat_id=chat_id,
                                     name=str(chat_id))
 
-    context.user_data.setdefault(EventCsvStorage.__name__, EventCsvStorage())
+    context.user_data.setdefault(UserData.__name__, UserData(user_id=user_id, chat_id=chat_id))
     text = "Subscribed to journaling questions!"
     await update.effective_message.reply_text(text)
 
