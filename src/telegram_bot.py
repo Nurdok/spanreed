@@ -10,6 +10,7 @@ from typing import List, NamedTuple, Optional
 import redis
 import json
 
+import telegram.ext
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, \
     CallbackQueryHandler
@@ -22,9 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class UserData:
-    def __init__(self, user_id: int, chat_id: int, redis_api: redis.Redis):
+    def __init__(self, user_id: int, redis_api: redis.Redis):
         self.user_id = user_id
-        self.chat_id = chat_id
         self.event_storage = EventStorageRedis(user_id=self.user_id,
                                                redis_api=redis_api)
 
@@ -61,15 +61,18 @@ class EventStorageRedis:
         except json.JSONDecodeError:
             return []
         for event_json in events_json:
-            events.append(Event(datetime.date.fromisoformat(event_json['date']),
-                                ActivityType[event_json['activity_type']],
-                                EventType[event_json['event_type']]))
+            events.append(
+                Event(datetime.date.fromisoformat(event_json['date']),
+                      ActivityType[event_json['activity_type']],
+                      EventType[event_json['event_type']]))
         return events
 
     def _write_to_storage(self) -> None:
         events_json = []
         for event in self._events:
-            events_json.append({'date': event.date.isoformat(), 'activity_type': event.activity_type.name, 'event_type': event.event_type.name})
+            events_json.append({'date': event.date.isoformat(),
+                                'activity_type': event.activity_type.name,
+                                'event_type': event.event_type.name})
         self._redis.set(self._redis_key, json.dumps(events_json))
 
     def add(self, event: Event):
@@ -85,7 +88,7 @@ class EventStorageRedis:
 
 async def ask_journal(context: ContextTypes.DEFAULT_TYPE):
     user_data: UserData = \
-        context.application.user_data[context.job.chat_id][
+        context.application.user_data[context.job.user_id][
             UserData.__name__]
     activity_type: ActivityType = ActivityType.JOURNAL
 
@@ -137,9 +140,9 @@ async def button(update: Update,
 
 
 def remove_job_if_exists(name: str,
-                         context: ContextTypes.DEFAULT_TYPE) -> bool:
+                         job_queue: telegram.ext.JobQueue):
     """Remove job with given name. Returns whether job was removed."""
-    current_jobs = context.job_queue.get_jobs_by_name(name)
+    current_jobs = job_queue.get_jobs_by_name(name)
     if not current_jobs:
         return False
     for job in current_jobs:
@@ -148,21 +151,40 @@ def remove_job_if_exists(name: str,
 
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_message.chat_id
     user_id = update.effective_message.from_user.id
 
     context.user_data.setdefault(UserData.__name__,
-                                 UserData(user_id=user_id, chat_id=chat_id,
+                                 UserData(user_id=user_id,
                                           redis_api=context.bot_data['redis']))
+    context.bot_data['redis'].lpush('user_ids', user_id)
 
-    remove_job_if_exists(str(chat_id), context)
+    remove_job_if_exists(str(user_id), context.job_queue)
     context.job_queue.run_repeating(ask_journal,
                                     datetime.timedelta(seconds=10),
-                                    chat_id=chat_id,
-                                    name=str(chat_id))
+                                    user_id=user_id,
+                                    name=str(user_id))
 
     text = "Subscribed to journaling questions!"
     await update.effective_message.reply_text(text)
+
+
+def subscribe_existing_users_on_startup(
+        application: telegram.ext.Application) -> None:
+    logger.info("Subscribing existing users on startup")
+    redis_api = application.bot_data['redis']
+    user_ids = [int(uid) for uid in redis_api.lrange('user_ids', 0, -1)]
+
+    for user_id in user_ids:
+        logger.info(f"Subscribing user_id={user_id}")
+        application.user_data[user_id].setdefault(UserData.__name__,
+                                                  UserData(user_id=user_id,
+                                                           redis_api=redis_api))
+
+        remove_job_if_exists(str(user_id), application.job_queue)
+        application.job_queue.run_repeating(ask_journal,
+                                            datetime.timedelta(seconds=10),
+                                            user_id=user_id,
+                                            name=str(user_id))
 
 
 def main():
@@ -182,6 +204,7 @@ def main():
     application.add_handler(start_handler)
     application.add_handler(CallbackQueryHandler(button))
 
+    subscribe_existing_users_on_startup(application)
     application.run_polling()
 
 
