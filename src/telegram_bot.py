@@ -7,7 +7,8 @@ import csv
 import logging
 from enum import Enum
 from typing import List, NamedTuple, Optional
-from dataclasses import dataclass
+import redis
+import json
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, \
@@ -21,10 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 class UserData:
-    def __init__(self, user_id: int, chat_id: int):
+    def __init__(self, user_id: int, chat_id: int, redis_api: redis.Redis):
         self.user_id = user_id
         self.chat_id = chat_id
-        self.event_storage = EventCsvStorage(user_id=self.user_id)
+        self.event_storage = EventStorageRedis(user_id=self.user_id,
+                                               redis_api=redis_api)
 
 
 class ActivityType(Enum):
@@ -44,51 +46,51 @@ class Event(NamedTuple):
     event_type: EventType
 
 
-class EventCsvStorage:
-    def __init__(self, *, base_path=pathlib.Path(''), user_id):
-        self._filepath = base_path / f'event_storage.user_id-{user_id}.csv'
+class EventStorageRedis:
+    def __init__(self, *, user_id, redis_api: redis.Redis):
+        self._redis: redis.Redis = redis_api
+        self._redis_key = f'events:user_id={user_id}'
         self._events: List[Event] = self._load_from_storage()
 
     def _load_from_storage(self) -> List[Event]:
-        if not self._filepath.exists():
+        events: List[Event] = []
+        redis_response = self._redis.get(self._redis_key)
+        logger.info(f"key={self._redis_key},value={redis_response}")
+        try:
+            events_json = json.loads(redis_response)
+        except json.JSONDecodeError:
             return []
-
-        events = []
-        with open(self._filepath, 'r') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                if row:
-                    events.append(Event(datetime.date.fromisoformat(row[0]),
-                                        ActivityType[row[1]],
-                                        EventType[row[2]]))
+        for event_json in events_json:
+            events.append(Event(datetime.date.fromisoformat(event_json['date']),
+                                ActivityType[event_json['activity_type']],
+                                EventType[event_json['event_type']]))
         return events
 
-    def add(self, event: Event) -> None:
+    def _write_to_storage(self) -> None:
+        events_json = []
+        for event in self._events:
+            events_json.append({'date': event.date.isoformat(), 'activity_type': event.activity_type.name, 'event_type': event.event_type.name})
+        self._redis.set(self._redis_key, json.dumps(events_json))
+
+    def add(self, event: Event):
         self._events.append(event)
         self._write_to_storage()
 
     def find_event(self, activity_type: ActivityType, date: datetime.date) -> \
-    Optional[EventType]:
+            Optional[EventType]:
         for event in self._events:
             if event.activity_type == activity_type and event.date == date:
                 return event.event_type
 
-    def _write_to_storage(self) -> None:
-        with open(self._filepath, 'w') as f:
-            writer = csv.writer(f)
-            writer.writerows(
-                (event.date, event.activity_type.name, event.event_type.name)
-                for event in self._events)
-
 
 async def ask_journal(context: ContextTypes.DEFAULT_TYPE):
     user_data: UserData = \
-    context.application.user_data[context.job.chat_id][
-        UserData.__name__]
+        context.application.user_data[context.job.chat_id][
+            UserData.__name__]
     activity_type: ActivityType = ActivityType.JOURNAL
 
     if (event_type := user_data.event_storage.find_event(ActivityType.JOURNAL,
-                                               datetime.date.today())) is not None:
+                                                         datetime.date.today())) is not None:
         logger.info(f'Skipping asking for {activity_type} because its '
                     f'status is {event_type}')
         return
@@ -149,20 +151,32 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_message.chat_id
     user_id = update.effective_message.from_user.id
 
+    context.user_data.setdefault(UserData.__name__,
+                                 UserData(user_id=user_id, chat_id=chat_id,
+                                          redis_api=context.bot_data['redis']))
+
     remove_job_if_exists(str(chat_id), context)
     context.job_queue.run_repeating(ask_journal,
                                     datetime.timedelta(seconds=10),
                                     chat_id=chat_id,
                                     name=str(chat_id))
 
-    context.user_data.setdefault(UserData.__name__, UserData(user_id=user_id, chat_id=chat_id))
     text = "Subscribed to journaling questions!"
     await update.effective_message.reply_text(text)
 
 
 def main():
+    redis_api = redis.Redis(host=os.environ["REDIS_HOST"],
+                            port=os.environ["REDIS_PORT"],
+                            db=os.environ["REDIS_DB_ID"],
+                            username=os.environ["REDIS_USERNAME"],
+                            password=os.environ["REDIS_PASSWORD"],
+                            ssl=True,
+                            ssl_cert_reqs="none",
+                            )
     application = ApplicationBuilder().token(
         os.environ['TELEGRAM_API_TOKEN']).build()
+    application.bot_data['redis'] = redis_api
 
     start_handler = CommandHandler('s', subscribe)
     application.add_handler(start_handler)
