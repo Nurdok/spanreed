@@ -13,7 +13,7 @@ import json
 import telegram.ext
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, \
-    CallbackQueryHandler
+    CallbackQueryHandler, Application
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -152,6 +152,7 @@ def remove_job_if_exists(name: str,
 
 async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_message.from_user.id
+    chat_id = update.effective_message.chat_id
 
     context.user_data.setdefault(UserData.__name__,
                                  UserData(user_id=user_id,
@@ -162,6 +163,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.job_queue.run_repeating(ask_journal,
                                     datetime.timedelta(seconds=10),
                                     user_id=user_id,
+                                    chat_id=chat_id,
                                     name=str(user_id))
 
     text = "Subscribed to journaling questions!"
@@ -169,35 +171,46 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def subscribe_existing_users_on_startup(
-        application: telegram.ext.Application) -> None:
+        application: Application) -> None:
     logger.info("Subscribing existing users on startup")
     redis_api = application.bot_data['redis']
     user_ids = [int(uid) for uid in redis_api.lrange('user_ids', 0, -1)]
 
+
     for user_id in user_ids:
         logger.info(f"Subscribing user_id={user_id}")
+
         application.user_data[user_id].setdefault(UserData.__name__,
                                                   UserData(user_id=user_id,
                                                            redis_api=redis_api))
-
         remove_job_if_exists(str(user_id), application.job_queue)
+
+        # We are using the fact that user_id == chat_id when a bot is used in a
+        # direct message with a user. This isn't guaranteed by the Telegram
+        # API, so let's hope this isn't a stupid idea.
+        chat_id = user_id
         application.job_queue.run_repeating(ask_journal,
                                             datetime.timedelta(seconds=10),
                                             user_id=user_id,
+                                            chat_id=chat_id,
                                             name=str(user_id))
 
 
-def main():
+def setup_application(app_builder: Optional[ApplicationBuilder] = None) -> Application:
+    if app_builder is None:
+        app_builder = ApplicationBuilder()
+
+    application = app_builder.token(
+        os.environ['TELEGRAM_API_TOKEN']).build()
+
     redis_api = redis.Redis(host=os.environ["REDIS_HOST"],
-                            port=os.environ["REDIS_PORT"],
-                            db=os.environ["REDIS_DB_ID"],
+                            port=int(os.environ["REDIS_PORT"]),
+                            db=int(os.environ["REDIS_DB_ID"]),
                             username=os.environ["REDIS_USERNAME"],
                             password=os.environ["REDIS_PASSWORD"],
                             ssl=True,
                             ssl_cert_reqs="none",
                             )
-    application = ApplicationBuilder().token(
-        os.environ['TELEGRAM_API_TOKEN']).build()
     application.bot_data['redis'] = redis_api
 
     start_handler = CommandHandler('s', subscribe)
@@ -205,6 +218,11 @@ def main():
     application.add_handler(CallbackQueryHandler(button))
 
     subscribe_existing_users_on_startup(application)
+    return application
+
+
+def main():
+    application = setup_application()
     application.run_polling()
 
 
