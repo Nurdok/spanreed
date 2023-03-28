@@ -1,3 +1,5 @@
+import asyncio
+import datetime
 import os
 from todoist import Todoist
 import logging
@@ -15,12 +17,20 @@ def log_to_stdout():
     root.addHandler(handler)
 
 
-if __name__ == '__main__':
-    log_to_stdout()
-    todoist = Todoist(os.environ['TODOIST_API_TOKEN'])
-    tasks = todoist.get_tasks_with_tag('spanreed/nooverdue')
+async def _update_no_overdue_tasks_to_today(todoist_api):
+    tasks = await todoist_api.get_tasks_with_tag('spanreed/no-overdue')
     for task in tasks:
-        todoist.set_due_date_to_today(task)
+        await todoist_api.set_due_date_to_today(task)
+
+
+async def main(todoist_api):
+    while True:
+        await _update_no_overdue_tasks_to_today(todoist_api)
+        await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
+
+
+if __name__ == '__main__':
+    asyncio.run(main(Todoist(os.environ['TODOIST_API_TOKEN'])))
 
 
 
