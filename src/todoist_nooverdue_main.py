@@ -2,19 +2,6 @@ import asyncio
 import datetime
 import os
 from todoist import Todoist
-import logging
-import sys
-
-
-def log_to_stdout():
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
 
 
 async def _update_no_overdue_tasks_to_today(todoist_api):
@@ -26,6 +13,8 @@ async def _update_no_overdue_tasks_to_today(todoist_api):
 async def main(todoist_api):
     while True:
         await _update_no_overdue_tasks_to_today(todoist_api)
+        # This can't happen more than daily anyway, so every 4 hours will make
+        # sure it catches overdue tasks sometime at night.
         await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
 

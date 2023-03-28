@@ -170,7 +170,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     remove_job_if_exists(str(user_id), context.job_queue)
     context.job_queue.run_repeating(ask_journal,
-                                    datetime.timedelta(seconds=10),
+                                    datetime.timedelta(hours=1),
                                     user_id=user_id,
                                     chat_id=chat_id,
                                     name=str(user_id))
