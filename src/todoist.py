@@ -1,5 +1,6 @@
 import logging
-from todoist_api_python.api_async import TodoistAPIAsync, Task
+from todoist_api_python.api_async import TodoistAPIAsync, Task, Comment
+from typing import List, Optional
 
 
 def format_task(task):
@@ -10,6 +11,23 @@ class Todoist:
     def __init__(self, api_token):
         self._api = TodoistAPIAsync(api_token)
         self._logger = logging.getLogger(__name__)
+
+    async def update_task(self, task: Task, **kwargs):
+        await self._api.update_task(task.id, **kwargs)
+
+    async def update_comment(self, comment: Comment, **kwargs):
+        await self._api.update_comment(comment.id, **kwargs)
+
+    async def get_first_comment_with_yaml(self, task: Task, create=False) -> Optional[Comment]:
+        comments: List[Comment] = await self._api.get_comments(task_id=task.id)
+        for comment in comments:
+            if len(parts := comment.content.split('---')) == 3:
+                return comment
+
+        if create:
+            # No yaml comment was found, create one and return it.
+            comment = await self._api.add_comment(task_id=task.id, content="---\n---")
+            return comment
 
     async def _get_inbox_project(self):
         projects = await self._api.get_projects()
@@ -27,7 +45,7 @@ class Todoist:
         query = "overdue | (today & no time) | due before:+0 hours"
         return await self._api.get_tasks(filter=query)
 
-    async def get_tasks_with_tag(self, tag):
+    async def get_tasks_with_tag(self, tag) -> List[Task]:
         # By default, only non-completed tasks are returned.
         query = f'@{tag}'
         return await self._api.get_tasks(filter=query)

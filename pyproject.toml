@@ -10,6 +10,13 @@ python = "^3.11"
 todoist-api-python = "*"
 python-telegram-bot = {extras = ["job-queue"], version = "^20.1"}
 redis = "*"
+python-dateutil = "*"
+pyyaml = "*"
+
+[tool.poetry.group.test.dependencies]
+pytest = "*"
+virtualenvwrapper = "*"
+ipython = {extras = ["all"], version = "*"}
 
 
 [build-system]
