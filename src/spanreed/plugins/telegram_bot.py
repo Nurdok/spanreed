@@ -6,7 +6,8 @@ from enum import Enum
 from typing import List, NamedTuple, Optional
 import redis
 import json
-import spanreed
+
+from spanreed.plugin import Plugin
 
 import telegram.ext
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -200,7 +201,8 @@ async def subscribe_existing_users_on_startup(
         # API, so let's hope this isn't a stupid idea.
         chat_id = user_id
         application.job_queue.run_repeating(ask_journal,
-                                            datetime.timedelta(seconds=10),
+                                            interval=datetime.timedelta(hours=3),
+                                            first=datetime.timedelta(seconds=10),
                                             user_id=user_id,
                                             chat_id=chat_id,
                                             name=str(user_id))
@@ -223,7 +225,7 @@ async def setup_application(redis_api: redis.Redis, app_builder: Optional[Applic
     return application
 
 
-class TelegramBotPlugin(spanreed.plugin.Plugin):
+class TelegramBotPlugin(Plugin):
     @property
     def name(self) -> str:
         return "Telegram Bot"
