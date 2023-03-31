@@ -1,6 +1,7 @@
 import logging
 from todoist_api_python.api_async import TodoistAPIAsync, Task, Comment
 from typing import List, Optional
+from spanreed.user import User
 
 
 def format_task(task):
@@ -11,6 +12,10 @@ class Todoist:
     def __init__(self, api_token):
         self._api = TodoistAPIAsync(api_token)
         self._logger = logging.getLogger(__name__)
+
+    @classmethod
+    def for_user(cls, user: User):
+        return Todoist(user.config['todoist']['api_token'])
 
     async def update_task(self, task: Task, **kwargs):
         await self._api.update_task(task.id, **kwargs)

@@ -224,8 +224,9 @@ async def setup_application(redis_api: redis.Redis, app_builder: Optional[Applic
 
 
 class TelegramBotPlugin(spanreed.plugin.Plugin):
-    def __init__(self, *args, **kwargs):
-        super().__init__(name="Telegram Bot", *args, **kwargs)
+    @property
+    def name(self) -> str:
+        return "Telegram Bot"
 
     async def run(self):
         application = await setup_application(self._redis)

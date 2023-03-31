@@ -6,22 +6,22 @@ import os
 import logging
 from typing import List
 
+from spanreed.plugin import Plugin
+
 from spanreed.plugins.telegram_bot import TelegramBotPlugin
 from spanreed.plugins.therapy import TherapyPlugin
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 
 
-def load_plugins(redis_api: redis.Redis, todoist_api: Todoist) -> List[spanreed.plugin.Plugin]:
+def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
     return [
         TelegramBotPlugin(redis_api=redis_api),
-        TherapyPlugin(redis_api=redis_api, todoist_api=todoist_api),
-        TodoistNoOverduePlugin(redis_api=redis_api, todoist_api=todoist_api),
+        TherapyPlugin(redis_api=redis_api),
+        TodoistNoOverduePlugin(redis_api=redis_api),
     ]
 
 
 async def run_all_tasks():
-    todoist_api = Todoist(os.environ['TODOIST_API_TOKEN'])
-
     redis_api = redis.Redis(host=os.environ["REDIS_HOST"],
                             port=int(os.environ["REDIS_PORT"]),
                             db=int(os.environ["REDIS_DB_ID"]),
@@ -30,7 +30,7 @@ async def run_all_tasks():
                             ssl=True,
                             ssl_cert_reqs="none")
 
-    plugins = load_plugins(redis_api=redis_api, todoist_api=todoist_api)
+    plugins = load_plugins(redis_api=redis_api)
     logging.info(f"Running {len(plugins)} plugins: {[plugin.canonical_name for plugin in plugins]}")
     await asyncio.gather(*[plugin.run() for plugin in plugins])
 

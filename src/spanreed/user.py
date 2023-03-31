@@ -1,6 +1,6 @@
 import redis
 import json
-from typing import Set
+
 
 class User:
     redis_api: redis.Redis = None
@@ -9,12 +9,14 @@ class User:
         self.id: int = -1
         self.config: dict = {}
 
+    def __str__(self):
+        return f'User(id={self.id}, name={self.name})'
+
     @classmethod
     async def create(cls, *, name: str, email: str) -> 'User':
         self = User()
         self.id = await cls._generate_user_id()
         self.name = name
-        self.email = email
         return self
 
     @classmethod
@@ -26,6 +28,5 @@ class User:
         self = User()
         self.id = id
         self.name = await redis_api.get(f'user:{id}:name')
-        self.email = await redis_api.get(f'user:{id}:email')
         self.config = json.loads(await redis_api.get(f'user:{id}:config'))
         return self
