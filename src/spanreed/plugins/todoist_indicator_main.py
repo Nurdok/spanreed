@@ -1,5 +1,5 @@
-from todoist import Todoist
-from rpi import RPi
+from spanreed.apis.todoist import Todoist
+from spanreed.apis.rpi import RPi
 import time
 import os
 

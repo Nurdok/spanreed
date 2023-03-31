@@ -6,6 +6,7 @@ from enum import Enum
 from typing import List, NamedTuple, Optional
 import redis
 import json
+import spanreed
 
 import telegram.ext
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -222,25 +223,20 @@ async def setup_application(redis_api: redis.Redis, app_builder: Optional[Applic
     return application
 
 
-async def main(redis_api):
-    application = await setup_application(redis_api)
+class TelegramBotPlugin(spanreed.plugin.Plugin):
+    def __init__(self, *args, **kwargs):
+        super().__init__(name="Telegram Bot", *args, **kwargs)
 
-    async with application:  # Calls `initialize` and `shutdown`
-        await application.start()
-        await application.updater.start_polling()
-        try:
-            # Wait for cancellation so we can perform the cleanup.
-            await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
-        except asyncio.CancelledError:
-            await application.updater.stop()
-            await application.stop()
-            raise
+    async def run(self):
+        application = await setup_application(self._redis)
 
-
-def main_blocking():
-    application = asyncio.run(setup_application())
-    application.run_polling()
-
-
-if __name__ == '__main__':
-    main_blocking()
+        async with application:  # Calls `initialize` and `shutdown`
+            await application.start()
+            await application.updater.start_polling()
+            try:
+                # Wait for cancellation so we can perform the cleanup.
+                await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
+            except asyncio.CancelledError:
+                await application.updater.stop()
+                await application.stop()
+                raise
