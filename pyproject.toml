@@ -15,9 +15,6 @@ pyyaml = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"
-virtualenvwrapper = "*"
-ipython = {extras = ["all"], version = "*"}
-
 
 [build-system]
 requires = ["poetry-core"]
