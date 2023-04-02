@@ -12,13 +12,6 @@ import dateutil.rrule
 import yaml
 
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
-
-
 # TODO: recurrences should be configurable per-user.
 def get_recurrence(dtstart: datetime.datetime) -> dateutil.rrule.rrule:
     return dateutil.rrule.rrule(
@@ -44,11 +37,11 @@ class TherapyPlugin(spanreed.plugin.Plugin):
         dtstart = datetime.datetime.now(tz=israel_tz)
         recurrence = get_recurrence(dtstart)
         next_session: datetime.datetime = recurrence.after(dtstart)
-        logger.info(f"{next_session=}")
+        self._logger.info(f"{next_session=}")
         while True:
             wait_time = next_session - datetime.datetime.now(tz=israel_tz)
-            logger.info(f"Waiting for {wait_time}")
-            logger.info(f'{next_session.date().strftime("%Y-%m-%d")=}')
+            self._logger.info(f"Waiting for {wait_time}")
+            self._logger.info(f'{next_session.date().strftime("%Y-%m-%d")=}')
             await asyncio.sleep(wait_time.total_seconds())
             date_str = next_session.date().strftime("%Y-%m-%d")
             tasks: List[Task] = await todoist_api.get_tasks_with_tag(tag)
@@ -59,10 +52,10 @@ class TherapyPlugin(spanreed.plugin.Plugin):
             (task,) = tasks
             comment = await todoist_api.get_first_comment_with_yaml(task)
             desc_split = comment.content.split("---")
-            logger.info(desc_split)
+            self._logger.info(desc_split)
             assert len(desc_split) == 3, len(desc_split)
             comment_yaml = desc_split[1]
-            logger.info(f"{comment_yaml=}")
+            self._logger.info(f"{comment_yaml=}")
             therapy_sd = yaml.safe_load(comment_yaml)
             dates: List[str] = therapy_sd["dates"]
 
@@ -74,7 +67,9 @@ class TherapyPlugin(spanreed.plugin.Plugin):
                 new_comment_content = "---\n".join(
                     [desc_split[0], yaml.safe_dump(therapy_sd), desc_split[2]]
                 )
-                logger.info(f"{new_task_content=}\n{new_comment_content=}")
+                self._logger.info(
+                    f"{new_task_content=}\n{new_comment_content=}"
+                )
                 await todoist_api.update_comment(
                     comment, content=new_comment_content
                 )
