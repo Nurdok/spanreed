@@ -28,6 +28,6 @@ class TodoistIndicator:
             time.sleep(5)
 
 
-if __name__ == '__main__':
-    ind = TodoistIndicator(RPi(), Todoist(os.environ['TODOIST_API_TOKEN']))
+if __name__ == "__main__":
+    ind = TodoistIndicator(RPi(), Todoist(os.environ["TODOIST_API_TOKEN"]))
     ind.run()

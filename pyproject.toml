@@ -17,6 +17,9 @@ aiohttp = "^3.8.4"
 [tool.poetry.group.test.dependencies]
 pytest = "*"
 
+[tool.poetry.group.dev.dependencies]
+black = "*"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

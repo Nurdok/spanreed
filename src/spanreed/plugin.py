@@ -21,13 +21,13 @@ class Plugin(abc.ABC):
 
     @property
     def canonical_name(self):
-        return self.name.replace(' ', '-').lower()
+        return self.name.replace(" ", "-").lower()
 
     def _get_config_key(self, user):
-        return f'config:plugin:name={self.canonical_name}:user_id={user.id}'
+        return f"config:plugin:name={self.canonical_name}:user_id={user.id}"
 
     def _get_user_list_key(self):
-        return f'config:plugin:name={self.canonical_name}:users'
+        return f"config:plugin:name={self.canonical_name}:users"
 
     async def get_config(self, user) -> Optional[dict]:
         config = await self._redis.get(self.get_config_key(user))
@@ -36,12 +36,17 @@ class Plugin(abc.ABC):
         return json.loads(config)
 
     async def get_users(self) -> List[User]:
-        user_ids = [int(user_id) for user_id
-                    in await self._redis.smembers(self._get_user_list_key())]
+        user_ids = [
+            int(user_id)
+            for user_id in await self._redis.smembers(
+                self._get_user_list_key()
+            )
+        ]
         users: List[User] = []
         for user_id in user_ids:
-            users.append(await User.create_from_db(id=user_id,
-                                                   redis_api=self._redis))
+            users.append(
+                await User.create_from_db(id=user_id, redis_api=self._redis)
+            )
         return users
 
     async def run_for_user(self, user):
@@ -53,8 +58,9 @@ class Plugin(abc.ABC):
     async def run(self):
         coros = []
         for user in await self.get_users():
-            self._logger.info(f"Running plugin {self.canonical_name} for user {user.id}")
+            self._logger.info(
+                f"Running plugin {self.canonical_name} for user {user.id}"
+            )
             coros.append(self.run_for_user(user))
 
         await asyncio.gather(*coros)
-

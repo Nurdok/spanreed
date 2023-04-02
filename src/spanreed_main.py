@@ -22,16 +22,20 @@ def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
 
 
 async def run_all_tasks():
-    redis_api = redis.Redis(host=os.environ["REDIS_HOST"],
-                            port=int(os.environ["REDIS_PORT"]),
-                            db=int(os.environ["REDIS_DB_ID"]),
-                            username=os.environ["REDIS_USERNAME"],
-                            password=os.environ["REDIS_PASSWORD"],
-                            ssl=True,
-                            ssl_cert_reqs="none")
+    redis_api = redis.Redis(
+        host=os.environ["REDIS_HOST"],
+        port=int(os.environ["REDIS_PORT"]),
+        db=int(os.environ["REDIS_DB_ID"]),
+        username=os.environ["REDIS_USERNAME"],
+        password=os.environ["REDIS_PASSWORD"],
+        ssl=True,
+        ssl_cert_reqs="none",
+    )
 
     plugins = load_plugins(redis_api=redis_api)
-    logging.info(f"Running {len(plugins)} plugins: {[plugin.canonical_name for plugin in plugins]}")
+    logging.info(
+        f"Running {len(plugins)} plugins: {[plugin.canonical_name for plugin in plugins]}"
+    )
     await asyncio.gather(*[plugin.run() for plugin in plugins])
 
 

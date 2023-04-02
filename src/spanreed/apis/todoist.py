@@ -5,7 +5,7 @@ from spanreed.user import User
 
 
 def format_task(task):
-    return f'Task(id={repr(task.id)}, content={repr(task.content)})'
+    return f"Task(id={repr(task.id)}, content={repr(task.content)})"
 
 
 class Todoist:
@@ -15,7 +15,7 @@ class Todoist:
 
     @classmethod
     def for_user(cls, user: User):
-        return Todoist(user.config['todoist']['api_token'])
+        return Todoist(user.config["todoist"]["api_token"])
 
     async def update_task(self, task: Task, **kwargs):
         await self._api.update_task(task.id, **kwargs)
@@ -23,15 +23,19 @@ class Todoist:
     async def update_comment(self, comment: Comment, **kwargs):
         await self._api.update_comment(comment.id, **kwargs)
 
-    async def get_first_comment_with_yaml(self, task: Task, create=False) -> Optional[Comment]:
+    async def get_first_comment_with_yaml(
+        self, task: Task, create=False
+    ) -> Optional[Comment]:
         comments: List[Comment] = await self._api.get_comments(task_id=task.id)
         for comment in comments:
-            if len(parts := comment.content.split('---')) == 3:
+            if len(parts := comment.content.split("---")) == 3:
                 return comment
 
         if create:
             # No yaml comment was found, create one and return it.
-            comment = await self._api.add_comment(task_id=task.id, content="---\n---")
+            comment = await self._api.add_comment(
+                task_id=task.id, content="---\n---"
+            )
             return comment
 
     async def _get_inbox_project(self):
@@ -41,7 +45,9 @@ class Todoist:
                 return project
 
     async def get_inbox_tasks(self):
-        return await self._api.get_tasks(project_id=self._get_inbox_project().id)
+        return await self._api.get_tasks(
+            project_id=self._get_inbox_project().id
+        )
 
     async def get_due_tasks(self):
         # "due before:+0 hours" means that we don't count tasks that have an
@@ -52,12 +58,12 @@ class Todoist:
 
     async def get_tasks_with_tag(self, tag) -> List[Task]:
         # By default, only non-completed tasks are returned.
-        query = f'@{tag}'
+        query = f"@{tag}"
         return await self._api.get_tasks(filter=query)
 
     async def set_due_date_to_today(self, task: Task):
-        self._logger.info(f'Updating {format_task(task)} due date to today')
-        self._logger.info(f'{task.due=}')
+        self._logger.info(f"Updating {format_task(task)} due date to today")
+        self._logger.info(f"{task.due=}")
         if task.due.is_recurring:
             # For recurring tasks, we need to keep the recurrence. The string
             # looks something like "daily", "every week" or "on the 1st of

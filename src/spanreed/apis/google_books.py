@@ -3,6 +3,7 @@ import aiohttp
 from typing import List, Optional
 from dataclasses import dataclass
 
+
 @dataclass
 class Book:
     title: str
@@ -12,12 +13,13 @@ class Book:
     description: str
     thumbnail_url: str
 
+
 class GoogleBooks:
     BASE_URL = "https://www.googleapis.com/books/v1/volumes"
 
     def __init__(self, api_key: str):
         self.api_key = api_key
-    
+
     async def get_book(self, query: str) -> Optional[Book]:
         url = f"{self.BASE_URL}?q={query}&key={self.api_key}"
 
@@ -41,5 +43,7 @@ class GoogleBooks:
             publisher=volume_info.get("publisher", "Unknown"),
             publish_date=volume_info.get("publishedDate", "Unknown"),
             description=volume_info.get("description", ""),
-            thumbnail_url=volume_info.get("imageLinks", {}).get("thumbnail", "")
+            thumbnail_url=volume_info.get("imageLinks", {}).get(
+                "thumbnail", ""
+            ),
         )
