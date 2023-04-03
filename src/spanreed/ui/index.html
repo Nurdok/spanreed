@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Redis Pub/Sub Logger</title>
+</head>
+<body>
+    <div id="logs"></div>
+    <script>
+        const logsDiv = document.getElementById('logs');
+
+        const socket = new WebSocket('ws://' + location.host + '/logs');
+        socket.onopen = () => {
+            console.log('WebSocket opened');
+        };
+        socket.onmessage = (event) => {
+            console.log('WebSocket message received:', event.data);
+            const p = document.createElement('p');
+            p.textContent = event.data;
+            logsDiv.appendChild(p);
+        };
+        socket.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+        socket.onclose = () => {
+            console.log('WebSocket closed');
+        };
+    </script>
+</body>
+</html>
