@@ -49,7 +49,7 @@ class Plugin(abc.ABC):
             )
         return users
 
-    async def run_for_user(self, user):
+    async def run_for_user(self, user: User):
         pass
 
     # This currently assumes that user <--> plugin subscription doesn't
