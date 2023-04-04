@@ -1,5 +1,7 @@
+import asyncio
+import dataclasses
 import datetime
-from enum import Enum
+from enum import Enum, member
 import json
 from typing import List, NamedTuple, Optional
 
@@ -89,6 +91,12 @@ class EventStorageRedis:
                 return event.event_type
 
 
+@dataclasses.dataclass
+class Choice:
+    text: str
+    event: EventType
+
+
 class HabitTrackerPlugin(Plugin):
     @property
     def name(self) -> str:
@@ -97,8 +105,30 @@ class HabitTrackerPlugin(Plugin):
     async def run_for_user(self, user: User):
         bot = TelegramBotApi.for_user(user)
         event_storage = await EventStorageRedis.create(user.id, self._redis)
-        self.subscribe(user, bot, event_storage)
-        pass
+        #self.subscribe(user, bot, event_storage)
+
+        # TODO: Allow users to decide on their tracked habits
+        activity_type = ActivityType.JOURNAL
+
+        while True:
+            if (event_type := event_storage.find_event(activity_type, datetime.date.today())) is not None:
+                self._logger.info(
+                    f"Skipping asking for {activity_type} because its "
+                    f"status is {event_type}"
+                )
+            else:
+                self.poll_user(activity_type, bot, event_storage)
+
+            await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
+
+    async def poll_user(self, activity_type: ActivityType, bot: Application, event_storage: EventStorageRedis):
+        choices = [Choice("Yes", EventType.DONE),
+                   Choice("Not yet", EventType.UNKNOWN),
+                   Choice("Not happening", EventType.SKIPPED)]
+
+        choice = choices[await bot.request_user_choice(c.text for c in choices)]
+        if choice.event != EventType.UNKNOWN:
+            await event_storage.add(Event(datetime.date.today(), ActivityType.JOURNAL, choice.event))
 
     async def subscribe(
         self, user: User, bot: TelegramBotApi, event_storage: EventStorageRedis
@@ -108,11 +138,13 @@ class HabitTrackerPlugin(Plugin):
         app = await bot.get_application()
         bot.remove_job_if_exists(str(user.id))
 
+        ### TODO: This needs to be in the API
+
         # We are using the fact that user_id == chat_id when a bot is used in a
         # direct message with a user. This isn't guaranteed by the Telegram
         # API, so let's hope this isn't a stupid idea.
         app.job_queue.run_repeating(
-            self.ask_journal,
+            self.ask_journal_per_user(user, event_storage),
             interval=datetime.timedelta(hours=3),
             first=datetime.timedelta(seconds=10),
             user_id=user.config["telegram"]["user_id"],
