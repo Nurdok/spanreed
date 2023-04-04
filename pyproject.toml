@@ -8,7 +8,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.11"
 todoist-api-python = "*"
-python-telegram-bot = {extras = ["job-queue"], version = "^20.1"}
+python-telegram-bot = {extras = ["job-queue", "callback-data"], version = "^20.1"}
 redis = "*"
 python-dateutil = "*"
 pyyaml = "*"

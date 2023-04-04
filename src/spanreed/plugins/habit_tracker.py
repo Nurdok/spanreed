@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import datetime
+import logging
 from enum import Enum, member
 import json
 from typing import List, NamedTuple, Optional
@@ -18,6 +19,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     Application,
+)
 
 
 class ActivityType(Enum):
@@ -38,21 +40,24 @@ class Event(NamedTuple):
 
 
 class EventStorageRedis:
-    def __init__(self, *, user_id, redis_api: redis.Redis):
+    def __init__(self, *, user: User, redis_api: redis.Redis):
         self._redis: redis.Redis = redis_api
-        self._redis_key = f"events:user_id={user_id}"
+        self._redis_key = f"events:user_id={user.id}"
+        self._logger = logging.getLogger(__name__)
         self._events: List[Event] = []
 
     @classmethod
-    async def create(cls, *, user_id, redis_api: redis.Redis):
-        self = EventStorageRedis(user_id=user_id, redis_api=redis_api)
+    async def for_user(cls, user: User, redis_api: redis.Redis):
+        self = EventStorageRedis(user=user, redis_api=redis_api)
         self._events: List[Event] = await self._load_from_storage()
         return self
 
     async def _load_from_storage(self) -> List[Event]:
         events: List[Event] = []
         redis_response = await self._redis.get(self._redis_key)
-        logger.info(f"key={self._redis_key},value={redis_response}")
+        if redis_response is None:
+            return []
+        self._logger.info(f"key={self._redis_key},value={redis_response}")
         try:
             events_json = json.loads(redis_response)
         except json.JSONDecodeError:
@@ -103,107 +108,63 @@ class HabitTrackerPlugin(Plugin):
         return "Habit Tracker"
 
     async def run_for_user(self, user: User):
-        bot = TelegramBotApi.for_user(user)
-        event_storage = await EventStorageRedis.create(user.id, self._redis)
-        #self.subscribe(user, bot, event_storage)
+        self._logger.info(f"Running for user {user}")
+        bot = await TelegramBotApi.for_user(user)
+        self._logger.info(f"Got bot")
+        event_storage = await EventStorageRedis.for_user(user, self._redis)
 
         # TODO: Allow users to decide on their tracked habits
         activity_type = ActivityType.JOURNAL
 
         while True:
-            if (event_type := event_storage.find_event(activity_type, datetime.date.today())) is not None:
+            self._logger.info(
+                f"Checking if we need to ask for {activity_type}"
+            )
+            if (
+                event_type := event_storage.find_event(
+                    activity_type, datetime.date.today()
+                )
+            ) is not None:
                 self._logger.info(
                     f"Skipping asking for {activity_type} because its "
                     f"status is {event_type}"
                 )
             else:
-                self.poll_user(activity_type, bot, event_storage)
+                await self.poll_user(activity_type, bot, event_storage)
 
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
-    async def poll_user(self, activity_type: ActivityType, bot: Application, event_storage: EventStorageRedis):
-        choices = [Choice("Yes", EventType.DONE),
-                   Choice("Not yet", EventType.UNKNOWN),
-                   Choice("Not happening", EventType.SKIPPED)]
-
-        choice = choices[await bot.request_user_choice(c.text for c in choices)]
-        if choice.event != EventType.UNKNOWN:
-            await event_storage.add(Event(datetime.date.today(), ActivityType.JOURNAL, choice.event))
-
-    async def subscribe(
-        self, user: User, bot: TelegramBotApi, event_storage: EventStorageRedis
-    ) -> None:
-        self._logger.info(f"Subscribing user_id={user.id}")
-
-        app = await bot.get_application()
-        bot.remove_job_if_exists(str(user.id))
-
-        ### TODO: This needs to be in the API
-
-        # We are using the fact that user_id == chat_id when a bot is used in a
-        # direct message with a user. This isn't guaranteed by the Telegram
-        # API, so let's hope this isn't a stupid idea.
-        app.job_queue.run_repeating(
-            self.ask_journal_per_user(user, event_storage),
-            interval=datetime.timedelta(hours=3),
-            first=datetime.timedelta(seconds=10),
-            user_id=user.config["telegram"]["user_id"],
-            chat_id=user.config["telegram"]["user_id"],
-            name=str(user.id),
-        )
-
-    def ask_journal_per_user(
-        self, user: User, event_storage: EventStorageRedis
+    async def poll_user(
+        self,
+        activity_type: ActivityType,
+        bot: TelegramBotApi,
+        event_storage: EventStorageRedis,
     ):
-        async def ask_journal(context: ContextTypes.DEFAULT_TYPE):
-            activity_type: ActivityType = ActivityType.JOURNAL
+        self._logger.info(f"Polling user for {activity_type}")
+        prompt = f"Did you {activity_type.name.lower()} today?"
+        choices = [
+            Choice("Yes", EventType.DONE),
+            Choice("Not yet", EventType.UNKNOWN),
+            Choice("Not happening", EventType.SKIPPED),
+        ]
 
-            if (event_type := event_storage.find_event(activity_type, datetime.date.today())) is not None:
-                self._logger.info(
-                    f"Skipping asking for {activity_type} because its "
-                    f"status is {event_type}"
-                )
-                return
+        choice = choices[
+            await bot.request_user_choice(prompt, [c.text for c in choices])
+        ]
 
-            keyboard = [
-                [
-                    InlineKeyboardButton("Yes", callback_data="1"),
-                    InlineKeyboardButton("Not yet", callback_data="2"),
-                    InlineKeyboardButton("Not happening", callback_data="3"),
-                ],
-            ]
+        self._logger.info(f"User chose {choice.text}")
 
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        replies = {
+            EventType.DONE: "Great!",
+            EventType.UNKNOWN: "I'll ask again later.",
+            EventType.SKIPPED: "FINE, I'll remind you tomorrow, you worthles-- I mean, you're great!",
+        }
 
-            await context.bot.send_message(
-                context.job.chat_id,
-                text="Did you journal today?",
-                reply_markup=reply_markup,
-            )
-
-        return ask_journal
-
-    async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Parses the CallbackQuery and updates the message text."""
-        query = update.callback_query
-
-        # CallbackQueries need to be answered, even if no notification to the user is needed
-        # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
-        await query.answer()
-
-        if query.data == "1":
-            text = "Awesome!"
-            await context.user_data[UserData.__name__].event_storage.add(
-                Event(datetime.date.today(), ActivityType.JOURNAL, EventType.DONE)
-            )
-        elif query.data == "2":
-            text = "Sure, I'll ask again later."
-        elif query.data == "3":
-            await context.user_data[UserData.__name__].event_storage.add(
+        if choice.event != EventType.UNKNOWN:
+            await event_storage.add(
                 Event(
-                    datetime.date.today(), ActivityType.JOURNAL, EventType.SKIPPED
+                    datetime.date.today(), ActivityType.JOURNAL, choice.event
                 )
             )
-            text = "A'ight, I won't bother you again today."
 
-        await query.edit_message_text(text=text)
+        await bot.send_message(replies[choice.event])

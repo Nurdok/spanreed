@@ -8,17 +8,26 @@ from typing import List
 
 from spanreed.plugin import Plugin
 
-from spanreed.plugins.telegram_bot import TelegramBotPlugin
+from spanreed.apis.telegram_bot import TelegramBotPlugin
+
+from spanreed.plugins.habit_tracker import HabitTrackerPlugin
 from spanreed.plugins.therapy import TherapyPlugin
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 
 
 def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
-    return [
+    core_plugins = [
         TelegramBotPlugin(redis_api=redis_api),
-        TherapyPlugin(redis_api=redis_api),
-        TodoistNoOverduePlugin(redis_api=redis_api),
     ]
+
+    # TODO: Load optional plugins dynamically.
+    optional_plugins = [
+        HabitTrackerPlugin(redis_api=redis_api),
+        # TherapyPlugin(redis_api=redis_api),
+        # TodoistNoOverduePlugin(redis_api=redis_api),
+    ]
+
+    return core_plugins + optional_plugins
 
 
 async def run_all_tasks():
