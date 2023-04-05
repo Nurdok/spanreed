@@ -26,6 +26,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+CALLBACK_EVENTS = "callback-events"
+CALLBACK_EVENT_RESULTS = "callback-event-results"
+
+
 class CallbackData(NamedTuple):
     callback_id: int
     user_id: int
@@ -97,12 +101,12 @@ class TelegramBotPlugin(Plugin):
         logger.info(
             f"Marking callback {cid} event result as {callback_data.position}"
         )
-        results = context.bot_data.setdefault("callback_event_results", {})
+        results = context.bot_data.setdefault(CALLBACK_EVENT_RESULTS, {})
         results[cid] = callback_data.position
 
         logger.info(f"Setting event {cid} as done")
         # Notify the waiting coroutine that we received the user's choice.
-        event: asyncio.Event = context.bot_data["callback_events"][cid]
+        event: asyncio.Event = context.bot_data[CALLBACK_EVENTS][cid]
         event.set()
 
         await query.delete_message()
@@ -131,24 +135,20 @@ class TelegramBotApi:
         _logger.info("Application initialized")
         return TelegramBotApi(user.config["telegram"]["user_id"])
 
+    @classmethod
+    def set_application(cls, application: Application):
+        if cls._application is not None:
+            raise RuntimeError("Application already set")
+        cls._application = application
+        cls._application_initialized.set()
+
     async def send_message(self, text: str):
         app = await self.get_application()
         await app.bot.send_message(chat_id=self._user_id, text=text)
 
-    # @classmethod
-    # def remove_job_if_exists(cls, name: str):
-    #     """Remove job with given name. Returns whether job was removed."""
-    #     app = await cls.get_application()
-    #     current_jobs = app.job_queue.get_jobs_by_name(name)
-    #     if not current_jobs:
-    #         return False
-    #     for job in current_jobs:
-    #         job.schedule_removal()
-    #     return True
-
-    def init_callback(self, callback_id: int) -> asyncio.Event:
+    def _init_callback(self, callback_id: int) -> asyncio.Event:
         event = asyncio.Event()
-        self._application.bot_data.setdefault("callback_events", {})[
+        self._application.bot_data.setdefault(CALLBACK_EVENTS, {})[
             callback_id
         ] = event
         return event
@@ -160,7 +160,7 @@ class TelegramBotApi:
 
         # Generate a random callback ID to avoid collisions.
         callback_id = uuid.uuid4().int
-        callback_event: asyncio.Event = self.init_callback(callback_id)
+        callback_event: asyncio.Event = self._init_callback(callback_id)
 
         def make_callback_data(position) -> CallbackData:
             return CallbackData(callback_id, self._user_id, position)
@@ -184,4 +184,4 @@ class TelegramBotApi:
         self._logger.info(f"Waiting for callback {callback_id} to be done")
         await callback_event.wait()
         self._logger.info(f"Callback {callback_id} done")
-        return app.bot_data["callback_event_results"][callback_id]
+        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
