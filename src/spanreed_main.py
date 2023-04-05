@@ -23,8 +23,8 @@ def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
     # TODO: Load optional plugins dynamically.
     optional_plugins = [
         HabitTrackerPlugin(redis_api=redis_api),
-        # TherapyPlugin(redis_api=redis_api),
-        # TodoistNoOverduePlugin(redis_api=redis_api),
+        TherapyPlugin(redis_api=redis_api),
+        TodoistNoOverduePlugin(redis_api=redis_api),
     ]
 
     return core_plugins + optional_plugins
