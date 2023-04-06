@@ -2,12 +2,12 @@ import asyncio
 import logging
 
 import aiohttp
-from typing import List, Optional, NamedTuple
+from typing import List, Optional, NamedTuple, Tuple
 
 
 class Book(NamedTuple):
     title: str
-    authors: List[str]
+    authors: Tuple[str]
     publisher: str
     publish_date: str
     description: str
@@ -37,12 +37,13 @@ class GoogleBooks:
         # TODO: decide how to choose book instead of taking the first one.
         books = []
         for item in items:
-            volume_info = items[0]["volumeInfo"]
+            volume_info = item["volumeInfo"]
 
+            logging.getLogger(__name__).info(volume_info)
             books.append(
                 Book(
                     title=volume_info.get("title", "Unknown"),
-                    authors=volume_info.get("authors", ["Unknown"]),
+                    authors=tuple(volume_info.get("authors", ["Unknown"])),
                     publisher=volume_info.get("publisher", "Unknown"),
                     publish_date=volume_info.get("publishedDate", "Unknown"),
                     description=volume_info.get("description", ""),
@@ -51,6 +52,5 @@ class GoogleBooks:
                     ),
                 )
             )
-            logging.getLogger(__name__).info(books)
 
         return books

@@ -59,7 +59,9 @@ class LitNotesPlugin(Plugin):
                 )
                 if choice == 0:
                     await self.add_note_for_book(book, user)
-            else:
+                else:
+                    await bot.send_message("Sorry I couldn't help.")
+            elif len(books) > 1:
                 book_choice = await bot.request_user_choice(
                     "Found multiple books. Which one did you mean?",
                     [_format_book(book) for book in books[:5]]
@@ -67,6 +69,8 @@ class LitNotesPlugin(Plugin):
                 )
                 book = books[book_choice]
                 await self.add_note_for_book(book, user)
+                if book_choice == len(books):
+                    await bot.send_message("Sorry I couldn't help.")
 
     async def add_note_for_book(self, book: Book, user: User):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
