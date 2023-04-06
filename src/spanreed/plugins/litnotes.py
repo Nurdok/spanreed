@@ -30,9 +30,11 @@ class LitNotesPlugin(Plugin):
         )
 
     async def ask_for_book(self, user: User):
-        bot: TelegramBotApi = TelegramBotApi.for_user(self._user)
+        self._logger.info("Asking for book")
+        bot: TelegramBotApi = TelegramBotApi.for_user(user)
         google_books_api: GoogleBooks = GoogleBooks.for_user(user)
 
+        self._logger.info("Asking for user input...")
         book_query = await bot.request_user_input(
             "Which book do you want to add a note for?"
         )

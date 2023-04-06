@@ -158,27 +158,38 @@ class TelegramBotPlugin(Plugin):
         #         )
         #     keyboard.append(buttons)
 
-        bot = await TelegramBotApi.for_user(user)
+        # We need to do user interaction is a separate task because we can't
+        # block the main Telegram bot coroutine.
+        async def show_command_menu_task():
+            bot = await TelegramBotApi.for_user(user)
 
-        shown_commands = []
-        for plugin_canonical_name, commands in app.bot_data.setdefault(
-            PLUGIN_COMMANDS, {}
-        ).items():
-            if plugin_canonical_name not in user.plugins:
-                continue
+            shown_commands = []
+            for plugin_canonical_name, commands in app.bot_data.setdefault(
+                PLUGIN_COMMANDS, {}
+            ).items():
+                if plugin_canonical_name not in user.plugins:
+                    continue
 
-            self._logger.info(f"Adding commands for {plugin_canonical_name=}")
+                self._logger.info(
+                    f"Adding commands for {plugin_canonical_name=}"
+                )
 
-            for command in commands:
-                self._logger.info(f"Adding command {command=}")
-                shown_commands.append(command)
+                for command in commands:
+                    self._logger.info(f"Adding command {command=}")
+                    shown_commands.append(command)
 
-        choice = await bot.request_user_choice(
-            "Please choose a command to run:",
-            [command.text for command in shown_commands],
-        )
-        chosen_command = shown_commands[choice]
-        await bot.send_message(f"Running {chosen_command.text}...")
+            choice = await bot.request_user_choice(
+                "Please choose a command to run:",
+                [command.text for command in shown_commands],
+            )
+            chosen_command = shown_commands[choice]
+            await bot.send_message(f"Running {chosen_command.text}...")
+            self._logger.info(
+                f"Running {chosen_command=}: {chosen_command.callback=}"
+            )
+            await chosen_command.callback(user)
+
+        asyncio.create_task(show_command_menu_task())
 
 
 class TelegramBotApi:
