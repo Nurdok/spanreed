@@ -49,12 +49,12 @@ class Plugin(abc.ABC):
             )
         return users
 
-    async def run_for_user(self, user):
+    async def run_for_user(self, user: User):
         pass
 
     # This currently assumes that user <--> plugin subscription doesn't
     # change during the lifetime of the plugin.
-    # Refactor to allow for dynamic subscription changes.
+    # TODO: Refactor to allow for dynamic subscription changes.
     async def run(self):
         coros = []
         for user in await self.get_users():
@@ -63,4 +63,7 @@ class Plugin(abc.ABC):
             )
             coros.append(self.run_for_user(user))
 
-        await asyncio.gather(*coros)
+        try:
+            await asyncio.gather(*coros)
+        except:
+            self._logger.exception("Exception in plugin run")
