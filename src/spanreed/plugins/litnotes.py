@@ -7,7 +7,6 @@ from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 
 
 def _format_book(book: Book) -> str:
-    return repr(book)
     if not book.authors:
         return f"{book.title} ({book.publish_date})"
     if len(book.authors) == 1:
