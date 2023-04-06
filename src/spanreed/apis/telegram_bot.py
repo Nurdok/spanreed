@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime
 import os
 import logging
@@ -15,6 +16,7 @@ from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     CommandHandler,
+    MessageHandler,
     CallbackQueryHandler,
     Application,
 )
@@ -29,6 +31,8 @@ logger = logging.getLogger(__name__)
 CALLBACK_EVENTS = "callback-events"
 CALLBACK_EVENT_RESULTS = "callback-event-results"
 PLUGIN_COMMANDS = "plugin-commands"
+USER_INTERACTION_LOCKS = "user-interaction-locks"
+USER_MESSAGE_CALLBACK_ID = "user-message-callback-id"
 
 
 class CallbackData(NamedTuple):
@@ -90,6 +94,9 @@ class TelegramBotPlugin(Plugin):
             CallbackQueryHandler(self.handle_callback_query)
         )
         application.add_handler(CommandHandler("do", self.show_command_menu))
+        application.add_handler(
+            MessageHandler(filters=None, callback=self.handle_message)
+        )
 
         return application
 
@@ -141,55 +148,69 @@ class TelegramBotPlugin(Plugin):
         user: User = await self.get_user_by_telegram_user_id(telegram_user_id)
         self._logger.info(f"{user.plugins=}")
 
-        # keyboard = []
-        # for plugin_canonical_name, commands in app.bot_data.setdefault(
-        #     PLUGIN_COMMANDS, {}
-        # ).items():
-        #     if plugin_canonical_name not in user.plugins:
-        #         continue
-        #
-        #     self._logger.info(f"Adding commands for {plugin_canonical_name=}")
-        #
-        #     buttons = []
-        #     for command in commands:
-        #         self._logger.info(f"Adding command {command=}")
-        #         buttons.append(
-        #             InlineKeyboardButton(command.text, callback_data=command)
-        #         )
-        #     keyboard.append(buttons)
-
         # We need to do user interaction is a separate task because we can't
         # block the main Telegram bot coroutine.
         async def show_command_menu_task():
-            bot = await TelegramBotApi.for_user(user)
+            try:
+                bot = await TelegramBotApi.for_user(user)
 
-            shown_commands = []
-            for plugin_canonical_name, commands in app.bot_data.setdefault(
-                PLUGIN_COMMANDS, {}
-            ).items():
-                if plugin_canonical_name not in user.plugins:
-                    continue
+                shown_commands = []
+                for plugin_canonical_name, commands in app.bot_data.setdefault(
+                    PLUGIN_COMMANDS, {}
+                ).items():
+                    if plugin_canonical_name not in user.plugins:
+                        continue
 
-                self._logger.info(
-                    f"Adding commands for {plugin_canonical_name=}"
+                    self._logger.info(
+                        f"Adding commands for {plugin_canonical_name=}"
+                    )
+
+                    for command in commands:
+                        self._logger.info(f"Adding command {command=}")
+                        shown_commands.append(command)
+
+                choice = await bot.request_user_choice(
+                    "Please choose a command to run:",
+                    [command.text for command in shown_commands],
                 )
-
-                for command in commands:
-                    self._logger.info(f"Adding command {command=}")
-                    shown_commands.append(command)
-
-            choice = await bot.request_user_choice(
-                "Please choose a command to run:",
-                [command.text for command in shown_commands],
-            )
-            chosen_command = shown_commands[choice]
-            await bot.send_message(f"Running {chosen_command.text}...")
-            self._logger.info(
-                f"Running {chosen_command=}: {chosen_command.callback=}"
-            )
-            await chosen_command.callback(user)
+                chosen_command = shown_commands[choice]
+                await bot.send_message(f"Running {chosen_command.text}...")
+                self._logger.info(
+                    f"Running {chosen_command=}: {chosen_command.callback=}"
+                )
+                await chosen_command.callback(user)
+            except:
+                self._logger.exception("Error in show_command_menu_task")
 
         asyncio.create_task(show_command_menu_task())
+
+    async def handle_message(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        self._logger.info(f"Received message: {update.message.text=}")
+        # Get the user's Telegram ID and find the corresponding user.
+        telegram_user_id: int = update.effective_user.id
+        user: User = await self.get_user_by_telegram_user_id(telegram_user_id)
+        self._logger.info(f"{user=}")
+
+        # See if there's a plugin that is waiting for a message from this user.
+        # If so, notify it.
+        bot = await TelegramBotApi.for_user(user)
+        callback_id: Optional[int] = context.application.bot_data.setdefault(
+            USER_MESSAGE_CALLBACK_ID, {}
+        ).get(telegram_user_id, None)
+        if callback_id is None:
+            self._logger.info("No callback ID found")
+            await bot.send_message("Unexpected message, ignoring...")
+            return
+
+        self._logger.info(f"Found callback ID {callback_id}")
+        context.application.bot_data[CALLBACK_EVENT_RESULTS][
+            callback_id
+        ] = update.message.text
+        # Notify the waiting coroutine that we received the user's message.
+        context.bot_data[CALLBACK_EVENTS][callback_id].set()
+        return
 
 
 class TelegramBotApi:
@@ -199,7 +220,8 @@ class TelegramBotApi:
 
     def __init__(self, telegram_user_id: str):
         self._logger = logging.getLogger(TelegramBotApi.__name__)
-        self._user_id = telegram_user_id
+        self._telegram_user_id = telegram_user_id
+        self._have_interaction_lock = False
 
     @classmethod
     async def register_command(cls, plugin: Plugin, command: PluginCommand):
@@ -233,7 +255,7 @@ class TelegramBotApi:
 
     async def send_message(self, text: str):
         app = await self.get_application()
-        await app.bot.send_message(chat_id=self._user_id, text=text)
+        await app.bot.send_message(chat_id=self._telegram_user_id, text=text)
 
     @classmethod
     async def init_callback(cls) -> Tuple[int, asyncio.Event]:
@@ -252,21 +274,23 @@ class TelegramBotApi:
         callback_id, callback_event = await self.init_callback()
 
         def make_callback_data(position) -> CallbackData:
-            return CallbackData(callback_id, self._user_id, position)
+            return CallbackData(callback_id, self._telegram_user_id, position)
 
         # Set up the keyboard.
         keyboard = []
         for i, choice in enumerate(choices):
             keyboard.append(
-                InlineKeyboardButton(
-                    choice, callback_data=make_callback_data(i)
-                )
+                [
+                    InlineKeyboardButton(
+                        choice, callback_data=make_callback_data(i)
+                    )
+                ]
             )
 
         await app.bot.send_message(
-            chat_id=self._user_id,
+            chat_id=self._telegram_user_id,
             text=prompt,
-            reply_markup=InlineKeyboardMarkup([keyboard]),
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
         # Wait for the user to select a choice.
@@ -276,8 +300,32 @@ class TelegramBotApi:
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
 
     async def request_user_input(self, prompt):
+        app: Application = await self.get_application()
+
+        # Generate a random callback ID to avoid collisions.
+        callback_id, callback_event = await self.init_callback()
+
+        app.bot_data.setdefault(USER_MESSAGE_CALLBACK_ID, {})[
+            self._telegram_user_id
+        ] = callback_id
+
         await self.send_message(prompt)
-        await self.send_message(
-            "Not implemented yet, assuming you said 'hyperion'"
+        self._logger.info(f"Waiting for user input")
+        await callback_event.wait()
+        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
+
+    async def get_user_interaction_lock(self) -> asyncio.Lock:
+        app = await self.get_application()
+        return app.bot_data.setdefault(USER_INTERACTION_LOCKS, {}).setdefault(
+            self._telegram_user_id, asyncio.Lock()
         )
-        return "hyperion"
+
+    @contextlib.asynccontextmanager
+    async def user_interaction(self):
+        # TODO: Need to mark somehow where to return any user input.
+        self._logger.info("Acquiring user interaction lock")
+        async with await self.get_user_interaction_lock():
+            self._logger.info("Acquired user interaction lock")
+            self._have_interaction_lock = True
+            yield
+            self._have_interaction_lock = False
