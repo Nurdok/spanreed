@@ -7,14 +7,15 @@ from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 
 
 def _format_book(book: Book) -> str:
+    return repr(book)
     if not book.authors:
-        return book.title
+        return f"{book.title} ({book.publish_date})"
     if len(book.authors) == 1:
-        return f"{book.title} by {book.authors[0]}"
+        return f"{book.title} by {book.authors[0]} ({book.publish_date})"
     else:
         return (
             f"{book.title} by {', '.join(book.authors[:-1])} "
-            "and {book.authors[-1]}"
+            "and {book.authors[-1]} ({book.publish_date})"
         )
 
 
@@ -31,8 +32,8 @@ class LitNotesPlugin(Plugin):
 
     async def ask_for_book(self, user: User):
         self._logger.info("Asking for book")
-        bot: TelegramBotApi = TelegramBotApi.for_user(user)
-        google_books_api: GoogleBooks = GoogleBooks.for_user(user)
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        google_books_api: GoogleBooks = GoogleBooks("")
 
         self._logger.info("Asking for user input...")
         book_query = await bot.request_user_input(
@@ -64,7 +65,7 @@ class LitNotesPlugin(Plugin):
             await self.add_note_for_book(book, user)
 
     async def add_note_for_book(self, book: Book, user: User):
-        bot: TelegramBotApi = TelegramBotApi.for_user(self._user)
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         await bot.send_message(
             f"Adding note for {_format_book(book)}... jk not implemented"
         )

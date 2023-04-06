@@ -276,4 +276,8 @@ class TelegramBotApi:
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
 
     async def request_user_input(self, prompt):
-        return "input"
+        await self.send_message(prompt)
+        await self.send_message(
+            "Not implemented yet, assuming you said 'hyperion'"
+        )
+        return "hyperion"

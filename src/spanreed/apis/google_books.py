@@ -1,11 +1,11 @@
 import asyncio
+import logging
+
 import aiohttp
-from typing import List, Optional
-from dataclasses import dataclass
+from typing import List, Optional, NamedTuple
 
 
-@dataclass
-class Book:
+class Book(NamedTuple):
     title: str
     authors: List[str]
     publisher: str
@@ -51,5 +51,6 @@ class GoogleBooks:
                     ),
                 )
             )
+            logging.getLogger(__name__).info(books)
 
         return books
