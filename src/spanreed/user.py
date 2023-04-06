@@ -29,4 +29,8 @@ class User:
         self.id = id
         self.name = await redis_api.get(f"user:{id}:name")
         self.config = json.loads(await redis_api.get(f"user:{id}:config"))
+        self.plugins = [
+            name.decode("utf-8")
+            for name in await redis_api.smembers(f"user:{id}:plugins")
+        ]
         return self

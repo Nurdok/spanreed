@@ -11,7 +11,6 @@ import abc
 class Plugin(abc.ABC):
     def __init__(self, redis_api: redis.Redis):
         self._logger = logging.getLogger(self.name)
-        self._logger.info(f"Plugin {self.canonical_name} initialized")
         self._redis: redis.Redis = redis_api
 
     @property
@@ -36,6 +35,7 @@ class Plugin(abc.ABC):
         return json.loads(config)
 
     async def get_users(self) -> List[User]:
+        self._logger.info(f"Getting users for plugin {self.canonical_name}")
         user_ids = [
             int(user_id)
             for user_id in await self._redis.smembers(
@@ -47,6 +47,7 @@ class Plugin(abc.ABC):
             users.append(
                 await User.create_from_db(id=user_id, redis_api=self._redis)
             )
+        self._logger.info(f"Done. Found {len(users)} users.")
         return users
 
     async def run_for_user(self, user: User):
@@ -56,14 +57,15 @@ class Plugin(abc.ABC):
     # change during the lifetime of the plugin.
     # TODO: Refactor to allow for dynamic subscription changes.
     async def run(self):
-        coros = []
-        for user in await self.get_users():
-            self._logger.info(
-                f"Running plugin {self.canonical_name} for user {user.id}"
-            )
-            coros.append(self.run_for_user(user))
-
+        self._logger.info(f"Running plugin {self.canonical_name}")
         try:
+            coros = []
+            for user in await self.get_users():
+                self._logger.info(
+                    f"Running plugin {self.canonical_name} for user {user.id}"
+                )
+                coros.append(self.run_for_user(user))
+
             await asyncio.gather(*coros)
         except:
             self._logger.exception("Exception in plugin run")

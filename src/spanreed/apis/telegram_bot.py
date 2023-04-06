@@ -4,7 +4,7 @@ import os
 import logging
 import typing
 import uuid
-from typing import List, NamedTuple, Optional, Dict
+from typing import List, NamedTuple, Optional, Dict, Callable, Tuple
 from dataclasses import dataclass
 
 from spanreed.plugin import Plugin
@@ -28,12 +28,18 @@ logger = logging.getLogger(__name__)
 
 CALLBACK_EVENTS = "callback-events"
 CALLBACK_EVENT_RESULTS = "callback-event-results"
+PLUGIN_COMMANDS = "plugin-commands"
 
 
 class CallbackData(NamedTuple):
     callback_id: int
     user_id: int
     position: int
+
+
+class PluginCommand(NamedTuple):
+    text: str
+    callback: Callable
 
 
 class TelegramBotPlugin(Plugin):
@@ -83,6 +89,7 @@ class TelegramBotPlugin(Plugin):
         application.add_handler(
             CallbackQueryHandler(self.handle_callback_query)
         )
+        application.add_handler(CommandHandler("do", self.show_command_menu))
 
         return application
 
@@ -111,6 +118,68 @@ class TelegramBotPlugin(Plugin):
 
         await query.delete_message()
 
+    async def get_user_by_telegram_user_id(
+        self, telegram_user_id: int
+    ) -> User:
+        for user in await self.get_users():
+            self._logger.info(f"Checking {user=}")
+            if (
+                user.config.get("telegram", {}).get("user_id", 0)
+                == telegram_user_id
+            ):
+                return user
+
+        raise RuntimeError(f"User not found for {telegram_user_id=}")
+
+    async def show_command_menu(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        app: Application = context.application
+        commands = app.bot_data.setdefault("plugin-commands", {})
+        self._logger.info(f"{commands=}")
+        telegram_user_id: int = update.effective_user.id
+        user: User = await self.get_user_by_telegram_user_id(telegram_user_id)
+        self._logger.info(f"{user.plugins=}")
+
+        # keyboard = []
+        # for plugin_canonical_name, commands in app.bot_data.setdefault(
+        #     PLUGIN_COMMANDS, {}
+        # ).items():
+        #     if plugin_canonical_name not in user.plugins:
+        #         continue
+        #
+        #     self._logger.info(f"Adding commands for {plugin_canonical_name=}")
+        #
+        #     buttons = []
+        #     for command in commands:
+        #         self._logger.info(f"Adding command {command=}")
+        #         buttons.append(
+        #             InlineKeyboardButton(command.text, callback_data=command)
+        #         )
+        #     keyboard.append(buttons)
+
+        bot = await TelegramBotApi.for_user(user)
+
+        shown_commands = []
+        for plugin_canonical_name, commands in app.bot_data.setdefault(
+            PLUGIN_COMMANDS, {}
+        ).items():
+            if plugin_canonical_name not in user.plugins:
+                continue
+
+            self._logger.info(f"Adding commands for {plugin_canonical_name=}")
+
+            for command in commands:
+                self._logger.info(f"Adding command {command=}")
+                shown_commands.append(command)
+
+        choice = await bot.request_user_choice(
+            "Please choose a command to run:",
+            [command.text for command in shown_commands],
+        )
+        chosen_command = shown_commands[choice]
+        await bot.send_message(f"Running {chosen_command.text}...")
+
 
 class TelegramBotApi:
     # TODO: Replace this low-level exposed app with something safer.
@@ -120,6 +189,15 @@ class TelegramBotApi:
     def __init__(self, telegram_user_id: str):
         self._logger = logging.getLogger(TelegramBotApi.__name__)
         self._user_id = telegram_user_id
+
+    @classmethod
+    async def register_command(cls, plugin: Plugin, command: PluginCommand):
+        _logger = logging.getLogger(cls.__name__)
+        _logger.info(f"Registering command '{command.text}'")
+        app = await cls.get_application()
+        app.bot_data.setdefault(PLUGIN_COMMANDS, {}).setdefault(
+            plugin.canonical_name, []
+        ).append(command)
 
     @classmethod
     async def get_application(cls) -> Application:
@@ -146,12 +224,13 @@ class TelegramBotApi:
         app = await self.get_application()
         await app.bot.send_message(chat_id=self._user_id, text=text)
 
-    def _init_callback(self, callback_id: int) -> asyncio.Event:
+    @classmethod
+    async def init_callback(cls) -> Tuple[int, asyncio.Event]:
+        callback_id = uuid.uuid4().int
+        app = await cls.get_application()
         event = asyncio.Event()
-        self._application.bot_data.setdefault(CALLBACK_EVENTS, {})[
-            callback_id
-        ] = event
-        return event
+        app.bot_data.setdefault(CALLBACK_EVENTS, {})[callback_id] = event
+        return callback_id, event
 
     async def request_user_choice(
         self, prompt: str, choices: List[str]
@@ -159,8 +238,7 @@ class TelegramBotApi:
         app = await self.get_application()
 
         # Generate a random callback ID to avoid collisions.
-        callback_id = uuid.uuid4().int
-        callback_event: asyncio.Event = self._init_callback(callback_id)
+        callback_id, callback_event = await self.init_callback()
 
         def make_callback_data(position) -> CallbackData:
             return CallbackData(callback_id, self._user_id, position)
@@ -185,3 +263,6 @@ class TelegramBotApi:
         await callback_event.wait()
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
+
+    async def request_user_input(self, prompt):
+        return "input"

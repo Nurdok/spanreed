@@ -20,30 +20,36 @@ class GoogleBooks:
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    async def get_book(self, query: str) -> Optional[Book]:
+    async def get_books(self, query: str) -> List[Book]:
         url = f"{self.BASE_URL}?q={query}&key={self.api_key}"
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 response.raise_for_status()
                 data = await response.json()
-                return self._get_book_from_json(data)
+                return self._get_books_from_json(data)
 
-    def _get_book_from_json(self, data) -> Optional[Book]:
+    def _get_books_from_json(self, data) -> List[Book]:
         items = data.get("items", [])
         if not items:
             return None
 
         # TODO: decide how to choose book instead of taking the first one.
-        volume_info = items[0]["volumeInfo"]
+        books = []
+        for item in items:
+            volume_info = items[0]["volumeInfo"]
 
-        return Book(
-            title=volume_info.get("title", "Unknown"),
-            authors=volume_info.get("authors", ["Unknown"]),
-            publisher=volume_info.get("publisher", "Unknown"),
-            publish_date=volume_info.get("publishedDate", "Unknown"),
-            description=volume_info.get("description", ""),
-            thumbnail_url=volume_info.get("imageLinks", {}).get(
-                "thumbnail", ""
-            ),
-        )
+            books.append(
+                Book(
+                    title=volume_info.get("title", "Unknown"),
+                    authors=volume_info.get("authors", ["Unknown"]),
+                    publisher=volume_info.get("publisher", "Unknown"),
+                    publish_date=volume_info.get("publishedDate", "Unknown"),
+                    description=volume_info.get("description", ""),
+                    thumbnail_url=volume_info.get("imageLinks", {}).get(
+                        "thumbnail", ""
+                    ),
+                )
+            )
+
+        return books
