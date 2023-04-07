@@ -3,15 +3,26 @@ import logging
 
 import aiohttp
 from typing import List, Optional, NamedTuple, Tuple
+from dataclasses import dataclass
 
 
-class Book(NamedTuple):
+@dataclass
+class Book:
     title: str
     authors: Tuple[str]
     publisher: str
     publish_date: str
     description: str
     thumbnail_url: str
+
+    @property
+    def short_title(self) -> str:
+        unsupported_characters = r"""[*"\/\\<>:|?]+"""
+        return re.split(unsupported_characters, book.title)[0]
+
+    @property
+    def formatted_authors(self) -> str:
+        return ", ".join(f"[[{author}]]" for author in self.authors)
 
 
 class GoogleBooks:

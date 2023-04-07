@@ -1,6 +1,7 @@
 import urllib.parse
 from typing import List
 import re
+import jinja2
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -75,12 +76,23 @@ class LitNotesPlugin(Plugin):
                     await bot.send_message("Sorry I couldn't help.")
 
             # TODO: make this configurable
-            vault = "notes"
-            file_location = "Literature Notes/"
+            vault = user.config["lit-notes"]["vault"]
+            file_location = user.config["lit-notes"]["file_location"]
+
             unsupported_characters = r"""[*"\/\\<>:|?]+"""
             short_title = re.split(unsupported_characters, book.title)[0]
-            note_title = f"{short_title} (book)"
-            note_content = "this is a note"
+
+            env = jinja2.Environment()
+
+            note_title_template: jinja2.Template = env.from_string(
+                user.config["lit-notes"]["note_title_template"]
+            )
+            note_title = note_title_template.render(book=book)
+
+            note_content_template: jinja2.Template = env.from_string(
+                user.config["lit-notes"]["note_content_template"]
+            )
+            note_content = note_content_template.render(book=book)
 
             def e(text: str) -> str:
                 return urllib.parse.quote(text, safe="")
