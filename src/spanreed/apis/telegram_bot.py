@@ -253,9 +253,14 @@ class TelegramBotApi:
         cls._application = application
         cls._application_initialized.set()
 
-    async def send_message(self, text: str):
-        app = await self.get_application()
-        await app.bot.send_message(chat_id=self._telegram_user_id, text=text)
+    async def send_message(self, text: str, parse_html=False):
+        app: Application = await self.get_application()
+        parse_mode = None
+        if parse_html:
+            parse_mode = "HTML"
+        await app.bot.send_message(
+            chat_id=self._telegram_user_id, text=text, parse_mode=parse_mode
+        )
 
     @classmethod
     async def init_callback(cls) -> Tuple[int, asyncio.Event]:

@@ -1,4 +1,6 @@
+import urllib.parse
 from typing import List
+import re
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -71,6 +73,29 @@ class LitNotesPlugin(Plugin):
                 await self.add_note_for_book(book, user)
                 if book_choice == len(books):
                     await bot.send_message("Sorry I couldn't help.")
+
+            # TODO: make this configurable
+            vault = "notes"
+            file_location = "Literature Notes/"
+            unsupported_characters = r"""[*"\/\\<>:|?]+"""
+            short_title = re.split(unsupported_characters, book.title)[0]
+            note_title = f"{short_title} (book)"
+            note_content = "this is a note"
+
+            def e(text: str) -> str:
+                return urllib.parse.quote(text, safe="")
+
+            obsidian_uri = (
+                f"obsidian://new?vault={e(vault)}"
+                f"&file={e(file_location)}{e(note_title)}"
+                f"&content={e(note_content)}"
+            )
+            message = f'<a href="{obsidian_uri}">Open in Obsidian</a> <a href="http://www.example.com/">inline URL</a>'
+            self._logger.info(f"Sending {message=}")
+            await bot.send_message(
+                text=message,
+                parse_html=True,
+            )
 
     async def add_note_for_book(self, book: Book, user: User):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
