@@ -85,12 +85,12 @@ class LitNotesPlugin(Plugin):
             def e(text: str) -> str:
                 return urllib.parse.quote(text, safe="")
 
-            obsidian_uri = (
+            obsidian_uri = "https://amir.rachum.com/fwdr?url=" + e(
                 f"obsidian://new?vault={e(vault)}"
                 f"&file={e(file_location)}{e(note_title)}"
                 f"&content={e(note_content)}"
             )
-            message = f'<a href="{obsidian_uri}">Open in Obsidian</a> <a href="http://www.example.com/">inline URL</a>'
+            message = f'<b><a href="{obsidian_uri}">Open in Obsidian</a></b>'
             self._logger.info(f"Sending {message=}")
             await bot.send_message(
                 text=message,
