@@ -17,6 +17,12 @@ class Book:
     description: str
     thumbnail_url: str
 
+    # For compatibility with Booksidian.
+    @property
+    def full_title(self) -> str:
+        return self.title
+
+    # For Obsidian compatibility.
     @property
     def short_title(self) -> str:
         unsupported_characters = r"""[*"\/\\<>:|?]+"""
@@ -29,6 +35,11 @@ class Book:
     @property
     def publication_year(self) -> str:
         return str(self.publication_date.year)
+
+    # For compatibility with Booksidian.
+    @property
+    def cover_image_url(self) -> str:
+        return self.thumbnail_url
 
 
 def parse_date(date_str: Optional[str]) -> Optional[datetime.date]:
