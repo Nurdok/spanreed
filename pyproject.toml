@@ -13,6 +13,7 @@ redis = "*"
 python-dateutil = "*"
 pyyaml = "*"
 aiohttp = "^3.8.4"
+Jinja2 = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"

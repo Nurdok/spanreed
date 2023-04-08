@@ -174,7 +174,6 @@ class TelegramBotPlugin(Plugin):
                     [command.text for command in shown_commands],
                 )
                 chosen_command = shown_commands[choice]
-                await bot.send_message(f"Running {chosen_command.text}...")
                 self._logger.info(
                     f"Running {chosen_command=}: {chosen_command.callback=}"
                 )
