@@ -10,15 +10,15 @@ from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 
 
 def _format_book(book: Book) -> str:
-    if not book.authors:
-        return f"{book.title} ({book.publish_date})"
-    if len(book.authors) == 1:
-        return f"{book.title} by {book.authors[0]} ({book.publish_date})"
-    else:
-        return (
-            f"{book.title} by {', '.join(book.authors[:-1])} "
-            "and {book.authors[-1]} ({book.publish_date})"
-        )
+    title: str = book.title
+    authors: str = ""
+    if book.authors:
+        authors = f" by "
+        if len(book.authors) == 1:
+            authors += book.authors[0]
+        else:
+            authors += ", ".join(book.authors[:-1]) + f"and {book.authors[-1]}"
+    return f"{title}{authors} ({book.publication_year})"
 
 
 class LitNotesPlugin(Plugin):

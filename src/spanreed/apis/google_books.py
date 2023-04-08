@@ -1,9 +1,11 @@
-import asyncio
+import datetime
 import logging
 
 import aiohttp
 from typing import List, Optional, NamedTuple, Tuple
 from dataclasses import dataclass
+import re
+import dateutil.parser
 
 
 @dataclass
@@ -11,18 +13,32 @@ class Book:
     title: str
     authors: Tuple[str]
     publisher: str
-    publish_date: str
+    publication_date: datetime.date
     description: str
     thumbnail_url: str
 
     @property
     def short_title(self) -> str:
         unsupported_characters = r"""[*"\/\\<>:|?]+"""
-        return re.split(unsupported_characters, book.title)[0]
+        return re.split(unsupported_characters, self.title)[0]
 
     @property
     def formatted_authors(self) -> str:
         return ", ".join(f"[[{author}]]" for author in self.authors)
+
+    @property
+    def publication_year(self) -> str:
+        return str(self.publication_date.year)
+
+
+def parse_date(date_str: Optional[str]) -> Optional[datetime.date]:
+    if date_str is None:
+        return None
+
+    try:
+        return dateutil.parser.parse(date_str).date()
+    except (ValueError, dateutil.parser.ParserError):
+        return None
 
 
 class GoogleBooks:
@@ -56,7 +72,9 @@ class GoogleBooks:
                     title=volume_info.get("title", "Unknown"),
                     authors=tuple(volume_info.get("authors", ["Unknown"])),
                     publisher=volume_info.get("publisher", "Unknown"),
-                    publish_date=volume_info.get("publishedDate", "Unknown"),
+                    publication_date=parse_date(
+                        volume_info.get("publishedDate", None)
+                    ),
                     description=volume_info.get("description", ""),
                     thumbnail_url=volume_info.get("imageLinks", {}).get(
                         "thumbnail", ""
