@@ -44,9 +44,7 @@ class Plugin(abc.ABC):
         ]
         users: List[User] = []
         for user_id in user_ids:
-            users.append(
-                await User.create_from_db(id=user_id, redis_api=self._redis)
-            )
+            users.append(await User.find_by_id(user_id=user_id))
         self._logger.info(f"Done. Found {len(users)} users.")
         return users
 
