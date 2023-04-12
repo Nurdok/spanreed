@@ -56,9 +56,13 @@ class Todoist:
         query = "overdue | (today & no time) | due before:+0 hours"
         return await self._api.get_tasks(filter=query)
 
-    async def get_tasks_with_tag(self, tag) -> List[Task]:
+    async def get_tasks_with_label(self, tag) -> List[Task]:
         # By default, only non-completed tasks are returned.
         query = f"@{tag}"
+        return await self._api.get_tasks(filter=query)
+
+    async def get_ovredue_tasks_with_label(self, tag) -> List[Task]:
+        query = f"@{tag} & overdue"
         return await self._api.get_tasks(filter=query)
 
     async def set_due_date_to_today(self, task: Task):
