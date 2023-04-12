@@ -7,9 +7,11 @@ from spanreed.user import User
 from spanreed.plugin import Plugin
 
 
-async def _update_no_overdue_tasks_to_today(todoist_api):
+async def _update_no_overdue_tasks_to_today(todoist_api: Todoist):
     # TODO: Make the tag name configurable per user.
-    tasks = await todoist_api.get_tasks_with_tag("spanreed/no-overdue")
+    tasks = await todoist_api.get_overdue_tasks_with_label(
+        "spanreed/no-overdue"
+    )
     for task in tasks:
         await todoist_api.set_due_date_to_today(task)
 
