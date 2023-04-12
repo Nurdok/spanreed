@@ -28,6 +28,8 @@ class Book:
 
     @property
     def publication_year(self) -> str:
+        if self.publication_date is None:
+            return "Unknown"
         return str(self.publication_date.year)
 
 
