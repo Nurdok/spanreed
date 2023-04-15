@@ -6,7 +6,7 @@ from enum import Enum, member
 import json
 from typing import List, NamedTuple, Optional
 
-import redis
+import redis.asyncio as redis
 
 from spanreed.plugin import Plugin
 from spanreed.user import User

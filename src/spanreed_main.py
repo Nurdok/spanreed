@@ -1,6 +1,4 @@
-import spanreed
 import asyncio
-from spanreed.apis.todoist import Todoist
 import redis.asyncio as redis
 import os
 import logging

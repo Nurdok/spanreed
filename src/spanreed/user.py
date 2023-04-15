@@ -1,4 +1,4 @@
-import redis
+import redis.asyncio as redis
 import json
 from typing import List
 

@@ -1,10 +1,9 @@
-import redis
+import redis.asyncio as redis
 import asyncio
 import logging
 import json
 from typing import Optional, List
 from spanreed.user import User
-import spanreed
 import abc
 
 
