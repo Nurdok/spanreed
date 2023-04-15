@@ -76,15 +76,83 @@ class AdminPlugin(Plugin):
             await managed_user.set_config(new_config)
 
     async def _manage_plugins(self, bot: TelegramBotApi, managed_user: User):
-        await bot.send_message(
-            "The user is currently using these plugins: "
-            + ", ".join(managed_user.plugins)
-        )
+        while True:
+            plugins = await Plugin.get_plugins_for_user(managed_user)
+            if not plugins:
+                await bot.send_message("The user is not using any plugins.")
+            else:
+                await bot.send_message(
+                    "The user is currently using these plugins: \n"
+                    + "\n".join(f"- {p.name}" for p in plugins)
+                )
+
+            choice = await bot.request_user_choice(
+                "What would you like to do?",
+                [
+                    "Register to new plugin",
+                    "Unregister from an existing plugin",
+                    "Cancel",
+                ],
+            )
+            if choice == 0:  # Register to new plugin
+                await self._register_to_new_plugin(bot, managed_user)
+            elif choice == 1:  # Unregister from an existing plugin
+                await self._unregister_from_an_existing_plugin(
+                    bot, managed_user
+                )
+            elif choice == 2:  # Cancel
+                return
+
+    async def _register_to_new_plugin(
+        self, bot: TelegramBotApi, managed_user: User
+    ):
+        # Filter out plugins that the user is already using.
+        plugins: List[Plugin] = [
+            plugin
+            for plugin in await Plugin.get_all_plugins()
+            if managed_user.plugins is None
+            or plugin.canonical_name not in managed_user.plugins
+        ]
+
+        if not plugins:
+            await bot.send_message("There are no plugins to register to.")
+            return
+
         choice = await bot.request_user_choice(
-            "Do you want to change these?", ["Yes", "No"]
+            "Which plugin do you want to register to?",
+            [p.name for p in plugins] + ["Cancel"],
         )
-        if choice == 0:
-            await bot.send_message("Not implemented yet")
+        if choice == len(plugins):  # Cancel
+            return
+
+        plugin = plugins[choice]
+        self._logger.info(
+            f"Registering user {managed_user} to plugin {plugin}"
+        )
+        await plugin.register_user(managed_user)
+
+    async def _unregister_from_an_existing_plugin(
+        self, bot: TelegramBotApi, managed_user: User
+    ):
+        if not managed_user.plugins:
+            await bot.send_message("There are no plugins to unregister from.")
+            return
+
+        plugins = await Plugin.get_plugins_for_user(managed_user)
+
+        choice = await bot.request_user_choice(
+            "Which plugin do you want to unregister from?",
+            [p.name for p in plugins] + ["Cancel"],
+        )
+
+        if choice == len(plugins):  # Cancel
+            return
+
+        plugin = plugins[choice]
+        self._logger.info(
+            f"Unregistering user {managed_user} from plugin {plugin}"
+        )
+        await plugin.unregister_user(managed_user)
 
     async def _ask_for_managed_user(
         self, user: User, bot: TelegramBotApi
@@ -104,7 +172,6 @@ class AdminPlugin(Plugin):
         if managed_user is None:
             return None
 
-        await bot.send_message(f"Managing user: {managed_user}")
         return managed_user
 
     async def _create_user(self, bot: TelegramBotApi) -> User:
@@ -121,9 +188,7 @@ class AdminPlugin(Plugin):
 
         if choice == 0:
             managed_user_id = await bot.request_user_input("What's the ID?")
-            return await User.find_by_id(
-                id=managed_user_id, redis_api=self._redis
-            )
+            return await User.find_by_id(user.id)
         elif choice == 1:
             return await self._browse_for_user(user, bot)
 

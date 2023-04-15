@@ -13,7 +13,7 @@ class User:
         self.name: str = ""
 
     def __str__(self):
-        return f"User(id={self.id}, name={self.name})"
+        return f"{self.name} (id {self.id})"
 
     async def set_name(self, name: str):
         self.name = name
@@ -40,7 +40,7 @@ class User:
         return await cls.redis_api.incr("user:id:counter")
 
     @classmethod
-    async def find_by_id(cls, *, user_id: int) -> "User":
+    async def find_by_id(cls, user_id: int) -> "User":
         self = User()
         self.id = user_id
         self.name = (await cls.redis_api.get(f"user:{user_id}:name")).decode(

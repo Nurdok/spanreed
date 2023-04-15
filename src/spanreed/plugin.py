@@ -9,7 +9,10 @@ import abc
 
 
 class Plugin(abc.ABC):
+    plugins: List["Plugin"] = []
+
     def __init__(self, redis_api: redis.Redis):
+        Plugin.register(self)
         self._logger = logging.getLogger(self.name)
         self._redis: redis.Redis = redis_api
 
@@ -48,6 +51,14 @@ class Plugin(abc.ABC):
         self._logger.info(f"Done. Found {len(users)} users.")
         return users
 
+    async def register_user(self, user: User):
+        await self._redis.sadd(f"user:{user.id}:plugins", self.canonical_name)
+        await self._redis.sadd(f"plugin:{self.canonical_name}:users", user.id)
+
+    async def unregister_user(self, user: User):
+        await self._redis.srem(f"user:{user.id}:plugins", self.canonical_name)
+        await self._redis.srem(f"plugin:{self.canonical_name}:users", user.id)
+
     async def run_for_user(self, user: User):
         pass
 
@@ -67,3 +78,24 @@ class Plugin(abc.ABC):
             await asyncio.gather(*coros)
         except:
             self._logger.exception("Exception in plugin run")
+
+    @classmethod
+    def register(cls, plugin):
+        cls.plugins.append(plugin)
+
+    @classmethod
+    async def get_all_plugins(cls):
+        return cls.plugins
+
+    @classmethod
+    async def get_plugins_for_user(cls, user: User):
+        plugins = []
+        for plugin in cls.plugins:
+            if await plugin.is_subscribed(user):
+                plugins.append(plugin)
+        return plugins
+
+    async def is_subscribed(self, user: User) -> bool:
+        return await self._redis.sismember(
+            f"user:{user.id}:plugins", self.canonical_name
+        )
