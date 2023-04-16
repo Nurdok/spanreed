@@ -80,6 +80,10 @@ class Plugin(abc.ABC):
 
     @classmethod
     def register(cls, plugin):
+        if plugin.canonical_name in [p.canonical_name for p in cls.plugins]:
+            raise ValueError(
+                f"Plugin with name {plugin.canonical_name} already registered."
+            )
         cls.plugins.append(plugin)
 
     @classmethod

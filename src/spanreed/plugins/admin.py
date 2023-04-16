@@ -162,6 +162,8 @@ class AdminPlugin(Plugin):
             ["Me", "Another existing user", "Create a new user"],
         )
 
+        managed_user: Optional[User] = None
+
         if choice == 0:
             managed_user = user
         elif choice == 1:
@@ -188,7 +190,7 @@ class AdminPlugin(Plugin):
 
         if choice == 0:
             managed_user_id = await bot.request_user_input("What's the ID?")
-            return await User.find_by_id(user.id)
+            return await User.find_by_id(managed_user_id)
         elif choice == 1:
             return await self._browse_for_user(user, bot)
 

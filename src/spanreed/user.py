@@ -24,10 +24,15 @@ class User:
         await self.redis_api.set(f"user:{self.id}:config", json.dumps(config))
 
     async def set_plugins(self, plugins: List[str]):
-        await self.redis_api.sadd(f"user:{self.id}:plugins", plugins)
+        self.plugins = plugins
+        for plugin in plugins:
+            await self.redis_api.sadd(
+                f"config:plugin:name={plugin}:users", self.id
+            )
+            await self.redis_api.sadd(f"user:{self.id}:plugins", plugin)
 
     @classmethod
-    async def create(cls, name: str):
+    async def create(cls, name="Master"):
         self = User()
         self.id = await cls._generate_user_id()
         await self.set_name(name)

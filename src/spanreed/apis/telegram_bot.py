@@ -6,7 +6,7 @@ import logging
 import typing
 import uuid
 from typing import List, NamedTuple, Optional, Dict, Callable, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -44,6 +44,11 @@ class CallbackData(NamedTuple):
 class PluginCommand(NamedTuple):
     text: str
     callback: Callable
+
+
+@dataclass
+class UserConfig:
+    user_id: int
 
 
 class TelegramBotPlugin(Plugin):
@@ -94,6 +99,7 @@ class TelegramBotPlugin(Plugin):
             CallbackQueryHandler(self.handle_callback_query)
         )
         application.add_handler(CommandHandler("do", self.show_command_menu))
+        application.add_handler(CommandHandler("start", self.start))
         application.add_handler(
             MessageHandler(filters=None, callback=self.handle_message)
         )
@@ -136,7 +142,73 @@ class TelegramBotPlugin(Plugin):
             ):
                 return user
 
-        raise RuntimeError(f"User not found for {telegram_user_id=}")
+        raise KeyError(f"User not found for {telegram_user_id=}")
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        telegram_user_id: int = update.effective_user.id
+        self._logger.info(
+            f"Got a /start command from user {telegram_user_id=}"
+        )
+        existing_user: Optional[User] = None
+        with contextlib.suppress(KeyError):
+            existing_user = await self.get_user_by_telegram_user_id(
+                telegram_user_id
+            )
+        if existing_user is not None:
+            bot = await TelegramBotApi.for_user(existing_user)
+            await bot.send_message("Did you forget me, dawg? We already met!")
+            return
+
+        async def start_task():
+            user: User = await User.create()
+            telegram_config: UserConfig = UserConfig(user_id=telegram_user_id)
+
+            # Normally we'd edit the existing config, but we just created the
+            # user, so we can just set it.
+            await user.set_config({"telegram": asdict(telegram_config)})
+            await user.set_plugins(["telegram-bot"])
+
+            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+            await bot.send_message(
+                "Howdy partner! I'm Spanreed, your <i>personal</i> "
+                "personal assistant.\n"
+                "Let's set you up in the system.\n"
+            )
+            await asyncio.sleep(2)
+            name = await bot.request_user_input(
+                "How do you want me to address you?"
+            )
+            await user.set_name(name)
+            insulting_names = [
+                "master",
+                "lord",
+                "lady",
+                "sir",
+                "madam",
+                "boss",
+            ]
+            if name.lower() in insulting_names:
+                await bot.send_message(
+                    f"A bit degrading, but okay, <i>{name}</i>.\n"
+                )
+            else:
+                await bot.send_message(f"Cool. cool cool cool.")
+            await asyncio.sleep(2)
+            await bot.send_message(
+                "To get started, you can use the <code>/do</code> command,\n"
+                "It will show you a list of commands you can use.\n"
+                "Since you're new here, there won't be many commands to "
+                "choose from. The magic happens when you "
+                "<b>install plugins</b>.\n"
+                "You can install plugins using the same <code>/do</code> "
+                "command.\n"
+                "Once you've installed a plugin, you'll see the commands "
+                "it provides in the list.\n"
+                "Some plugins will also send you messages, like asking your "
+                "input on decisions, or sending you reminders.\n"
+            )
+
+        asyncio.create_task(start_task())
 
     async def show_command_menu(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -204,7 +276,7 @@ class TelegramBotPlugin(Plugin):
             return
 
         self._logger.info(f"Found callback ID {callback_id}")
-        context.application.bot_data[CALLBACK_EVENT_RESULTS][
+        context.application.bot_data.setdefault(CALLBACK_EVENT_RESULTS, {})[
             callback_id
         ] = update.message.text
         # Notify the waiting coroutine that we received the user's message.
@@ -252,7 +324,7 @@ class TelegramBotApi:
         cls._application = application
         cls._application_initialized.set()
 
-    async def send_message(self, text: str, parse_html=False):
+    async def send_message(self, text: str, parse_html=True):
         app: Application = await self.get_application()
         parse_mode = None
         if parse_html:
