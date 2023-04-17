@@ -1,8 +1,8 @@
 import base64
 import urllib.parse
 from typing import List, Optional
-import re
 import jinja2
+from dataclasses import dataclass, asdict
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -20,6 +20,14 @@ def _format_book(book: Book) -> str:
         else:
             authors += ", ".join(book.authors[:-1]) + f"and {book.authors[-1]}"
     return f"{title}{authors} ({book.publication_year})"
+
+
+@dataclass
+class UserConfig:
+    vault: str
+    file_location: str
+    note_title_template: str
+    note_content_template: str
 
 
 class LitNotesPlugin(Plugin):
@@ -168,4 +176,32 @@ class LitNotesPlugin(Plugin):
         await bot.send_message(
             text=message,
             parse_html=True,
+        )
+
+    async def ask_for_user_config(self, user: User):
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+
+        # No need to acquire the user interaction lock here, since we're
+        # being called by a method that has it already.
+        vault = await bot.request_user_input(
+            "What is the name of the Obsidian vault you want to use?"
+        )
+        file_location = await bot.request_user_input(
+            "What is the file location of the note you want to create?"
+        )
+        note_title_template = await bot.request_user_input(
+            "What is the template for the note title?"
+        )
+        note_content_template = await bot.request_user_input(
+            "What is the template for the note content?"
+        )
+
+        user_config = UserConfig(
+            vault=vault,
+            file_location=file_location,
+            note_title_template=note_title_template,
+            note_content_template=note_content_template,
+        )
+        await user.set_config_for_plugin(
+            self.canonical_name, asdict(user_config)
         )

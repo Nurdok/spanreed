@@ -6,12 +6,17 @@ import logging
 import typing
 import uuid
 from typing import List, NamedTuple, Optional, Dict, Callable, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    constants,
+)
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -44,6 +49,11 @@ class CallbackData(NamedTuple):
 class PluginCommand(NamedTuple):
     text: str
     callback: Callable
+
+
+@dataclass
+class UserConfig:
+    user_id: int
 
 
 class TelegramBotPlugin(Plugin):
@@ -94,6 +104,7 @@ class TelegramBotPlugin(Plugin):
             CallbackQueryHandler(self.handle_callback_query)
         )
         application.add_handler(CommandHandler("do", self.show_command_menu))
+        application.add_handler(CommandHandler("start", self.start))
         application.add_handler(
             MessageHandler(filters=None, callback=self.handle_message)
         )
@@ -136,7 +147,98 @@ class TelegramBotPlugin(Plugin):
             ):
                 return user
 
-        raise RuntimeError(f"User not found for {telegram_user_id=}")
+        raise KeyError(f"User not found for {telegram_user_id=}")
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        telegram_user_id: int = update.effective_user.id
+        self._logger.info(
+            f"Got a /start command from user {telegram_user_id=}"
+        )
+        existing_user: Optional[User] = None
+        with contextlib.suppress(KeyError):
+            existing_user = await self.get_user_by_telegram_user_id(
+                telegram_user_id
+            )
+        if existing_user is not None:
+            bot = await TelegramBotApi.for_user(existing_user)
+            async with bot.user_interaction():
+                await bot.send_multiple_messages(
+                    "Eh, this is awkward.",
+                    f"We already know each other, {existing_user.name}...",
+                    "To be honest, I'm a little bit offended.",
+                    f"If {existing_user.name} is even your real name...",
+                    "Anyway, use the <code>/do</code> command to get started.",
+                )
+            return
+
+        async def start_task():
+            user: User = await User.create()
+            telegram_config: UserConfig = UserConfig(user_id=telegram_user_id)
+
+            # Normally we'd edit the existing config, but we just created the
+            # user, so we can just set it.
+            await user.set_config({"telegram": asdict(telegram_config)})
+
+            # These two plugins are required for the bot to work.
+            # Importing here to avoid cicular imports.
+            from spanreed.plugins.plugin_manager import PluginManagerPlugin
+
+            required_plugins = [
+                await Plugin.get_plugin_by_class(TelegramBotPlugin),
+                await Plugin.get_plugin_by_class(PluginManagerPlugin),
+            ]
+
+            for plugin in required_plugins:
+                await plugin.register_user(user)
+
+            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+
+            async with bot.user_interaction():
+                await bot.send_message("Howdy partner!")
+                await asyncio.sleep(1)
+                await bot.send_message(
+                    "I'm Spanreed, your <i>personal</i> "
+                    "personal assistant.\n"
+                )
+                await asyncio.sleep(1)
+                await bot.send_message("Let's set you up in the system.\n")
+                await asyncio.sleep(1)
+                name = await bot.request_user_input(
+                    "How do you want me to address you?"
+                )
+                await user.set_name(name)
+                insulting_names = [
+                    "master",
+                    "lord",
+                    "lady",
+                    "sir",
+                    "madam",
+                    "boss",
+                ]
+                if name.lower() in insulting_names:
+                    await bot.send_message(
+                        f"A bit degrading, but okay, <i>{name}</i>.\n"
+                    )
+                else:
+                    await bot.send_message(f"Cool. Cool cool cool.")
+                await asyncio.sleep(1)
+                await bot.send_multiple_messages(
+                    "To get started, you can use the <code>/do</code> command,\n"
+                    "It will show you a list of commands you can use.\n",
+                    "Since you're new here, there won't be many commands to "
+                    "choose from. The magic happens when you "
+                    "<b>install plugins</b>.",
+                    "You can install plugins using the same <code>/do</code> "
+                    "command.",
+                    "Once you've installed a plugin, you'll see the commands "
+                    "it provides in the list.",
+                    "Some plugins will also send you messages, like asking your "
+                    "input on decisions, or sending you reminders.",
+                    "Try it now - send me a <code>/do</code> command.",
+                    delay=1,
+                )
+
+        asyncio.create_task(start_task())
 
     async def show_command_menu(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -204,7 +306,7 @@ class TelegramBotPlugin(Plugin):
             return
 
         self._logger.info(f"Found callback ID {callback_id}")
-        context.application.bot_data[CALLBACK_EVENT_RESULTS][
+        context.application.bot_data.setdefault(CALLBACK_EVENT_RESULTS, {})[
             callback_id
         ] = update.message.text
         # Notify the waiting coroutine that we received the user's message.
@@ -252,7 +354,7 @@ class TelegramBotApi:
         cls._application = application
         cls._application_initialized.set()
 
-    async def send_message(self, text: str, parse_html=False):
+    async def send_message(self, text: str, *, parse_html=True):
         app: Application = await self.get_application()
         parse_mode = None
         if parse_html:
@@ -260,6 +362,17 @@ class TelegramBotApi:
         await app.bot.send_message(
             chat_id=self._telegram_user_id, text=text, parse_mode=parse_mode
         )
+
+    async def send_multiple_messages(
+        self, *text: str, delay: int = 1, parse_html=True
+    ):
+        app: Application = await self.get_application()
+        for message in text:
+            await app.bot.send_chat_action(
+                self._telegram_user_id, action=constants.ChatAction.TYPING
+            )
+            await asyncio.sleep(delay)
+            await self.send_message(message, parse_html=parse_html)
 
     @classmethod
     async def init_callback(cls) -> Tuple[int, asyncio.Event]:
@@ -333,3 +446,4 @@ class TelegramBotApi:
             self._have_interaction_lock = True
             yield
             self._have_interaction_lock = False
+        self._logger.info("Released user interaction lock")
