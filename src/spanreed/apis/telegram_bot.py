@@ -166,47 +166,79 @@ class TelegramBotPlugin(Plugin):
             # Normally we'd edit the existing config, but we just created the
             # user, so we can just set it.
             await user.set_config({"telegram": asdict(telegram_config)})
-            await user.set_plugins(["telegram-bot"])
+
+            # These two plugins are required for the bot to work.
+            # Importing here to avoid cicular imports.
+            from spanreed.plugins.plugin_manager import PluginManagerPlugin
+
+            required_plugins = [
+                await Plugin.get_plugin_by_class(TelegramBotPlugin),
+                await Plugin.get_plugin_by_class(PluginManagerPlugin),
+            ]
+
+            for plugin in required_plugins:
+                await plugin.register_user(user)
 
             bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-            await bot.send_message(
-                "Howdy partner! I'm Spanreed, your <i>personal</i> "
-                "personal assistant.\n"
-                "Let's set you up in the system.\n"
-            )
-            await asyncio.sleep(2)
-            name = await bot.request_user_input(
-                "How do you want me to address you?"
-            )
-            await user.set_name(name)
-            insulting_names = [
-                "master",
-                "lord",
-                "lady",
-                "sir",
-                "madam",
-                "boss",
-            ]
-            if name.lower() in insulting_names:
+
+            async with bot.user_interaction():
+                await bot.send_message("Howdy partner!")
+                await asyncio.sleep(1)
                 await bot.send_message(
-                    f"A bit degrading, but okay, <i>{name}</i>.\n"
+                    "I'm Spanreed, your <i>personal</i> "
+                    "personal assistant.\n"
                 )
-            else:
-                await bot.send_message(f"Cool. cool cool cool.")
-            await asyncio.sleep(2)
-            await bot.send_message(
-                "To get started, you can use the <code>/do</code> command,\n"
-                "It will show you a list of commands you can use.\n"
-                "Since you're new here, there won't be many commands to "
-                "choose from. The magic happens when you "
-                "<b>install plugins</b>.\n"
-                "You can install plugins using the same <code>/do</code> "
-                "command.\n"
-                "Once you've installed a plugin, you'll see the commands "
-                "it provides in the list.\n"
-                "Some plugins will also send you messages, like asking your "
-                "input on decisions, or sending you reminders.\n"
-            )
+                await asyncio.sleep(1)
+                await bot.send_message("Let's set you up in the system.\n")
+                await asyncio.sleep(1)
+                name = await bot.request_user_input(
+                    "How do you want me to address you?"
+                )
+                await user.set_name(name)
+                insulting_names = [
+                    "master",
+                    "lord",
+                    "lady",
+                    "sir",
+                    "madam",
+                    "boss",
+                ]
+                if name.lower() in insulting_names:
+                    await bot.send_message(
+                        f"A bit degrading, but okay, <i>{name}</i>.\n"
+                    )
+                else:
+                    await bot.send_message(f"Cool. cool cool cool.")
+                await asyncio.sleep(1)
+                await bot.send_message(
+                    "To get started, you can use the <code>/do</code> command,\n"
+                    "It will show you a list of commands you can use.\n"
+                )
+                await asyncio.sleep(1)
+                await bot.send_message(
+                    "Since you're new here, there won't be many commands to "
+                    "choose from. The magic happens when you "
+                    "<b>install plugins</b>.\n"
+                )
+                await asyncio.sleep(1)
+                await bot.send_message(
+                    "You can install plugins using the same <code>/do</code> "
+                    "command.\n"
+                )
+                await asyncio.sleep(1)
+                await bot.send_message(
+                    "Once you've installed a plugin, you'll see the commands "
+                    "it provides in the list.\n"
+                )
+                await asyncio.sleep(1)
+                await bot.send_message(
+                    "Some plugins will also send you messages, like asking your "
+                    "input on decisions, or sending you reminders.\n"
+                )
+                await asyncio.sleep(1)
+                await bot.send_message(
+                    "Try it now - send me a <code>/do</code> command.\n"
+                )
 
         asyncio.create_task(start_task())
 
@@ -405,3 +437,4 @@ class TelegramBotApi:
             self._have_interaction_lock = True
             yield
             self._have_interaction_lock = False
+        self._logger.info("Released user interaction lock")

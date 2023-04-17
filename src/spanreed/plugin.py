@@ -38,6 +38,7 @@ class Plugin(abc.ABC):
 
     async def get_users(self) -> List[User]:
         self._logger.info(f"Getting users for plugin {self.canonical_name}")
+        self._logger.info(f"Getting user list key {self._get_user_list_key()}")
         user_ids = [
             int(user_id)
             for user_id in await self._redis.smembers(
@@ -51,12 +52,13 @@ class Plugin(abc.ABC):
         return users
 
     async def register_user(self, user: User):
+        await self.ask_for_user_config(user)
         await self._redis.sadd(f"user:{user.id}:plugins", self.canonical_name)
-        await self._redis.sadd(f"plugin:{self.canonical_name}:users", user.id)
+        await self._redis.sadd(self._get_user_list_key(), user.id)
 
     async def unregister_user(self, user: User):
         await self._redis.srem(f"user:{user.id}:plugins", self.canonical_name)
-        await self._redis.srem(f"plugin:{self.canonical_name}:users", user.id)
+        await self._redis.srem(self._get_user_list_key(), user.id)
 
     async def run_for_user(self, user: User):
         pass
@@ -91,6 +93,16 @@ class Plugin(abc.ABC):
         return cls.plugins
 
     @classmethod
+    async def get_plugin_by_class(cls, plugin_cls):
+        for plugin in cls.plugins:
+            logging.getLogger(__name__).info(
+                f"Checking {plugin.__class__=} against {plugin_cls=}"
+            )
+            if plugin.__class__ == plugin_cls:
+                return plugin
+        return None
+
+    @classmethod
     async def get_plugins_for_user(cls, user: User):
         plugins = []
         for plugin in cls.plugins:
@@ -102,3 +114,6 @@ class Plugin(abc.ABC):
         return await self._redis.sismember(
             f"user:{user.id}:plugins", self.canonical_name
         )
+
+    async def ask_for_user_config(self, user: User):
+        pass

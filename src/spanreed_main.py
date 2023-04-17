@@ -14,11 +14,13 @@ from spanreed.plugins.therapy import TherapyPlugin
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.admin import AdminPlugin
+from spanreed.plugins.plugin_manager import PluginManagerPlugin
 
 
 def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
     core_plugins = [
         TelegramBotPlugin(redis_api=redis_api),
+        PluginManagerPlugin(redis_api=redis_api),
     ]
 
     # TODO: Load optional plugins dynamically.

@@ -23,6 +23,10 @@ class User:
         self.config = config
         await self.redis_api.set(f"user:{self.id}:config", json.dumps(config))
 
+    async def set_config_for_plugin(self, plugin_name: str, config: dict):
+        self.config[plugin_name] = config
+        await self.set_config(self.config)
+
     async def set_plugins(self, plugins: List[str]):
         self.plugins = plugins
         for plugin in plugins:
