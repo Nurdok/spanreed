@@ -11,7 +11,12 @@ from dataclasses import dataclass, asdict
 from spanreed.plugin import Plugin
 from spanreed.user import User
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    constants,
+)
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -156,7 +161,14 @@ class TelegramBotPlugin(Plugin):
             )
         if existing_user is not None:
             bot = await TelegramBotApi.for_user(existing_user)
-            await bot.send_message("Did you forget me, dawg? We already met!")
+            async with bot.user_interaction():
+                await bot.send_multiple_messages(
+                    "Eh, this is awkward.",
+                    f"We already know each other, {existing_user.name}...",
+                    "To be honest, I'm a little bit offended.",
+                    f"If {existing_user.name} is even your real name...",
+                    "Anyway, use the <code>/do</code> command to get started.",
+                )
             return
 
         async def start_task():
@@ -208,36 +220,22 @@ class TelegramBotPlugin(Plugin):
                         f"A bit degrading, but okay, <i>{name}</i>.\n"
                     )
                 else:
-                    await bot.send_message(f"Cool. cool cool cool.")
+                    await bot.send_message(f"Cool. Cool cool cool.")
                 await asyncio.sleep(1)
-                await bot.send_message(
+                await bot.send_multiple_messages(
                     "To get started, you can use the <code>/do</code> command,\n"
-                    "It will show you a list of commands you can use.\n"
-                )
-                await asyncio.sleep(1)
-                await bot.send_message(
+                    "It will show you a list of commands you can use.\n",
                     "Since you're new here, there won't be many commands to "
                     "choose from. The magic happens when you "
-                    "<b>install plugins</b>.\n"
-                )
-                await asyncio.sleep(1)
-                await bot.send_message(
+                    "<b>install plugins</b>.",
                     "You can install plugins using the same <code>/do</code> "
-                    "command.\n"
-                )
-                await asyncio.sleep(1)
-                await bot.send_message(
+                    "command.",
                     "Once you've installed a plugin, you'll see the commands "
-                    "it provides in the list.\n"
-                )
-                await asyncio.sleep(1)
-                await bot.send_message(
+                    "it provides in the list.",
                     "Some plugins will also send you messages, like asking your "
-                    "input on decisions, or sending you reminders.\n"
-                )
-                await asyncio.sleep(1)
-                await bot.send_message(
-                    "Try it now - send me a <code>/do</code> command.\n"
+                    "input on decisions, or sending you reminders.",
+                    "Try it now - send me a <code>/do</code> command.",
+                    delay=1,
                 )
 
         asyncio.create_task(start_task())
@@ -356,7 +354,7 @@ class TelegramBotApi:
         cls._application = application
         cls._application_initialized.set()
 
-    async def send_message(self, text: str, parse_html=True):
+    async def send_message(self, text: str, *, parse_html=True):
         app: Application = await self.get_application()
         parse_mode = None
         if parse_html:
@@ -364,6 +362,17 @@ class TelegramBotApi:
         await app.bot.send_message(
             chat_id=self._telegram_user_id, text=text, parse_mode=parse_mode
         )
+
+    async def send_multiple_messages(
+        self, *text: str, delay: int = 1, parse_html=True
+    ):
+        app: Application = await self.get_application()
+        for message in text:
+            await app.bot.send_chat_action(
+                self._telegram_user_id, action=constants.ChatAction.TYPING
+            )
+            await asyncio.sleep(delay)
+            await self.send_message(message, parse_html=parse_html)
 
     @classmethod
     async def init_callback(cls) -> Tuple[int, asyncio.Event]:

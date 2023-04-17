@@ -50,7 +50,8 @@ async def run_all_tasks():
     plugins = load_plugins(redis_api=redis_api)
 
     logging.info(
-        f"Running {len(plugins)} plugins: {[plugin.canonical_name for plugin in plugins]}"
+        f"Running {len(plugins)} plugins: "
+        f"{[plugin.canonical_name for plugin in plugins]}"
     )
     await asyncio.gather(*[plugin.run() for plugin in plugins])
 
