@@ -4,6 +4,7 @@ from todoist_api_python.api_async import TodoistAPIAsync, Task, Comment
 from spanreed.apis.telegram_bot import TelegramBotApi
 from typing import List, Optional
 from spanreed.user import User
+from spanreed.plugin import Plugin
 
 
 def format_task(task):
@@ -15,17 +16,13 @@ class UserConfig:
     api_token: str
 
 
-class Todoist:
-    def __init__(self, user_config: UserConfig):
-        self._api = TodoistAPIAsync(user_config.api_token)
-        self._logger = logging.getLogger(__name__)
+class TodoistPlugin(Plugin):
+    @property
+    def name(self):
+        return "Todoist"
 
     def has_user_config(self):
         return True
-
-    @classmethod
-    def for_user(cls, user: User):
-        return Todoist(cls.UserConfig(**user.config["todoist"]))
 
     @classmethod
     async def ask_for_user_config(cls, user: User):
@@ -33,7 +30,17 @@ class Todoist:
         api_token = await bot.request_user_input(
             "Please enter your Todoist API token. "
         )
-        return cls.UserConfig(api_token=api_token)
+        return UserConfig(api_token=api_token)
+
+
+class Todoist:
+    def __init__(self, user_config: UserConfig):
+        self._api = TodoistAPIAsync(user_config.api_token)
+        self._logger = logging.getLogger(__name__)
+
+    @classmethod
+    def for_user(cls, user: User):
+        return Todoist(UserConfig(**user.config["todoist"]))
 
     async def update_task(self, task: Task, **kwargs):
         await self._api.update_task(task.id, **kwargs)

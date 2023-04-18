@@ -1,11 +1,9 @@
 import asyncio
-import spanreed
 import datetime
-import logging
 from typing import List
-import os
-from spanreed.apis.todoist import Todoist, Task
+from spanreed.apis.todoist import Todoist, Task, TodoistPlugin
 from spanreed.user import User
+from spanreed.plugin import Plugin
 import dateutil
 import dateutil.tz
 import dateutil.rrule
@@ -25,7 +23,7 @@ def get_recurrence(dtstart: datetime.datetime) -> dateutil.rrule.rrule:
     )
 
 
-class TherapyPlugin(spanreed.plugin.Plugin):
+class TherapyPlugin(Plugin):
     @property
     def name(self) -> str:
         return "Therapy"
@@ -33,6 +31,10 @@ class TherapyPlugin(spanreed.plugin.Plugin):
     # TODO: Change to True once the plugin is ready.
     def has_user_config(self) -> bool:
         return False
+
+    @classmethod
+    def get_prerequisites(cls) -> List[type[Plugin]]:
+        return [TodoistPlugin]
 
     async def run_for_user(self, user: User):
         todoist_api = Todoist.for_user(user)

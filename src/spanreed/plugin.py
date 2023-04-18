@@ -4,11 +4,10 @@ import logging
 import json
 from typing import Optional, List
 from spanreed.user import User
-from spanreed.registrable import Registrable
 import abc
 
 
-class Plugin(Registrable):
+class Plugin(abc.ABC):
     plugins: List["Plugin"] = []
 
     def __init__(self, redis_api: redis.Redis):
@@ -24,6 +23,10 @@ class Plugin(Registrable):
     @property
     def canonical_name(self):
         return self.name.replace(" ", "-").lower()
+
+    @classmethod
+    def get_prerequisites(cls) -> List[type("Plugin")]:
+        return []
 
     def _get_config_key(self, user):
         return f"config:plugin:name={self.canonical_name}:user_id={user.id}"
@@ -53,10 +56,32 @@ class Plugin(Registrable):
         return users
 
     async def register_user(self, user: User):
-        if self.has_user_config():
-            from spanreed.apis.telegram_bot import TelegramBotApi
+        from spanreed.apis.telegram_bot import TelegramBotApi
 
-            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+
+        unregistered_plugins: List[Plugin] = [
+            plugin
+            for plugin_cls in self.get_prerequisites()
+            if not await (
+                plugin := await self.get_plugin_by_class(plugin_cls)
+            ).is_registered(user)
+        ]
+
+        if unregistered_plugins:
+            choice: int = await bot.request_user_choice(
+                "This plugin requires some other plugins you haven't"
+                " configured yet.\nWould you like to do that right now?",
+                ["Okay", "Cancel"],
+            )
+            if choice != 0:
+                await bot.send_message("Okay, we'll skip this plugin for now.")
+                return
+
+            for plugin in unregistered_plugins:
+                await plugin.register_user(user)
+
+        if self.has_user_config():
             await bot.send_multiple_messages(
                 f"The {self.name} plugin requires some configuration.",
                 "Let's do that now.",
@@ -87,7 +112,7 @@ class Plugin(Registrable):
                 coros.append(self.run_for_user(user))
 
             await asyncio.gather(*coros)
-        except:
+        except Exception:
             self._logger.exception("Exception in plugin run")
 
     @classmethod
@@ -103,24 +128,25 @@ class Plugin(Registrable):
         return cls.plugins
 
     @classmethod
-    async def get_plugin_by_class(cls, plugin_cls):
+    async def get_plugin_by_class(cls, plugin_cls) -> "Plugin":
         for plugin in cls.plugins:
             logging.getLogger(__name__).info(
                 f"Checking {plugin.__class__=} against {plugin_cls=}"
             )
             if plugin.__class__ == plugin_cls:
                 return plugin
-        return None
+
+        raise ValueError(f"Plugin {plugin_cls} not found.")
 
     @classmethod
     async def get_plugins_for_user(cls, user: User):
         plugins = []
         for plugin in cls.plugins:
-            if await plugin.is_subscribed(user):
+            if await plugin.is_registered(user):
                 plugins.append(plugin)
         return plugins
 
-    async def is_subscribed(self, user: User) -> bool:
+    async def is_registered(self, user: User) -> bool:
         return await self._redis.sismember(
             f"user:{user.id}:plugins", self.canonical_name
         )

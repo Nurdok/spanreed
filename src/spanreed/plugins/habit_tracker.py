@@ -12,15 +12,6 @@ from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.telegram_bot import TelegramBotApi
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    ContextTypes,
-    CommandHandler,
-    CallbackQueryHandler,
-    Application,
-)
-
 
 class ActivityType(Enum):
     UNKNOWN = 0
