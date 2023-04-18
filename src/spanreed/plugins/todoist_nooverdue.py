@@ -3,7 +3,7 @@ import datetime
 from spanreed.apis.todoist import Todoist, TodoistPlugin
 from spanreed.user import User
 from spanreed.plugin import Plugin
-from typing import List
+from typing import List, Type
 
 
 async def _update_no_overdue_tasks_to_today(todoist_api: Todoist):
@@ -25,7 +25,7 @@ class TodoistNoOverduePlugin(Plugin):
         return False
 
     @classmethod
-    def get_prerequisites(cls) -> List[type("Plugin")]:
+    def get_prerequisites(cls) -> List[Type[Plugin]]:
         return [TodoistPlugin]
 
     async def run_for_user(self, user: User):
