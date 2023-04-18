@@ -1,4 +1,4 @@
-import dataclasses
+from dataclasses import dataclass, asdict
 import logging
 from todoist_api_python.api_async import TodoistAPIAsync, Task, Comment
 from spanreed.apis.telegram_bot import TelegramBotApi
@@ -10,14 +10,18 @@ def format_task(task):
     return f"Task(id={repr(task.id)}, content={repr(task.content)})"
 
 
-class Todoist:
-    @dataclasses.dataclass
-    class UserConfig:
-        api_token: str
+@dataclass
+class UserConfig:
+    api_token: str
 
+
+class Todoist:
     def __init__(self, user_config: UserConfig):
         self._api = TodoistAPIAsync(user_config.api_token)
         self._logger = logging.getLogger(__name__)
+
+    def has_user_config(self):
+        return True
 
     @classmethod
     def for_user(cls, user: User):

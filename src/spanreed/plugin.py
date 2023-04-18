@@ -4,10 +4,11 @@ import logging
 import json
 from typing import Optional, List
 from spanreed.user import User
+from spanreed.registrable import Registrable
 import abc
 
 
-class Plugin(abc.ABC):
+class Plugin(Registrable):
     plugins: List["Plugin"] = []
 
     def __init__(self, redis_api: redis.Redis):
@@ -52,7 +53,16 @@ class Plugin(abc.ABC):
         return users
 
     async def register_user(self, user: User):
-        await self.ask_for_user_config(user)
+        if self.has_user_config():
+            from spanreed.apis.telegram_bot import TelegramBotApi
+
+            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+            await bot.send_multiple_messages(
+                f"The {self.name} plugin requires some configuration.",
+                "Let's do that now.",
+            )
+            await self.ask_for_user_config(user)
+
         await self._redis.sadd(f"user:{user.id}:plugins", self.canonical_name)
         await self._redis.sadd(self._get_user_list_key(), user.id)
 
@@ -114,14 +124,3 @@ class Plugin(abc.ABC):
         return await self._redis.sismember(
             f"user:{user.id}:plugins", self.canonical_name
         )
-
-    @abc.abstractmethod
-    def has_user_config(self) -> bool:
-        pass
-
-    async def ask_for_user_config(self, user: User):
-        if self.has_user_config():
-            raise NotImplementedError(
-                "Plugin has user config, but no implementation for "
-                "asking for user config."
-            )
