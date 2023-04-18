@@ -115,5 +115,13 @@ class Plugin(abc.ABC):
             f"user:{user.id}:plugins", self.canonical_name
         )
 
-    async def ask_for_user_config(self, user: User):
+    @abc.abstractmethod
+    def has_user_config(self) -> bool:
         pass
+
+    async def ask_for_user_config(self, user: User):
+        if self.has_user_config():
+            raise NotImplementedError(
+                "Plugin has user config, but no implementation for "
+                "asking for user config."
+            )

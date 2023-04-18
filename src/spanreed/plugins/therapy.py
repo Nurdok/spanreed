@@ -30,6 +30,10 @@ class TherapyPlugin(spanreed.plugin.Plugin):
     def name(self) -> str:
         return "Therapy"
 
+    # TODO: Change to True once the plugin is ready.
+    def has_user_config(self) -> bool:
+        return False
+
     async def run_for_user(self, user: User):
         todoist_api = Todoist.for_user(user)
         tag = "spanreed/therapy"

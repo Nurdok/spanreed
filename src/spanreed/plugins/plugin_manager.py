@@ -2,6 +2,8 @@ from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 from spanreed.plugin import Plugin
 from spanreed.user import User
 
+from typing import List
+
 import redis.asyncio as redis
 
 
@@ -14,6 +16,9 @@ class PluginManagerPlugin(Plugin):
     @property
     def name(self) -> str:
         return "Plugin Manager"
+
+    def has_user_config(self) -> bool:
+        return False
 
     async def run(self):
         await TelegramBotApi.register_command(

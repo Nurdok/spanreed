@@ -21,6 +21,10 @@ class TodoistNoOverduePlugin(Plugin):
     def name(self) -> str:
         return "Todoist No Overdue"
 
+    # TODO: Make the Todoist label configurable.
+    def has_user_config(self) -> bool:
+        return False
+
     async def run_for_user(self, user: User):
         todoist_api = Todoist.for_user(user)
 

@@ -61,6 +61,12 @@ class TelegramBotPlugin(Plugin):
     def name(self) -> str:
         return "Telegram Bot"
 
+    def has_user_config(self) -> bool:
+        # There is actually a UserConfig, but we don't need the user's
+        # input to create it, as we take the user's ID from the Telegram
+        # API.
+        return False
+
     async def run(self):
         application = await self.setup_application()
 
@@ -137,7 +143,7 @@ class TelegramBotPlugin(Plugin):
         await query.delete_message()
 
     async def get_user_by_telegram_user_id(
-        self, telegram_user_id: int
+        self, telegram_user_id: int, send_message_on_failure: bool = True
     ) -> User:
         for user in await self.get_users():
             self._logger.info(f"Checking {user=}")
@@ -147,6 +153,20 @@ class TelegramBotPlugin(Plugin):
             ):
                 return user
 
+        if send_message_on_failure:
+            app = await TelegramBotApi.get_application()
+            self._logger.error(
+                f"Got a /do command from unknown user {telegram_user_id=}"
+            )
+            # We need to use the underlying Telegram API here, because we can't
+            # use the bot API wrapper, which requires a user to be registered.
+            await app.bot.send_message(
+                chat_id=telegram_user_id,
+                text=(
+                    "You're not registered yet.\n"
+                    "Please use the /start command to register."
+                ),
+            )
         raise KeyError(f"User not found for {telegram_user_id=}")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,7 +177,8 @@ class TelegramBotPlugin(Plugin):
         existing_user: Optional[User] = None
         with contextlib.suppress(KeyError):
             existing_user = await self.get_user_by_telegram_user_id(
-                telegram_user_id
+                telegram_user_id,
+                send_message_on_failure=False,
             )
         if existing_user is not None:
             bot = await TelegramBotApi.for_user(existing_user)

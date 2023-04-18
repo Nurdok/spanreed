@@ -35,6 +35,9 @@ class LitNotesPlugin(Plugin):
     def name(self) -> str:
         return "Lit Notes"
 
+    def has_user_config(self) -> bool:
+        return True
+
     async def run(self):
         await TelegramBotApi.register_command(
             self,

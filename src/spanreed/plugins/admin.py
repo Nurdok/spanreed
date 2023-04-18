@@ -12,6 +12,9 @@ class AdminPlugin(Plugin):
     def name(self) -> str:
         return "Admin"
 
+    def has_user_config(self) -> bool:
+        return False
+
     async def run(self):
         await TelegramBotApi.register_command(
             self,

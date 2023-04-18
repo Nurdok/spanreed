@@ -107,6 +107,9 @@ class HabitTrackerPlugin(Plugin):
     def name(self) -> str:
         return "Habit Tracker"
 
+    def has_user_config(self) -> bool:
+        return True
+
     async def run_for_user(self, user: User):
         self._logger.info(f"Running for user {user}")
         bot = await TelegramBotApi.for_user(user)
