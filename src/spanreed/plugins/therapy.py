@@ -1,13 +1,36 @@
 import asyncio
 import datetime
-from typing import List
+from typing import Optional
 from spanreed.apis.todoist import Todoist, Task, TodoistPlugin
+from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
+from dataclasses import dataclass, asdict
 import dateutil
 import dateutil.tz
 import dateutil.rrule
 import yaml
+
+
+@dataclass
+class RecurringPayment:
+    todoist_label: str
+    todoist_task_template: str
+    date_format: str
+    recurrence_cost: float
+
+    # Recurrence configuration, see dateutil.rrule.rrule.
+    timezone: str
+    frequency: int  # See dateutil.rrule.FREQUENCIES
+    week_start_day: int  # See dateutil.rrule.WEEKDAYS
+    week_day: int  # See dateutil.rrule.WEEKDAYS
+    hour: int
+    minute: int
+
+
+@dataclass
+class UserConfig:
+    recurring_payments: list[RecurringPayment]
 
 
 # TODO: recurrences should be configurable per-user.
@@ -28,12 +51,54 @@ class TherapyPlugin(Plugin):
     def name(self) -> str:
         return "Therapy"
 
-    # TODO: Change to True once the plugin is ready.
     def has_user_config(self) -> bool:
-        return False
+        return True
+
+    async def ask_for_user_config(self, user: User):
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        recurring_payments: list[RecurringPayment] = []
+        while True:
+            if recurring_payments:
+                choice = await bot.request_user_choice(
+                    f"You currently have {len(recurring_payments)} recurring "
+                    f"payments.\nWould you like to add another?",
+                    ["Yes", "No"],
+                )
+                if choice == 1:
+                    break
+
+            rp = RecurringPayment()
+            rp.todoist_label = await bot.request_user_input(
+                "Please enter a unique label of the Todoist task where you'd"
+                " like to keep track of payments:"
+            )
+            choice = await bot.request_user_choice(
+                "The default date format is %Y-%m-%d. Would you like to "
+                "change it?",
+                ["Keep as-is", "Change it"],
+            )
+            if choice == 1:
+                rp.date_format = await bot.request_user_input(
+                    "Please enter the date format:"
+                )
+            else:
+                rp.date_format = "%Y-%m-%d"
+
+            rp.todoist_task_template = await bot.request_user_input(
+                "Please enter a template for the Todoist task name.\n"
+                "You can use the following optional placeholders:\n"
+                "  <b>{dates}</b>: A list of all unpaid dates.\n"
+                "  <b>{total_cost}</b>: The total cost of all unpaid dates.\n"
+                "\n"
+                "Examples: \n"
+                "  Pay therapist ${total_cost} (for {dates})"
+                "  Give my daughter her allowance ({total_cost}₪) "
+            )
+
+        return UserConfig(recurring_payments)
 
     @classmethod
-    def get_prerequisites(cls) -> List[type[Plugin]]:
+    def get_prerequisites(cls) -> list[type[Plugin]]:
         return [TodoistPlugin]
 
     async def run_for_user(self, user: User):
@@ -50,7 +115,7 @@ class TherapyPlugin(Plugin):
             self._logger.info(f'{next_session.date().strftime("%Y-%m-%d")=}')
             await asyncio.sleep(wait_time.total_seconds())
             date_str = next_session.date().strftime("%Y-%m-%d")
-            tasks: List[Task] = await todoist_api.get_tasks_with_tag(tag)
+            tasks: list[Task] = await todoist_api.get_tasks_with_tag(tag)
             if len(tasks) != 1:
                 raise RuntimeError(
                     f"Expected exactly one task with the tag {tag}, got {len(tasks)}"
@@ -63,7 +128,7 @@ class TherapyPlugin(Plugin):
             comment_yaml = desc_split[1]
             self._logger.info(f"{comment_yaml=}")
             therapy_sd = yaml.safe_load(comment_yaml)
-            dates: List[str] = therapy_sd["dates"]
+            dates: list[str] = therapy_sd["dates"]
 
             if date_str not in dates:
                 dates.append(date_str)
