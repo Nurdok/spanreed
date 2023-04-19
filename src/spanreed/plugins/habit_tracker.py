@@ -99,7 +99,7 @@ class HabitTrackerPlugin(Plugin):
         return "Habit Tracker"
 
     def has_user_config(self) -> bool:
-        return True
+        return False
 
     async def run_for_user(self, user: User):
         self._logger.info(f"Running for user {user}")
