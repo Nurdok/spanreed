@@ -1,14 +1,16 @@
+from __future__ import annotations
+
 import redis.asyncio as redis
 import asyncio
 import logging
 import json
-from typing import Optional, List
+from typing import Optional, Type
 from spanreed.user import User
 import abc
 
 
 class Plugin(abc.ABC):
-    plugins: List["Plugin"] = []
+    plugins: list[Plugin] = []
 
     def __init__(self, redis_api: redis.Redis):
         Plugin.register(self)
@@ -25,7 +27,7 @@ class Plugin(abc.ABC):
         return self.name.replace(" ", "-").lower()
 
     @classmethod
-    def get_prerequisites(cls) -> List[type("Plugin")]:
+    def get_prerequisites(cls) -> list[Type[Plugin]]:
         return []
 
     def _get_config_key(self, user):
@@ -40,7 +42,7 @@ class Plugin(abc.ABC):
             return None
         return json.loads(config)
 
-    async def get_users(self) -> List[User]:
+    async def get_users(self) -> list[User]:
         self._logger.info(f"Getting users for plugin {self.canonical_name}")
         self._logger.info(f"Getting user list key {self._get_user_list_key()}")
         user_ids = [
@@ -49,7 +51,7 @@ class Plugin(abc.ABC):
                 self._get_user_list_key()
             )
         ]
-        users: List[User] = []
+        users: list[User] = []
         for user_id in user_ids:
             users.append(await User.find_by_id(user_id=user_id))
         self._logger.info(f"Done. Found {len(users)} users.")
@@ -60,7 +62,7 @@ class Plugin(abc.ABC):
 
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
-        unregistered_plugins: List[Plugin] = [
+        unregistered_plugins: list[Plugin] = [
             plugin
             for plugin_cls in self.get_prerequisites()
             if not await (
