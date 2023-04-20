@@ -67,8 +67,7 @@ class TherapyPlugin(Plugin):
                 if choice == 1:
                     break
 
-            rp = RecurringPayment()
-            rp.todoist_label = await bot.request_user_input(
+            todoist_label = await bot.request_user_input(
                 "Please enter a unique label of the Todoist task where you'd"
                 " like to keep track of payments:"
             )
@@ -78,23 +77,87 @@ class TherapyPlugin(Plugin):
                 ["Keep as-is", "Change it"],
             )
             if choice == 1:
-                rp.date_format = await bot.request_user_input(
+                date_format = await bot.request_user_input(
                     "Please enter the date format:"
                 )
             else:
-                rp.date_format = "%Y-%m-%d"
+                date_format = "%Y-%m-%d"
 
-            rp.todoist_task_template = await bot.request_user_input(
+            todoist_task_template = await bot.request_user_input(
                 "Please enter a template for the Todoist task name.\n"
                 "You can use the following optional placeholders:\n"
-                "  <b>{dates}</b>: A list of all unpaid dates.\n"
-                "  <b>{total_cost}</b>: The total cost of all unpaid dates.\n"
+                "  <b>{{dates}}</b>: A list of all unpaid dates.\n"
+                "  <b>{{total_cost}}</b>: The total cost of all unpaid dates.\n"
                 "\n"
                 "Examples: \n"
-                "  Pay therapist ${total_cost} (for {dates})"
-                "  Give my daughter her allowance ({total_cost}₪) "
+                '  "Pay therapist ${{total_cost}} (for {{dates}})"\n'
+                '  "Give my daughter her allowance ({{total_cost}}₪)"\n'
             )
 
+            recurrence_cost = float(
+                await bot.request_user_input(
+                    "Please enter the cost of a single recurrence (you"
+                    " can enter 0 if you only:"
+                )
+            )
+
+            # TODO: This is horrible - improve.
+            timezone = await bot.request_user_choice(
+                "Please choose your timezone:",
+                ["America/New_York", "Asia/Jerusalem"],
+            )
+
+            frequency = await bot.request_user_choice(
+                "Please choose the frequency of the recurrence:",
+                [freq.capitalize() for freq in dateutil.rrule.FREQNAMES],
+            )
+
+            week_start_day = await bot.request_user_choice(
+                "Please choose the week start day:",
+                [day.capitalize() for day in dateutil.rrule.weekdays],
+            )
+
+            weekdays = {
+                "Monday": dateutil.rrule.MO,
+                "Tuesday": dateutil.rrule.TU,
+                "Wednesday": dateutil.rrule.WE,
+                "Thursday": dateutil.rrule.TH,
+                "Friday": dateutil.rrule.FR,
+                "Saturday": dateutil.rrule.SA,
+                "Sunday": dateutil.rrule.SU,
+            }
+            weekday_choices = weekdays.keys()
+
+            week_day = await bot.request_user_choice(
+                "Please choose the week day:", weekdays
+            )
+
+            hour = int(
+                await bot.request_user_input(
+                    "Please enter the hour of the day (0-23):"
+                )
+            )
+
+            minute = int(
+                await bot.request_user_input(
+                    "Please enter the minute of the day (0-59):"
+                )
+            )
+
+            recurring_payments.append(
+                RecurringPayment(
+                    todoist_label=todoist_label,
+                    todoist_task_template=todoist_task_template,
+                    date_format=date_format,
+                    recurrence_cost=recurrence_cost,
+                    timezone=timezone,
+                    frequency=frequency,
+                    week_start_day=week_start_day,
+                    week_day=week_day,
+                    hour=hour,
+                    minute=minute,
+                )
+            )
         return UserConfig(recurring_payments)
 
     @classmethod
