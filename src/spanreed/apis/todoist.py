@@ -30,7 +30,9 @@ class TodoistPlugin(Plugin):
         api_token = await bot.request_user_input(
             "Please enter your Todoist API token. "
         )
-        return UserConfig(api_token=api_token)
+        await user.set_config_for_plugin(
+            cls.canonical_name, asdict(UserConfig(api_token))
+        )
 
 
 class Todoist:

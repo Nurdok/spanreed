@@ -9,17 +9,13 @@ from dataclasses import dataclass, asdict
 import dateutil
 import dateutil.tz
 import dateutil.rrule
+from dateutil.rrule import FREQNAMES
 import yaml
 
 
 @dataclass
-class RecurringPayment:
-    todoist_label: str
-    todoist_task_template: str
-    date_format: str
-    recurrence_cost: float
-
-    # Recurrence configuration, see dateutil.rrule.rrule.
+class RecurrenceInfo:
+    # These fields correspond to dateutil.rrule.rrule parameters.
     timezone: str
     frequency: int  # See dateutil.rrule.FREQUENCIES
     week_start_day: int  # See dateutil.rrule.WEEKDAYS
@@ -29,21 +25,20 @@ class RecurringPayment:
 
 
 @dataclass
+class RecurringPayment:
+    todoist_label: str
+    todoist_task_template: str
+    date_format: str
+    recurrence_cost: float
+    recurrence_info: RecurrenceInfo
+
+
+@dataclass
 class UserConfig:
     recurring_payments: list[RecurringPayment]
 
 
 # TODO: recurrences should be configurable per-user.
-def get_recurrence(dtstart: datetime.datetime) -> dateutil.rrule.rrule:
-    return dateutil.rrule.rrule(
-        dtstart=dtstart,
-        freq=dateutil.rrule.WEEKLY,
-        wkst=dateutil.rrule.SU,
-        byweekday=dateutil.rrule.WE,
-        byhour=14,
-        byminute=0,
-        bysecond=0,
-    )
 
 
 class TherapyPlugin(Plugin):
@@ -51,10 +46,11 @@ class TherapyPlugin(Plugin):
     def name(self) -> str:
         return "Therapy"
 
-    def has_user_config(self) -> bool:
+    @staticmethod
+    def has_user_config() -> bool:
         return True
 
-    async def ask_for_user_config(self, user: User):
+    async def ask_for_user_config(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         recurring_payments: list[RecurringPayment] = []
         while True:
@@ -97,27 +93,33 @@ class TherapyPlugin(Plugin):
             recurrence_cost = float(
                 await bot.request_user_input(
                     "Please enter the cost of a single recurrence (you"
-                    " can enter 0 if you only:"
+                    " can enter 0 if you only want to accumulate the dates):"
                 )
             )
 
+            timezones = [
+                "Africa/Abidjan",
+                "America/New_York",
+                "Asia/Jerusalem",
+            ]
+
             # TODO: This is horrible - improve.
-            timezone = await bot.request_user_choice(
-                "Please choose your timezone:",
-                ["America/New_York", "Asia/Jerusalem"],
-            )
+            # TODO: use this maybe:
+            # import pytz
+            # pytz.all_timezones
+
+            timezone: str = timezones[
+                await bot.request_user_choice(
+                    "Please choose your timezone:", timezones
+                )
+            ]
 
             frequency = await bot.request_user_choice(
                 "Please choose the frequency of the recurrence:",
                 [freq.capitalize() for freq in dateutil.rrule.FREQNAMES],
             )
 
-            week_start_day = await bot.request_user_choice(
-                "Please choose the week start day:",
-                [day.capitalize() for day in dateutil.rrule.weekdays],
-            )
-
-            weekdays = {
+            weekdays: dict[str, dateutil.rrule.weekday] = {
                 "Monday": dateutil.rrule.MO,
                 "Tuesday": dateutil.rrule.TU,
                 "Wednesday": dateutil.rrule.WE,
@@ -126,11 +128,26 @@ class TherapyPlugin(Plugin):
                 "Saturday": dateutil.rrule.SA,
                 "Sunday": dateutil.rrule.SU,
             }
-            weekday_choices = weekdays.keys()
 
-            week_day = await bot.request_user_choice(
-                "Please choose the week day:", weekdays
+            weekday_choices = sorted(
+                weekdays.keys(), key=lambda x: weekdays[x].weekday
             )
+
+            week_start_day = weekdays[
+                weekday_choices[
+                    await bot.request_user_choice(
+                        "Please choose the week start day:", weekday_choices
+                    )
+                ]
+            ]
+
+            week_day = weekdays[
+                weekday_choices[
+                    await bot.request_user_choice(
+                        "Please choose the week day:", weekday_choices
+                    )
+                ]
+            ]
 
             hour = int(
                 await bot.request_user_input(
@@ -150,38 +167,63 @@ class TherapyPlugin(Plugin):
                     todoist_task_template=todoist_task_template,
                     date_format=date_format,
                     recurrence_cost=recurrence_cost,
-                    timezone=timezone,
-                    frequency=frequency,
-                    week_start_day=week_start_day,
-                    week_day=week_day,
-                    hour=hour,
-                    minute=minute,
+                    recurrence_info=RecurrenceInfo(
+                        timezone=timezone,
+                        frequency=frequency,
+                        week_start_day=week_start_day.weekday,
+                        week_day=week_day.weekday,
+                        hour=hour,
+                        minute=minute,
+                    ),
                 )
             )
-        return UserConfig(recurring_payments)
+
+        self._logger.info(f"{asdict(UserConfig(recurring_payments))=}")
+        await user.set_config_for_plugin(
+            self.canonical_name, asdict(UserConfig(recurring_payments))
+        )
 
     @classmethod
     def get_prerequisites(cls) -> list[type[Plugin]]:
         return [TodoistPlugin]
 
-    async def run_for_user(self, user: User):
+    @staticmethod
+    def get_recurrence(recurrence: RecurringPayment):
+        tz: datetime.tzinfo = dateutil.tz.gettz(recurrence.timezone)
+        return dateutil.rrule.rrule(
+            dtstart=datetime.datetime.now(tz=tz),
+            freq=recurrence.recurrence_info.frequency,
+            wkst=recurrence.recurrence_info.week_start_day,
+            byweekday=recurrence.recurrence_info.week_day,
+            byhour=recurrence.recurrence_info.hour,
+        )
+
+    async def run_for_single_recurrence(
+        self, user: User, recurring_payment: RecurringPayment
+    ):
         todoist_api = Todoist.for_user(user)
-        tag = "spanreed/therapy"
-        israel_tz = dateutil.tz.gettz("Asia/Jerusalem")
-        dtstart = datetime.datetime.now(tz=israel_tz)
-        recurrence = get_recurrence(dtstart)
-        next_session: datetime.datetime = recurrence.after(dtstart)
-        self._logger.info(f"{next_session=}")
+        tz: datetime.tzinfo = dateutil.tz.gettz(recurring_payment.timezone)
+
+        def now():
+            return datetime.datetime.now(tz=tz)
+
+        recurrence = self.get_recurrence(recurring_payment)
+        next_event: datetime.datetime = recurrence.after(now())
+
+        self._logger.info(f"{next_event=}")
         while True:
-            wait_time = next_session - datetime.datetime.now(tz=israel_tz)
+            wait_time = next_event - now()
             self._logger.info(f"Waiting for {wait_time}")
-            self._logger.info(f'{next_session.date().strftime("%Y-%m-%d")=}')
+            self._logger.info(f'{next_event.date().strftime("%Y-%m-%d")=}')
             await asyncio.sleep(wait_time.total_seconds())
-            date_str = next_session.date().strftime("%Y-%m-%d")
-            tasks: list[Task] = await todoist_api.get_tasks_with_tag(tag)
+            date_str = next_event.date().strftime("%Y-%m-%d")
+            tasks: list[Task] = await todoist_api.get_tasks_with_tag(
+                recurring_payment.todoist_label
+            )
             if len(tasks) != 1:
                 raise RuntimeError(
-                    f"Expected exactly one task with the tag {tag}, got {len(tasks)}"
+                    f"Expected exactly one task with the label"
+                    f" {recurring_payment.todoist_label}, got {len(tasks)}"
                 )
             (task,) = tasks
             comment = await todoist_api.get_first_comment_with_yaml(task)
@@ -195,7 +237,7 @@ class TherapyPlugin(Plugin):
 
             if date_str not in dates:
                 dates.append(date_str)
-                total_cost = therapy_sd["session_cost"] * len(dates)
+                total_cost = therapy_sd["event_cost"] * len(dates)
                 therapy_sd["total_cost"] = total_cost
                 new_task_content = f'Pay {therapy_sd["therapist"]} {total_cost}₪ for {", ".join(dates)}'
                 new_comment_content = "---\n".join(
@@ -209,3 +251,13 @@ class TherapyPlugin(Plugin):
                 )
                 await todoist_api.update_task(task, content=new_task_content)
                 await todoist_api.set_due_date_to_today(task)
+
+    async def run_for_user(self, user: User):
+        user_config = UserConfig(
+            **user.get_config_for_plugin(self.canonical_name)
+        )
+
+        for recurring_payment in user_config.recurring_payments:
+            asyncio.create_task(
+                self.run_for_single_recurrence(user, recurring_payment)
+            )

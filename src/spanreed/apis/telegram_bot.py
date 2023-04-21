@@ -188,7 +188,7 @@ class TelegramBotPlugin(Plugin):
                     f"We already know each other, {existing_user.name}...",
                     "To be honest, I'm a little bit offended.",
                     f"If {existing_user.name} is even your real name...",
-                    "Anyway, use the <code>/do</code> command to get started.",
+                    "Anyway, use the /do command to get started.",
                 )
             return
 
@@ -244,18 +244,17 @@ class TelegramBotPlugin(Plugin):
                     await bot.send_message(f"Cool. Cool cool cool.")
                 await asyncio.sleep(1)
                 await bot.send_multiple_messages(
-                    "To get started, you can use the <code>/do</code> command,\n"
+                    "To get started, you can use the /do command,\n"
                     "It will show you a list of commands you can use.\n",
                     "Since you're new here, there won't be many commands to "
                     "choose from. The magic happens when you "
                     "<b>install plugins</b>.",
-                    "You can install plugins using the same <code>/do</code> "
-                    "command.",
+                    "You can install plugins using the same /do " "command.",
                     "Once you've installed a plugin, you'll see the commands "
                     "it provides in the list.",
-                    "Some plugins will also send you messages, like asking your "
-                    "input on decisions, or sending you reminders.",
-                    "Try it now - send me a <code>/do</code> command.",
+                    "Some plugins will also send you messages, like asking "
+                    "your input on decisions, or sending you reminders.",
+                    "Try it now - send me a /do command.",
                     delay=1,
                 )
 
