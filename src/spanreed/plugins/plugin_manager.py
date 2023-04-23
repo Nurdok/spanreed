@@ -13,11 +13,12 @@ class PluginManagerPlugin(Plugin):
     def __init__(self, redis_api: redis.Redis):
         super().__init__(redis_api)
 
-    @property
-    def name(self) -> str:
+    @classmethod
+    def name(cls) -> str:
         return "Plugin Manager"
 
-    def has_user_config(self) -> bool:
+    @classmethod
+    def has_user_config(cls) -> bool:
         return False
 
     async def run(self):

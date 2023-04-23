@@ -56,16 +56,18 @@ class UserConfig:
     user_id: int
 
 
-class TelegramBotPlugin(Plugin):
-    @property
-    def name(self) -> str:
+class TelegramBotPlugin(Plugin[UserConfig]):
+    @classmethod
+    def name(cls) -> str:
         return "Telegram Bot"
 
-    def has_user_config(self) -> bool:
-        # There is actually a UserConfig, but we don't need the user's
-        # input to create it, as we take the user's ID from the Telegram
-        # API.
-        return False
+    @classmethod
+    def has_user_config(cls) -> bool:
+        return True
+
+    @classmethod
+    def get_config_class(cls) -> type[UserConfig]:
+        return UserConfig
 
     async def run(self):
         application = await self.setup_application()
@@ -194,11 +196,7 @@ class TelegramBotPlugin(Plugin):
 
         async def start_task():
             user: User = await User.create()
-            telegram_config: UserConfig = UserConfig(user_id=telegram_user_id)
-
-            # Normally we'd edit the existing config, but we just created the
-            # user, so we can just set it.
-            await user.set_config({"telegram": asdict(telegram_config)})
+            await self.set_config(user, UserConfig(user_id=telegram_user_id))
 
             # These two plugins are required for the bot to work.
             # Importing here to avoid cicular imports.
@@ -365,7 +363,9 @@ class TelegramBotApi:
         _logger.info("Waiting for application to initialize...")
         await cls.get_application()
         _logger.info("Application initialized")
-        return TelegramBotApi(user.config["telegram"]["user_id"])
+        return TelegramBotApi(
+            (await TelegramBotPlugin.get_config(user)).user_id
+        )
 
     @classmethod
     def set_application(cls, application: Application):

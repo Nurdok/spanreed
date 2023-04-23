@@ -17,11 +17,12 @@ class UserConfig:
 
 
 class TodoistPlugin(Plugin):
-    @property
-    def name(self):
+    @classmethod
+    def name(cls):
         return "Todoist"
 
-    def has_user_config(self):
+    @classmethod
+    def has_user_config(cls):
         return True
 
     async def ask_for_user_config(self, user: User):

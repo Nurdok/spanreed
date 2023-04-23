@@ -19,10 +19,6 @@ class User:
         self.name = name
         await self.redis_api.set(f"user:{self.id}:name", name)
 
-    async def set_config(self, config: dict):
-        self.config = json.dumps(config)
-        await self.redis_api.set(f"user:{self.id}:config", self.config)
-
     async def set_config_for_plugin(self, plugin_name: str, config: dict):
         self.config[plugin_name] = config
         await self.set_config(self.config)
@@ -43,7 +39,6 @@ class User:
         self = User()
         self.id = await cls._generate_user_id()
         await self.set_name(name)
-        await self.set_config({})
         await self.set_plugins([])
         return self
 

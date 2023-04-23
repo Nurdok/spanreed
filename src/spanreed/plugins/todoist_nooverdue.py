@@ -16,12 +16,13 @@ async def _update_no_overdue_tasks_to_today(todoist_api: Todoist):
 
 
 class TodoistNoOverduePlugin(Plugin):
-    @property
-    def name(self) -> str:
+    @classmethod
+    def name(cls) -> str:
         return "Todoist No Overdue"
 
     # TODO: Make the Todoist label configurable.
-    def has_user_config(self) -> bool:
+    @classmethod
+    def has_user_config(cls) -> bool:
         return False
 
     @classmethod

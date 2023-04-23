@@ -31,11 +31,12 @@ class UserConfig:
 
 
 class LitNotesPlugin(Plugin):
-    @property
-    def name(self) -> str:
+    @classmethod
+    def name(cls) -> str:
         return "Lit Notes"
 
-    def has_user_config(self) -> bool:
+    @classmethod
+    def has_user_config(cls) -> bool:
         return True
 
     async def run(self):

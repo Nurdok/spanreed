@@ -8,10 +8,11 @@ from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 
 
 class AdminPlugin(Plugin):
-    @property
-    def name(self) -> str:
+    @classmethod
+    def name(cls) -> str:
         return "Admin"
 
+    @classmethod
     def has_user_config(self) -> bool:
         return False
 
