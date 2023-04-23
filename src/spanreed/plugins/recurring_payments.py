@@ -11,6 +11,7 @@ import dateutil.tz
 import dateutil.rrule
 from dateutil.rrule import FREQNAMES
 import yaml
+import jinja2
 
 
 @dataclass
@@ -22,6 +23,7 @@ class RecurrenceInfo:
     week_day: int  # See dateutil.rrule.WEEKDAYS
     hour: int
     minute: int
+    second: int
 
 
 @dataclass
@@ -32,13 +34,21 @@ class RecurringPayment:
     recurrence_cost: float
     recurrence_info: RecurrenceInfo
 
+    def __post_init__(self):
+        if isinstance(self.recurrence_info, dict):
+            self.recurrence_info = RecurrenceInfo(**self.recurrence_info)
+
 
 @dataclass
 class UserConfig:
     recurring_payments: list[RecurringPayment]
 
-
-# TODO: recurrences should be configurable per-user.
+    def __post_init__(self):
+        for index, recurring_payment in enumerate(self.recurring_payments):
+            if isinstance(recurring_payment, dict):
+                self.recurring_payments[index] = RecurringPayment(
+                    **recurring_payment
+                )
 
 
 class TherapyPlugin(Plugin):
@@ -174,6 +184,7 @@ class TherapyPlugin(Plugin):
                         week_day=week_day.weekday,
                         hour=hour,
                         minute=minute,
+                        second=0,
                     ),
                 )
             )
@@ -182,66 +193,90 @@ class TherapyPlugin(Plugin):
         await user.set_config_for_plugin(
             self.canonical_name, asdict(UserConfig(recurring_payments))
         )
+        asyncio.create_task(self.run_for_user(user))
 
     @classmethod
     def get_prerequisites(cls) -> list[type[Plugin]]:
         return [TodoistPlugin]
 
     @staticmethod
-    def get_recurrence(recurrence: RecurringPayment):
+    def get_recurrence(recurrence: RecurrenceInfo):
         tz: datetime.tzinfo = dateutil.tz.gettz(recurrence.timezone)
         return dateutil.rrule.rrule(
             dtstart=datetime.datetime.now(tz=tz),
-            freq=recurrence.recurrence_info.frequency,
-            wkst=recurrence.recurrence_info.week_start_day,
-            byweekday=recurrence.recurrence_info.week_day,
-            byhour=recurrence.recurrence_info.hour,
+            freq=recurrence.frequency,
+            wkst=recurrence.week_start_day,
+            byweekday=recurrence.week_day,
+            byhour=recurrence.hour,
+            byminute=recurrence.minute,
+            bysecond=recurrence.second,
         )
 
     async def run_for_single_recurrence(
         self, user: User, recurring_payment: RecurringPayment
     ):
         todoist_api = Todoist.for_user(user)
-        tz: datetime.tzinfo = dateutil.tz.gettz(recurring_payment.timezone)
+        tz: datetime.tzinfo = dateutil.tz.gettz(
+            recurring_payment.recurrence_info.timezone
+        )
 
         def now():
             return datetime.datetime.now(tz=tz)
 
-        recurrence = self.get_recurrence(recurring_payment)
-        next_event: datetime.datetime = recurrence.after(now())
+        self._logger.info(f"{now()=}")
+        recurrence = self.get_recurrence(recurring_payment.recurrence_info)
 
-        self._logger.info(f"{next_event=}")
         while True:
+            next_event: datetime.datetime = recurrence.after(now())
             wait_time = next_event - now()
             self._logger.info(f"Waiting for {wait_time}")
             self._logger.info(f'{next_event.date().strftime("%Y-%m-%d")=}')
             await asyncio.sleep(wait_time.total_seconds())
             date_str = next_event.date().strftime("%Y-%m-%d")
-            tasks: list[Task] = await todoist_api.get_tasks_with_tag(
+
+            tasks: list[Task] = await todoist_api.get_tasks_with_label(
                 recurring_payment.todoist_label
             )
-            if len(tasks) != 1:
+            if len(tasks) == 1:
+                (task,) = tasks
+            elif len(tasks) == 0:
+                self._logger.info("Creating new task")
+                task = await todoist_api.add_task(
+                    content="placeholder",
+                    labels=[recurring_payment.todoist_label],
+                )
+            else:
                 raise RuntimeError(
-                    f"Expected exactly one task with the label"
+                    f"Expected either zero or exactly one task with the label"
                     f" {recurring_payment.todoist_label}, got {len(tasks)}"
                 )
-            (task,) = tasks
-            comment = await todoist_api.get_first_comment_with_yaml(task)
+
+            comment = await todoist_api.get_first_comment_with_yaml(
+                task, create=True
+            )
             desc_split = comment.content.split("---")
             self._logger.info(desc_split)
             assert len(desc_split) == 3, len(desc_split)
             comment_yaml = desc_split[1]
             self._logger.info(f"{comment_yaml=}")
-            therapy_sd = yaml.safe_load(comment_yaml)
-            dates: list[str] = therapy_sd["dates"]
+            sd = yaml.safe_load(comment_yaml) or {}
+            dates: list[str] = sd.setdefault("dates", [])
 
             if date_str not in dates:
                 dates.append(date_str)
-                total_cost = therapy_sd["event_cost"] * len(dates)
-                therapy_sd["total_cost"] = total_cost
-                new_task_content = f'Pay {therapy_sd["therapist"]} {total_cost}₪ for {", ".join(dates)}'
+                total_cost = recurring_payment.recurrence_cost * len(dates)
+
+                env = jinja2.Environment()
+                template_params = dict(
+                    dates=", ".join(dates),
+                    total_cost=total_cost,
+                )
+                new_task_content = env.from_string(
+                    recurring_payment.todoist_task_template
+                ).render(template_params)
+
                 new_comment_content = "---\n".join(
-                    [desc_split[0], yaml.safe_dump(therapy_sd), desc_split[2]]
+                    [desc_split[0], yaml.safe_dump(sd), desc_split[2]]
                 )
                 self._logger.info(
                     f"{new_task_content=}\n{new_comment_content=}"
@@ -256,6 +291,7 @@ class TherapyPlugin(Plugin):
         user_config = UserConfig(
             **user.get_config_for_plugin(self.canonical_name)
         )
+        self._logger.info(f"{user_config=}")
 
         for recurring_payment in user_config.recurring_payments:
             asyncio.create_task(
