@@ -63,7 +63,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
     @classmethod
     def has_user_config(cls) -> bool:
-        return True
+        return False
 
     @classmethod
     def get_config_class(cls) -> type[UserConfig]:
@@ -149,10 +149,8 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     ) -> User:
         for user in await self.get_users():
             self._logger.info(f"Checking {user=}")
-            if (
-                user.config.get("telegram", {}).get("user_id", 0)
-                == telegram_user_id
-            ):
+            user_config: UserConfig = await self.get_config(user)
+            if user_config.user_id == telegram_user_id:
                 return user
 
         if send_message_on_failure:

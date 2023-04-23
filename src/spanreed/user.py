@@ -8,7 +8,6 @@ class User:
 
     def __init__(self):
         self.id: int = -1
-        self.config: dict = {}
         self.plugins: List[str] = []
         self.name: str = ""
 
@@ -18,13 +17,6 @@ class User:
     async def set_name(self, name: str):
         self.name = name
         await self.redis_api.set(f"user:{self.id}:name", name)
-
-    async def set_config_for_plugin(self, plugin_name: str, config: dict):
-        self.config[plugin_name] = config
-        await self.set_config(self.config)
-
-    def get_config_for_plugin(self, plugin_name: str) -> dict:
-        return self.config.get(plugin_name, {})
 
     async def set_plugins(self, plugins: List[str]):
         self.plugins = plugins
@@ -52,9 +44,6 @@ class User:
         self.id = user_id
         self.name = (await cls.redis_api.get(f"user:{user_id}:name")).decode(
             "utf-8"
-        )
-        self.config = json.loads(
-            await cls.redis_api.get(f"user:{user_id}:config")
         )
         self.plugins = [
             name.decode("utf-8")

@@ -53,7 +53,7 @@ class Plugin(abc.ABC, Generic[UC]):
     # TODO: fancy typing stuff to get the UserConfig class
     @classmethod
     async def get_config(cls, user: User) -> UC:
-        if not cls.has_user_config() or cls.get_config_class() is None:
+        if cls.get_config_class() is None:
             raise NotImplementedError("This plugin does not have user config.")
 
         config_class = cls.get_config_class()
