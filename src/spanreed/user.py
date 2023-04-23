@@ -27,6 +27,9 @@ class User:
         self.config[plugin_name] = config
         await self.set_config(self.config)
 
+    def get_config_for_plugin(self, plugin_name: str) -> dict:
+        return self.config.get(plugin_name, {})
+
     async def set_plugins(self, plugins: List[str]):
         self.plugins = plugins
         for plugin in plugins:

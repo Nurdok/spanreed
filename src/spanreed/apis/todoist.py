@@ -24,13 +24,14 @@ class TodoistPlugin(Plugin):
     def has_user_config(self):
         return True
 
-    @classmethod
-    async def ask_for_user_config(cls, user: User):
+    async def ask_for_user_config(self, user: User):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         api_token = await bot.request_user_input(
             "Please enter your Todoist API token. "
         )
-        return UserConfig(api_token=api_token)
+        await user.set_config_for_plugin(
+            self.canonical_name, asdict(UserConfig(api_token))
+        )
 
 
 class Todoist:
@@ -41,6 +42,9 @@ class Todoist:
     @classmethod
     def for_user(cls, user: User):
         return Todoist(UserConfig(**user.config["todoist"]))
+
+    def add_task(self, **kwargs):
+        return self._api.add_task(**kwargs)
 
     async def update_task(self, task: Task, **kwargs):
         await self._api.update_task(task.id, **kwargs)
@@ -93,7 +97,7 @@ class Todoist:
     async def set_due_date_to_today(self, task: Task):
         self._logger.info(f"Updating {format_task(task)} due date to today")
         self._logger.info(f"{task.due=}")
-        if task.due.is_recurring:
+        if task.due and task.due.is_recurring:
             # For recurring tasks, we need to keep the recurrence. The string
             # looks something like "daily", "every week" or "on the 1st of
             # every month". When a task recurrence is edited, the next
