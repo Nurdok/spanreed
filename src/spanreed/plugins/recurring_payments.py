@@ -51,10 +51,10 @@ class UserConfig:
                 )
 
 
-class TherapyPlugin(Plugin):
+class RecurringPaymentsPlugin(Plugin):
     @property
     def name(self) -> str:
-        return "Therapy"
+        return "Recurring Payments"
 
     @staticmethod
     def has_user_config() -> bool:

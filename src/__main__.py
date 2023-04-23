@@ -11,7 +11,7 @@ from spanreed.apis.telegram_bot import TelegramBotPlugin
 from spanreed.apis.todoist import TodoistPlugin
 
 from spanreed.plugins.habit_tracker import HabitTrackerPlugin
-from spanreed.plugins.therapy import TherapyPlugin
+from spanreed.plugins.recurring_payments import RecurringPaymentsPlugin
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.admin import AdminPlugin
@@ -28,7 +28,7 @@ def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
     # TODO: Load optional plugins dynamically.
     optional_plugins = [
         HabitTrackerPlugin(redis_api=redis_api),
-        TherapyPlugin(redis_api=redis_api),
+        RecurringPaymentsPlugin(redis_api=redis_api),
         TodoistNoOverduePlugin(redis_api=redis_api),
         LitNotesPlugin(redis_api=redis_api),
         AdminPlugin(redis_api=redis_api),
