@@ -83,6 +83,7 @@ class Plugin(abc.ABC, Generic[UC]):
         return users
 
     async def register_user(self, user: User):
+        self._logger.info(f"Registering user {user.id} to plugin")
         from spanreed.apis.telegram_bot import TelegramBotApi
 
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)

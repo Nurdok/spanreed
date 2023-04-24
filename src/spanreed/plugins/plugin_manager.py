@@ -43,7 +43,7 @@ class PluginManagerPlugin(Plugin):
                     await bot.send_message(
                         f"You are currently using these plugins,"
                         f" {user.name}: \n"
-                        + "\n".join(f"- {p.name}" for p in plugins)
+                        + "\n".join(f"- {p.name()}" for p in plugins)
                     )
 
                 choice = await bot.request_user_choice(
@@ -67,7 +67,7 @@ class PluginManagerPlugin(Plugin):
             plugin
             for plugin in await Plugin.get_all_plugins()
             if user.plugins is None
-            or plugin.canonical_name not in user.plugins
+            or plugin.canonical_name() not in user.plugins
         ]
 
         if not plugins:
@@ -76,7 +76,7 @@ class PluginManagerPlugin(Plugin):
 
         choice = await bot.request_user_choice(
             "Which plugin do you want to register to?",
-            [p.name for p in plugins] + ["Cancel"],
+            [p.name() for p in plugins] + ["Cancel"],
         )
         if choice == len(plugins):  # Cancel
             return
@@ -96,7 +96,7 @@ class PluginManagerPlugin(Plugin):
 
         choice = await bot.request_user_choice(
             "Which plugin do you want to unregister from?",
-            [p.name for p in plugins] + ["Cancel"],
+            [p.name() for p in plugins] + ["Cancel"],
         )
 
         if choice == len(plugins):  # Cancel
