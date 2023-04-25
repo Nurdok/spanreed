@@ -56,16 +56,18 @@ class UserConfig:
     user_id: int
 
 
-class TelegramBotPlugin(Plugin):
-    @property
-    def name(self) -> str:
+class TelegramBotPlugin(Plugin[UserConfig]):
+    @classmethod
+    def name(cls) -> str:
         return "Telegram Bot"
 
-    def has_user_config(self) -> bool:
-        # There is actually a UserConfig, but we don't need the user's
-        # input to create it, as we take the user's ID from the Telegram
-        # API.
+    @classmethod
+    def has_user_config(cls) -> bool:
         return False
+
+    @classmethod
+    def get_config_class(cls) -> type[UserConfig]:
+        return UserConfig
 
     async def run(self):
         application = await self.setup_application()
@@ -147,10 +149,8 @@ class TelegramBotPlugin(Plugin):
     ) -> User:
         for user in await self.get_users():
             self._logger.info(f"Checking {user=}")
-            if (
-                user.config.get("telegram", {}).get("user_id", 0)
-                == telegram_user_id
-            ):
+            user_config: UserConfig = await self.get_config(user)
+            if user_config.user_id == telegram_user_id:
                 return user
 
         if send_message_on_failure:
@@ -194,18 +194,14 @@ class TelegramBotPlugin(Plugin):
 
         async def start_task():
             user: User = await User.create()
-            telegram_config: UserConfig = UserConfig(user_id=telegram_user_id)
-
-            # Normally we'd edit the existing config, but we just created the
-            # user, so we can just set it.
-            await user.set_config({"telegram": asdict(telegram_config)})
+            await self.set_config(user, UserConfig(user_id=telegram_user_id))
 
             # These two plugins are required for the bot to work.
-            # Importing here to avoid cicular imports.
+            # Importing here to avoid circular imports.
             from spanreed.plugins.plugin_manager import PluginManagerPlugin
 
             required_plugins = [
-                await Plugin.get_plugin_by_class(TelegramBotPlugin),
+                self,
                 await Plugin.get_plugin_by_class(PluginManagerPlugin),
             ]
 
@@ -264,8 +260,9 @@ class TelegramBotPlugin(Plugin):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
         app: Application = context.application
-        commands = app.bot_data.setdefault("plugin-commands", {})
-        self._logger.info(f"{commands=}")
+        commands: dict[PluginCommand] = app.bot_data.setdefault(
+            PLUGIN_COMMANDS, {}
+        )
         telegram_user_id: int = update.effective_user.id
         user: User = await self.get_user_by_telegram_user_id(telegram_user_id)
         self._logger.info(f"{user.plugins=}")
@@ -273,6 +270,7 @@ class TelegramBotPlugin(Plugin):
         # We need to do user interaction is a separate task because we can't
         # block the main Telegram bot coroutine.
         async def show_command_menu_task():
+            self._logger.info(f"Inside internal task for /do for {user}")
             try:
                 bot = await TelegramBotApi.for_user(user)
 
@@ -350,7 +348,7 @@ class TelegramBotApi:
         _logger.info(f"Registering command '{command.text}'")
         app = await cls.get_application()
         app.bot_data.setdefault(PLUGIN_COMMANDS, {}).setdefault(
-            plugin.canonical_name, []
+            plugin.canonical_name(), []
         ).append(command)
 
     @classmethod
@@ -365,7 +363,11 @@ class TelegramBotApi:
         _logger.info("Waiting for application to initialize...")
         await cls.get_application()
         _logger.info("Application initialized")
-        return TelegramBotApi(user.config["telegram"]["user_id"])
+        user_config: UserConfig = await TelegramBotPlugin.get_config(user)
+        _logger.info(f"Getting TelegramBotApi for {user=} with {user_config=}")
+        return TelegramBotApi(
+            (await TelegramBotPlugin.get_config(user)).user_id
+        )
 
     @classmethod
     def set_application(cls, application: Application):

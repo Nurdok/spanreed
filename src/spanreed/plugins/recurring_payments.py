@@ -52,12 +52,12 @@ class UserConfig:
 
 
 class RecurringPaymentsPlugin(Plugin):
-    @property
-    def name(self) -> str:
+    @classmethod
+    def name(cls) -> str:
         return "Recurring Payments"
 
-    @staticmethod
-    def has_user_config() -> bool:
+    @classmethod
+    def has_user_config(cls) -> bool:
         return True
 
     async def ask_for_user_config(self, user: User) -> None:
@@ -191,7 +191,7 @@ class RecurringPaymentsPlugin(Plugin):
 
         self._logger.info(f"{asdict(UserConfig(recurring_payments))=}")
         await user.set_config_for_plugin(
-            self.canonical_name, asdict(UserConfig(recurring_payments))
+            self.canonical_name(), asdict(UserConfig(recurring_payments))
         )
         asyncio.create_task(self.run_for_user(user))
 

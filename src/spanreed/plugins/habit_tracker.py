@@ -94,11 +94,12 @@ class Choice:
 
 
 class HabitTrackerPlugin(Plugin):
-    @property
-    def name(self) -> str:
+    @classmethod
+    def name(cls) -> str:
         return "Habit Tracker"
 
-    def has_user_config(self) -> bool:
+    @classmethod
+    def has_user_config(cls) -> bool:
         return False
 
     async def run_for_user(self, user: User):
