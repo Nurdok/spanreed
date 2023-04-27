@@ -30,9 +30,7 @@ class TodoistPlugin(Plugin):
         api_token = await bot.request_user_input(
             "Please enter your Todoist API token. "
         )
-        await user.set_config_for_plugin(
-            self.canonical_name, asdict(UserConfig(api_token))
-        )
+        await self.set_config(user, asdict(UserConfig(api_token)))
 
 
 class Todoist:
@@ -41,8 +39,8 @@ class Todoist:
         self._logger = logging.getLogger(__name__)
 
     @classmethod
-    def for_user(cls, user: User):
-        return Todoist(UserConfig(**user.config["todoist"]))
+    async def for_user(cls, user: User):
+        return Todoist(await TodoistPlugin.get_config(user))
 
     def add_task(self, **kwargs):
         return self._api.add_task(**kwargs)
