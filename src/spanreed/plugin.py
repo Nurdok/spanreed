@@ -63,6 +63,17 @@ class Plugin(abc.ABC, Generic[UC]):
         return config_class(**json.loads(config))
 
     async def set_config(self, user: User, config: UC) -> None:
+        if (
+            self.get_config_class() is None
+            or type(config) != self.get_config_class()
+        ):
+            raise NotImplementedError(
+                "This plugin does not have user config, or the passed "
+                "config is of the wrong type."
+                f"Expected {self.get_config_class()} (!= None), "
+                f"got {type(config)}."
+            )
+
         await self._redis.set(
             self._get_config_key(user), json.dumps(asdict(config))
         )

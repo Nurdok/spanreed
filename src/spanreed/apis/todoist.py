@@ -16,7 +16,7 @@ class UserConfig:
     api_token: str
 
 
-class TodoistPlugin(Plugin):
+class TodoistPlugin(Plugin[UserConfig]):
     @classmethod
     def name(cls):
         return "Todoist"
@@ -25,12 +25,16 @@ class TodoistPlugin(Plugin):
     def has_user_config(cls):
         return True
 
+    @classmethod
+    def get_config_class(cls) -> type[UserConfig]:
+        return UserConfig
+
     async def ask_for_user_config(self, user: User):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         api_token = await bot.request_user_input(
             "Please enter your Todoist API token. "
         )
-        await self.set_config(user, asdict(UserConfig(api_token)))
+        await self.set_config(user, UserConfig(api_token))
 
 
 class Todoist:
