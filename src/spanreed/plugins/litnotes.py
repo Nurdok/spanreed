@@ -39,7 +39,7 @@ class LitNotesPlugin(Plugin):
     def has_user_config(cls) -> bool:
         return True
 
-    async def run(self):
+    async def run(self) -> None:
         await TelegramBotApi.register_command(
             self,
             PluginCommand(
@@ -47,7 +47,7 @@ class LitNotesPlugin(Plugin):
             ),
         )
 
-    async def _ask_for_book_note(self, user: User):
+    async def _ask_for_book_note(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         async with bot.user_interaction():
@@ -135,7 +135,7 @@ class LitNotesPlugin(Plugin):
         book: Book,
         recommended_by: List[str],
         free_text: str,
-    ):
+    ) -> None:
         user_config: UserConfig = await self.get_config(user)
 
         env = jinja2.Environment()
@@ -176,7 +176,8 @@ class LitNotesPlugin(Plugin):
             parse_html=True,
         )
 
-    async def ask_for_user_config(self, user: User):
+    @classmethod
+    async def ask_for_user_config(cls, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         # No need to acquire the user interaction lock here, since we're
@@ -200,4 +201,4 @@ class LitNotesPlugin(Plugin):
             note_title_template=note_title_template,
             note_content_template=note_content_template,
         )
-        await self.set_config(user, user_config)
+        await cls.set_config(user, user_config)

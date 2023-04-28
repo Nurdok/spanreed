@@ -4,7 +4,7 @@ import redis.asyncio as redis
 import asyncio
 import logging
 import json
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, Optional
 from spanreed.user import User
 import abc
 from dataclasses import asdict
@@ -27,7 +27,7 @@ class Plugin(abc.ABC, Generic[UC]):
         pass
 
     @classmethod
-    def canonical_name(cls):
+    def canonical_name(cls) -> str:
         return cls.name().replace(" ", "-").lower()
 
     @classmethod
@@ -35,47 +35,54 @@ class Plugin(abc.ABC, Generic[UC]):
         return []
 
     @classmethod
-    def _get_config_key(cls, user):
+    def _get_config_key(cls, user: User) -> str:
         return f"config:plugin:name={cls.canonical_name()}:user_id={user.id}"
 
     @classmethod
-    def _get_user_list_key(cls):
+    def _get_user_list_key(cls) -> str:
         return f"config:plugin:name={cls.canonical_name()}:users"
 
     @classmethod
-    def has_user_config(cls):
+    def has_user_config(cls) -> bool:
         return False
 
     @classmethod
-    def get_config_class(cls) -> type[UC]:
+    async def ask_for_user_config(cls, user: User) -> None:
+        if cls.has_user_config():
+            raise NotImplementedError("This plugin does not have user config.")
+
+    @classmethod
+    def get_config_class(cls) -> Optional[type[UC]]:
         return None
 
     # TODO: fancy typing stuff to get the UserConfig class
     @classmethod
     async def get_config(cls, user: User) -> UC:
-        if cls.get_config_class() is None:
+        config_class = cls.get_config_class()
+        if config_class is None:
             raise NotImplementedError("This plugin does not have user config.")
 
-        config_class = cls.get_config_class()
         config = await user.redis_api.get(cls._get_config_key(user))
         if config is None:
             return config_class()
         return config_class(**json.loads(config))
 
-    async def set_config(self, user: User, config: UC) -> None:
+    @classmethod
+    async def set_config(cls, user: User, config: UC) -> None:
         if (
-            self.get_config_class() is None
-            or type(config) != self.get_config_class()
+            cls.get_config_class() is None
+            or type(config) != cls.get_config_class()
         ):
             raise NotImplementedError(
                 "This plugin does not have user config, or the passed "
                 "config is of the wrong type."
-                f"Expected {self.get_config_class()} (!= None), "
+                f"Expected {cls.get_config_class()} (!= None), "
                 f"got {type(config)}."
             )
 
-        await self._redis.set(
-            self._get_config_key(user), json.dumps(asdict(config))
+        await user.redis_api.set(
+            cls._get_config_key(user),
+            json.dumps(asdict(config)),  # type: ignore
         )
 
     async def get_users(self) -> list[User]:
@@ -93,7 +100,7 @@ class Plugin(abc.ABC, Generic[UC]):
         self._logger.info(f"Done. Found {len(users)} users.")
         return users
 
-    async def register_user(self, user: User):
+    async def register_user(self, user: User) -> None:
         self._logger.info(f"Registering user {user.id} to plugin")
         from spanreed.apis.telegram_bot import TelegramBotApi
 
@@ -132,13 +139,13 @@ class Plugin(abc.ABC, Generic[UC]):
         )
         await self._redis.sadd(self._get_user_list_key(), user.id)
 
-    async def unregister_user(self, user: User):
+    async def unregister_user(self, user: User) -> None:
         await self._redis.srem(
             f"user:{user.id}:plugins", self.canonical_name()
         )
         await self._redis.srem(self._get_user_list_key(), user.id)
 
-    async def run_for_user(self, user: User):
+    async def run_for_user(self, user: User) -> None:
         pass
 
     # This currently assumes that user <--> plugin subscription doesn't
@@ -159,7 +166,7 @@ class Plugin(abc.ABC, Generic[UC]):
             self._logger.exception("Exception in plugin run")
 
     @classmethod
-    def register(cls, plugin):
+    def register(cls, plugin: "Plugin") -> None:
         if plugin.canonical_name() in [
             p.canonical_name() for p in cls._plugins
         ]:
@@ -169,11 +176,11 @@ class Plugin(abc.ABC, Generic[UC]):
         cls._plugins.append(plugin)
 
     @classmethod
-    async def get_all_plugins(cls):
+    async def get_all_plugins(cls) -> list["Plugin"]:
         return cls._plugins
 
     @classmethod
-    async def get_plugin_by_class(cls, plugin_cls) -> "Plugin":
+    async def get_plugin_by_class(cls, plugin_cls: type[Plugin]) -> "Plugin":
         for plugin in cls._plugins:
             logging.getLogger(__name__).info(
                 f"Checking {plugin.__class__=} against {plugin_cls=}"
@@ -184,7 +191,7 @@ class Plugin(abc.ABC, Generic[UC]):
         raise ValueError(f"Plugin {plugin_cls} not found.")
 
     @classmethod
-    async def get_plugins_for_user(cls, user: User):
+    async def get_plugins_for_user(cls, user: User) -> list["Plugin"]:
         plugins = []
         for plugin in cls._plugins:
             if await plugin.is_registered(user):

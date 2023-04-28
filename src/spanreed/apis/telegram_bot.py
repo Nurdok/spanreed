@@ -7,6 +7,7 @@ import typing
 import uuid
 from typing import List, NamedTuple, Optional, Dict, Callable, Tuple
 from dataclasses import dataclass, asdict
+from collections.abc import AsyncGenerator
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -70,11 +71,14 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     def get_config_class(cls) -> type[UserConfig]:
         return UserConfig
 
-    async def run(self):
+    async def run(self) -> None:
         application = await self.setup_application()
 
         async with application:  # Calls `initialize` and `shutdown`
             await application.start()
+
+            if application.updater is None:
+                raise RuntimeError("Updater is None")
             await application.updater.start_polling()
             logger.info("Started polling")
 
@@ -123,7 +127,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     @staticmethod
     async def handle_callback_query(
         update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):
+    ) -> None:
         logger.info("Received callback query")
         query = update.callback_query
         if query is None:
@@ -173,7 +177,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             )
         raise KeyError(f"User not found for {telegram_user_id=}")
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def start(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if update.effective_user is None:
             self._logger.error("No user found in update")
             return
@@ -262,7 +268,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
     async def show_command_menu(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):
+    ) -> None:
         app: Application = context.application
         commands: dict[str, PluginCommand] = app.bot_data.setdefault(
             PLUGIN_COMMANDS, {}
@@ -278,7 +284,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
         # We need to do user interaction is a separate task because we can't
         # block the main Telegram bot coroutine.
-        async def show_command_menu_task():
+        async def show_command_menu_task() -> None:
             self._logger.info(f"Inside internal task for /do for {user}")
             try:
                 bot = await TelegramBotApi.for_user(user)
@@ -314,7 +320,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
     async def handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ):
+    ) -> None:
         if update.message is None:
             self._logger.error("No message found in update")
             return
@@ -360,7 +366,9 @@ class TelegramBotApi:
         self._have_interaction_lock = False
 
     @classmethod
-    async def register_command(cls, plugin: Plugin, command: PluginCommand):
+    async def register_command(
+        cls, plugin: Plugin, command: PluginCommand
+    ) -> None:
         _logger = logging.getLogger(cls.__name__)
         _logger.info(f"Registering command '{command.text}'")
         app = await cls.get_application()
@@ -387,13 +395,15 @@ class TelegramBotApi:
         )
 
     @classmethod
-    def set_application(cls, application: Application):
+    def set_application(cls, application: Application) -> None:
         if cls._application is not None:
             raise RuntimeError("Application already set")
         cls._application = application
         cls._application_initialized.set()
 
-    async def send_message(self, text: str, *, parse_html=True):
+    async def send_message(
+        self, text: str, *, parse_html: bool = True
+    ) -> None:
         app: Application = await self.get_application()
         parse_mode = None
         if parse_html:
@@ -403,8 +413,8 @@ class TelegramBotApi:
         )
 
     async def send_multiple_messages(
-        self, *text: str, delay: int = 1, parse_html=True
-    ):
+        self, *text: str, delay: int = 1, parse_html: bool = True
+    ) -> None:
         app: Application = await self.get_application()
         for message in text:
             await app.bot.send_chat_action(
@@ -429,7 +439,7 @@ class TelegramBotApi:
         # Generate a random callback ID to avoid collisions.
         callback_id, callback_event = await self.init_callback()
 
-        def make_callback_data(position) -> CallbackData:
+        def make_callback_data(position: int) -> CallbackData:
             return CallbackData(callback_id, self._telegram_user_id, position)
 
         # Set up the keyboard.
@@ -477,7 +487,7 @@ class TelegramBotApi:
         )
 
     @contextlib.asynccontextmanager
-    async def user_interaction(self):
+    async def user_interaction(self) -> AsyncGenerator[None, None]:
         # TODO: Need to mark somehow where to return any user input.
         self._logger.info("Acquiring user interaction lock")
         async with await self.get_user_interaction_lock():

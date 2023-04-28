@@ -38,7 +38,9 @@ class EventStorageRedis:
         self._events: List[Event] = []
 
     @classmethod
-    async def for_user(cls, user: User, redis_api: redis.Redis):
+    async def for_user(
+        cls, user: User, redis_api: redis.Redis
+    ) -> "EventStorageRedis":
         self = EventStorageRedis(user=user, redis_api=redis_api)
         self._events = await self._load_from_storage()
         return self
@@ -75,7 +77,7 @@ class EventStorageRedis:
             )
         await self._redis.set(self._redis_key, json.dumps(events_json))
 
-    async def add(self, event: Event):
+    async def add(self, event: Event) -> None:
         self._events.append(event)
         await self._write_to_storage()
 
@@ -104,7 +106,7 @@ class HabitTrackerPlugin(Plugin):
     def has_user_config(cls) -> bool:
         return False
 
-    async def run_for_user(self, user: User):
+    async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Running for user {user}")
         bot = await TelegramBotApi.for_user(user)
         self._logger.info(f"Got bot")
@@ -136,7 +138,7 @@ class HabitTrackerPlugin(Plugin):
         activity_type: ActivityType,
         bot: TelegramBotApi,
         event_storage: EventStorageRedis,
-    ):
+    ) -> None:
         self._logger.info(f"Polling user for {activity_type}")
         prompt = f"Did you {activity_type.name.lower()} today?"
         choices = [

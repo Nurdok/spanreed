@@ -6,7 +6,7 @@ from spanreed.plugin import Plugin
 from typing import List, Type
 
 
-async def _update_no_overdue_tasks_to_today(todoist_api: Todoist):
+async def _update_no_overdue_tasks_to_today(todoist_api: Todoist) -> None:
     # TODO: Make the tag name configurable per user.
     tasks = await todoist_api.get_overdue_tasks_with_label(
         "spanreed/no-overdue"
@@ -15,7 +15,7 @@ async def _update_no_overdue_tasks_to_today(todoist_api: Todoist):
         await todoist_api.set_due_date_to_today(task)
 
 
-class TodoistNoOverduePlugin(Plugin):
+class TodoistNoOverduePlugin(Plugin[None]):
     @classmethod
     def name(cls) -> str:
         return "Todoist No Overdue"
@@ -29,7 +29,7 @@ class TodoistNoOverduePlugin(Plugin):
     def get_prerequisites(cls) -> List[Type[Plugin]]:
         return [TodoistPlugin]
 
-    async def run_for_user(self, user: User):
+    async def run_for_user(self, user: User) -> None:
         todoist_api = await Todoist.for_user(user)
 
         while True:

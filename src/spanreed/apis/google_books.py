@@ -2,7 +2,7 @@ import datetime
 import logging
 
 import aiohttp
-from typing import List, Optional, NamedTuple, Tuple
+from typing import Optional, Any
 from dataclasses import dataclass
 import re
 import dateutil.parser
@@ -11,9 +11,9 @@ import dateutil.parser
 @dataclass
 class Book:
     title: str
-    authors: Tuple[str]
+    authors: list[str]
     publisher: str
-    publication_date: datetime.date
+    publication_date: Optional[datetime.date]
     description: str
     thumbnail_url: str
 
@@ -60,7 +60,7 @@ class GoogleBooks:
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    async def get_books(self, query: str) -> List[Book]:
+    async def get_books(self, query: str) -> list[Book]:
         url = f"{self.BASE_URL}?q={query}&key={self.api_key}"
 
         async with aiohttp.ClientSession() as session:
@@ -69,10 +69,10 @@ class GoogleBooks:
                 data = await response.json()
                 return self._get_books_from_json(data)
 
-    def _get_books_from_json(self, data) -> List[Book]:
+    def _get_books_from_json(self, data: dict[str, Any]) -> list[Book]:
         items = data.get("items", [])
         if not items:
-            return None
+            return []
 
         # TODO: decide how to choose book instead of taking the first one.
         books = []
@@ -83,7 +83,7 @@ class GoogleBooks:
             books.append(
                 Book(
                     title=volume_info.get("title", "Unknown"),
-                    authors=tuple(volume_info.get("authors", ["Unknown"])),
+                    authors=list(str(volume_info.get("authors", ["Unknown"]))),
                     publisher=volume_info.get("publisher", "Unknown"),
                     publication_date=parse_date(
                         volume_info.get("publishedDate", None)

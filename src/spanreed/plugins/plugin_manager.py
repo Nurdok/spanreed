@@ -21,7 +21,7 @@ class PluginManagerPlugin(Plugin):
     def has_user_config(cls) -> bool:
         return False
 
-    async def run(self):
+    async def run(self) -> None:
         await TelegramBotApi.register_command(
             self,
             PluginCommand(
@@ -30,7 +30,7 @@ class PluginManagerPlugin(Plugin):
             ),
         )
 
-    async def _manage_plugins(self, user: User):
+    async def _manage_plugins(self, user: User) -> None:
         self._logger.info(f"Managing plugins for user {user.id}")
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
@@ -61,7 +61,9 @@ class PluginManagerPlugin(Plugin):
                 elif choice == 2:  # Cancel
                     break
 
-    async def _register_to_new_plugin(self, bot: TelegramBotApi, user: User):
+    async def _register_to_new_plugin(
+        self, bot: TelegramBotApi, user: User
+    ) -> None:
         # Filter out plugins that the user is already using.
         plugins: List[Plugin] = [
             plugin
@@ -87,7 +89,7 @@ class PluginManagerPlugin(Plugin):
 
     async def _unregister_from_an_existing_plugin(
         self, bot: TelegramBotApi, user: User
-    ):
+    ) -> None:
         if not user.plugins:
             await bot.send_message("There are no plugins to unregister from.")
             return

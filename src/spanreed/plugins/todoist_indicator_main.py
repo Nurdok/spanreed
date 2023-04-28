@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 from spanreed.apis.todoist import Todoist, UserConfig
 from spanreed.apis.rpi import RPi
 import time
@@ -5,13 +6,13 @@ import os
 
 
 class TodoistIndicator:
-    def __init__(self, rpi, todoist):
+    def __init__(self, rpi: RPi, todoist: Todoist):
         self._todoist = todoist
         self._red = rpi.get_led(4)
         self._yellow = rpi.get_led(17)
         self._green = rpi.get_led(18)
 
-    def run(self):
+    def run(self) -> None:
         while True:
             if self._todoist.get_due_tasks():
                 self._red.turn_on()

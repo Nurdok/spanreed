@@ -67,7 +67,8 @@ class RecurringPaymentsPlugin(Plugin):
     def has_user_config(cls) -> bool:
         return True
 
-    async def ask_for_user_config(self, user: User) -> None:
+    @classmethod
+    async def ask_for_user_config(cls, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         recurring_payments: list[RecurringPayment] = []
         while True:
@@ -207,6 +208,7 @@ class RecurringPaymentsPlugin(Plugin):
                 )
             )
 
+        self = await cls.get_plugin_by_class(cls)
         await self.set_config(user, UserConfig(recurring_payments))
         asyncio.create_task(self.run_for_user(user))
 
@@ -221,7 +223,7 @@ class RecurringPaymentsPlugin(Plugin):
         return tz
 
     @staticmethod
-    def get_recurrence(recurrence: RecurrenceInfo):
+    def get_recurrence(recurrence: RecurrenceInfo) -> dateutil.rrule.rrule:
         return dateutil.rrule.rrule(
             dtstart=datetime.datetime.now(tz=recurrence.tzinfo),
             freq=recurrence.frequency,
@@ -234,7 +236,7 @@ class RecurringPaymentsPlugin(Plugin):
 
     async def run_for_single_recurrence(
         self, user: User, recurring_payment: RecurringPayment
-    ):
+    ) -> None:
         todoist_api: Todoist = await Todoist.for_user(user)
 
         def now() -> datetime.datetime:

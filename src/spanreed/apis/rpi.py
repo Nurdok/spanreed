@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 import RPi.GPIO as GPIO
 
 
@@ -7,7 +8,7 @@ class RPi:
         GPIO.setwarnings(False)
         self._gpio_pins = {}
 
-    def get_led(self, gpio_pin):
+    def get_led(self, gpio_pin) -> "Led":
         if gpio_pin in self._gpio_pins:
             return self._gpio_pins[gpio_pin]
         return Led(gpio_pin)
