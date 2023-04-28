@@ -206,6 +206,4 @@ class LitNotesPlugin(Plugin):
             note_title_template=note_title_template,
             note_content_template=note_content_template,
         )
-        await user.set_config_for_plugin(
-            self.canonical_name, asdict(user_config)
-        )
+        await self.set_config(user, user_config)

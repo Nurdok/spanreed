@@ -189,10 +189,7 @@ class RecurringPaymentsPlugin(Plugin):
                 )
             )
 
-        self._logger.info(f"{asdict(UserConfig(recurring_payments))=}")
-        await user.set_config_for_plugin(
-            self.canonical_name(), asdict(UserConfig(recurring_payments))
-        )
+        await self.set_config(user, UserConfig(recurring_payments))
         asyncio.create_task(self.run_for_user(user))
 
     @classmethod
@@ -215,7 +212,7 @@ class RecurringPaymentsPlugin(Plugin):
     async def run_for_single_recurrence(
         self, user: User, recurring_payment: RecurringPayment
     ):
-        todoist_api = Todoist.for_user(user)
+        todoist_api: Todoist = await Todoist.for_user(user)
         tz: datetime.tzinfo = dateutil.tz.gettz(
             recurring_payment.recurrence_info.timezone
         )
@@ -288,9 +285,7 @@ class RecurringPaymentsPlugin(Plugin):
                 await todoist_api.set_due_date_to_today(task)
 
     async def run_for_user(self, user: User):
-        user_config = UserConfig(
-            **user.get_config_for_plugin(self.canonical_name)
-        )
+        user_config: UserConfig = self.get_config(user)
         self._logger.info(f"{user_config=}")
 
         for recurring_payment in user_config.recurring_payments:

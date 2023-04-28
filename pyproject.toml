@@ -20,6 +20,7 @@ pytest = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"
+mypy = "*"
 
 [build-system]
 requires = ["poetry-core"]
