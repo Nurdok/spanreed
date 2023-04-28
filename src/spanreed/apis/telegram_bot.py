@@ -211,15 +211,11 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
             async with bot.user_interaction():
-                await bot.send_message("Howdy partner!")
-                await asyncio.sleep(1)
-                await bot.send_message(
-                    "I'm Spanreed, your <i>personal</i> "
-                    "personal assistant.\n"
+                await bot.send_multiple_messages(
+                    "Howdy partner!",
+                    "I'm Spanreed, your <i>personal</i> personal assistant.",
+                    "Let's set you up in the system.",
                 )
-                await asyncio.sleep(1)
-                await bot.send_message("Let's set you up in the system.\n")
-                await asyncio.sleep(1)
                 name = await bot.request_user_input(
                     "How do you want me to address you?"
                 )
