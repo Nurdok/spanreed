@@ -57,7 +57,7 @@ class Todoist:
 
     async def get_first_comment_with_yaml(
         self, task: Task, create=False
-    ) -> Optional[Comment]:
+    ) -> Comment:
         comments: List[Comment] = await self._api.get_comments(task_id=task.id)
         for comment in comments:
             if len(parts := comment.content.split("---")) == 3:

@@ -1,15 +1,13 @@
 import asyncio
 import datetime
-from typing import Optional
 from spanreed.apis.todoist import Todoist, Task, TodoistPlugin
 from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import dateutil
 import dateutil.tz
 import dateutil.rrule
-from dateutil.rrule import FREQNAMES
 import yaml
 import jinja2
 
@@ -93,7 +91,7 @@ class RecurringPaymentsPlugin(Plugin):
                 "Please enter a template for the Todoist task name.\n"
                 "You can use the following optional placeholders:\n"
                 "  <b>{{dates}}</b>: A list of all unpaid dates.\n"
-                "  <b>{{total_cost}}</b>: The total cost of all unpaid dates.\n"
+                "  <b>{{total_cost}}</b>: The total cost of unpaid dates.\n"
                 "\n"
                 "Examples: \n"
                 '  "Pay therapist ${{total_cost}} (for {{dates}})"\n'
@@ -285,7 +283,7 @@ class RecurringPaymentsPlugin(Plugin):
                 await todoist_api.set_due_date_to_today(task)
 
     async def run_for_user(self, user: User):
-        user_config: UserConfig = self.get_config(user)
+        user_config: UserConfig = await self.get_config(user)
         self._logger.info(f"{user_config=}")
 
         for recurring_payment in user_config.recurring_payments:
