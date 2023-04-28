@@ -35,8 +35,8 @@ def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
     return core_plugins + optional_plugins
 
 
-async def run_all_tasks():
-    redis_api = redis.Redis(
+async def run_all_tasks() -> None:
+    redis_api: redis.Redis = redis.Redis(
         host=os.environ["REDIS_HOST"],
         port=int(os.environ["REDIS_PORT"]),
         db=int(os.environ["REDIS_DB_ID"]),
@@ -56,7 +56,7 @@ async def run_all_tasks():
     await asyncio.gather(*[plugin.run() for plugin in plugins])
 
 
-def main():
+def main() -> None:
     asyncio.run(run_all_tasks())
 
 

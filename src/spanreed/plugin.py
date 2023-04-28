@@ -144,7 +144,7 @@ class Plugin(abc.ABC, Generic[UC]):
     # This currently assumes that user <--> plugin subscription doesn't
     # change during the lifetime of the plugin.
     # TODO: Refactor to allow for dynamic subscription changes.
-    async def run(self):
+    async def run(self) -> None:
         self._logger.info(f"Running plugin {self.canonical_name()}")
         try:
             coros = []

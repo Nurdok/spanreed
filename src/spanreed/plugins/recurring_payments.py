@@ -41,7 +41,7 @@ class RecurringPayment:
     recurrence_cost: float
     recurrence_info: RecurrenceInfo
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.recurrence_info, dict):
             self.recurrence_info = RecurrenceInfo(**self.recurrence_info)
 
@@ -50,7 +50,7 @@ class RecurringPayment:
 class UserConfig:
     recurring_payments: list[RecurringPayment]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for index, recurring_payment in enumerate(self.recurring_payments):
             if isinstance(recurring_payment, dict):
                 self.recurring_payments[index] = RecurringPayment(
@@ -237,7 +237,7 @@ class RecurringPaymentsPlugin(Plugin):
     ):
         todoist_api: Todoist = await Todoist.for_user(user)
 
-        def now():
+        def now() -> datetime.datetime:
             return datetime.datetime.now(
                 tz=recurring_payment.recurrence_info.tzinfo
             )
@@ -306,7 +306,7 @@ class RecurringPaymentsPlugin(Plugin):
                 await todoist_api.update_task(task, content=new_task_content)
                 await todoist_api.set_due_date_to_today(task)
 
-    async def run_for_user(self, user: User):
+    async def run_for_user(self, user: User) -> None:
         user_config: UserConfig = await self.get_config(user)
         self._logger.info(f"{user_config=}")
 

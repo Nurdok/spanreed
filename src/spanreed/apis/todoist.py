@@ -2,7 +2,7 @@ from dataclasses import dataclass, asdict
 import logging
 from todoist_api_python.api_async import TodoistAPIAsync, Task, Comment
 from spanreed.apis.telegram_bot import TelegramBotApi
-from typing import List, Optional
+from typing import List
 from spanreed.user import User
 from spanreed.plugin import Plugin
 
@@ -43,17 +43,17 @@ class Todoist:
         self._logger = logging.getLogger(__name__)
 
     @classmethod
-    async def for_user(cls, user: User):
+    async def for_user(cls, user: User) -> "Todoist":
         return Todoist(await TodoistPlugin.get_config(user))
 
-    def add_task(self, **kwargs):
-        return self._api.add_task(**kwargs)
+    async def add_task(self, **kwargs) -> Task:
+        return await self._api.add_task(**kwargs)
 
-    async def update_task(self, task: Task, **kwargs):
-        await self._api.update_task(task.id, **kwargs)
+    async def update_task(self, task: Task, **kwargs) -> bool:
+        return await self._api.update_task(task.id, **kwargs)
 
-    async def update_comment(self, comment: Comment, **kwargs):
-        await self._api.update_comment(comment.id, **kwargs)
+    async def update_comment(self, comment: Comment, **kwargs) -> bool:
+        return await self._api.update_comment(comment.id, **kwargs)
 
     async def get_first_comment_with_yaml(
         self, task: Task, create=False

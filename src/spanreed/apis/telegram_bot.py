@@ -455,7 +455,7 @@ class TelegramBotApi:
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
 
-    async def request_user_input(self, prompt):
+    async def request_user_input(self, prompt: str) -> str:
         app: Application = await self.get_application()
 
         # Generate a random callback ID to avoid collisions.
