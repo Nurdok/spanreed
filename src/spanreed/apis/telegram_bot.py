@@ -24,6 +24,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     Application,
+    filters,
 )
 
 logging.basicConfig(
@@ -114,7 +115,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         application.add_handler(CommandHandler("do", self.show_command_menu))
         application.add_handler(CommandHandler("start", self.start))
         application.add_handler(
-            MessageHandler(filters=None, callback=self.handle_message)
+            MessageHandler(filters=filters.ALL, callback=self.handle_message)
         )
 
         return application
@@ -125,6 +126,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     ):
         logger.info("Received callback query")
         query = update.callback_query
+        if query is None:
+            logger.info("No callback query found")
+            return
 
         logger.info(f"query.data={query.data}")
         callback_data: CallbackData = typing.cast(CallbackData, query.data)
@@ -170,6 +174,10 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         raise KeyError(f"User not found for {telegram_user_id=}")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user is None:
+            self._logger.error("No user found in update")
+            return
+
         telegram_user_id: int = update.effective_user.id
         self._logger.info(
             f"Got a /start command from user {telegram_user_id=}"
@@ -192,7 +200,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 )
             return
 
-        async def start_task():
+        async def start_task() -> None:
             user: User = await User.create()
             await self.set_config(user, UserConfig(user_id=telegram_user_id))
 
@@ -256,9 +264,14 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
         app: Application = context.application
-        commands: dict[PluginCommand] = app.bot_data.setdefault(
+        commands: dict[str, PluginCommand] = app.bot_data.setdefault(
             PLUGIN_COMMANDS, {}
         )
+
+        if update.effective_user is None:
+            self._logger.error("No user found in update")
+            return
+
         telegram_user_id: int = update.effective_user.id
         user: User = await self.get_user_by_telegram_user_id(telegram_user_id)
         self._logger.info(f"{user.plugins=}")
@@ -302,8 +315,17 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     async def handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
+        if update.message is None:
+            self._logger.error("No message found in update")
+            return
+
         self._logger.info(f"Received message: {update.message.text=}")
         # Get the user's Telegram ID and find the corresponding user.
+
+        if update.effective_user is None:
+            self._logger.error("No user found in update")
+            return
+
         telegram_user_id: int = update.effective_user.id
         user: User = await self.get_user_by_telegram_user_id(telegram_user_id)
         self._logger.info(f"{user=}")
@@ -329,11 +351,10 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
 
 class TelegramBotApi:
-    # TODO: Replace this low-level exposed app with something safer.
-    _application: Application = None
+    _application: Application
     _application_initialized = asyncio.Event()
 
-    def __init__(self, telegram_user_id: str):
+    def __init__(self, telegram_user_id: int):
         self._logger = logging.getLogger(TelegramBotApi.__name__)
         self._telegram_user_id = telegram_user_id
         self._have_interaction_lock = False

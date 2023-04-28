@@ -30,7 +30,7 @@ class TodoistNoOverduePlugin(Plugin):
         return [TodoistPlugin]
 
     async def run_for_user(self, user: User):
-        todoist_api = Todoist.for_user(user)
+        todoist_api = await Todoist.for_user(user)
 
         while True:
             self._logger.info(f"Updating no-overdue tasks for user {user.id}")

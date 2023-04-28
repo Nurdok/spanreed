@@ -1,15 +1,18 @@
 import asyncio
 import datetime
-from spanreed.apis.todoist import Todoist, Task, TodoistPlugin
-from spanreed.apis.telegram_bot import TelegramBotApi
-from spanreed.user import User
-from spanreed.plugin import Plugin
+from typing import Optional
 from dataclasses import dataclass
+
 import dateutil
 import dateutil.tz
 import dateutil.rrule
 import yaml
 import jinja2
+
+from spanreed.apis.todoist import Todoist, Task, TodoistPlugin
+from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.user import User
+from spanreed.plugin import Plugin
 
 
 @dataclass
@@ -22,6 +25,12 @@ class RecurrenceInfo:
     hour: int
     minute: int
     second: int
+
+    @property
+    def tzinfo(self) -> datetime.tzinfo:
+        if (tz := dateutil.tz.gettz(self.timezone)) is None:
+            raise ValueError(f"Invalid timezone: {self.timezone}")
+        return tz
 
 
 @dataclass
@@ -122,10 +131,21 @@ class RecurringPaymentsPlugin(Plugin):
                 )
             ]
 
-            frequency = await bot.request_user_choice(
-                "Please choose the frequency of the recurrence:",
-                [freq.capitalize() for freq in dateutil.rrule.FREQNAMES],
+            frequencies: dict[str, int] = {
+                "Weekly": dateutil.rrule.WEEKLY,
+            }
+            frequency_choices = sorted(
+                frequencies.keys(), key=lambda x: frequencies[x]
             )
+
+            frequency: int = frequencies[
+                frequency_choices[
+                    await bot.request_user_choice(
+                        "Please choose the frequency of the recurrence:",
+                        [freq.capitalize() for freq in frequencies],
+                    )
+                ]
+            ]
 
             weekdays: dict[str, dateutil.rrule.weekday] = {
                 "Monday": dateutil.rrule.MO,
@@ -195,10 +215,15 @@ class RecurringPaymentsPlugin(Plugin):
         return [TodoistPlugin]
 
     @staticmethod
+    def get_timezone_from_string(timezone: str) -> datetime.tzinfo:
+        if (tz := dateutil.tz.gettz(timezone)) is None:
+            raise ValueError(f"Invalid timezone: {timezone}")
+        return tz
+
+    @staticmethod
     def get_recurrence(recurrence: RecurrenceInfo):
-        tz: datetime.tzinfo = dateutil.tz.gettz(recurrence.timezone)
         return dateutil.rrule.rrule(
-            dtstart=datetime.datetime.now(tz=tz),
+            dtstart=datetime.datetime.now(tz=recurrence.tzinfo),
             freq=recurrence.frequency,
             wkst=recurrence.week_start_day,
             byweekday=recurrence.week_day,
@@ -211,12 +236,11 @@ class RecurringPaymentsPlugin(Plugin):
         self, user: User, recurring_payment: RecurringPayment
     ):
         todoist_api: Todoist = await Todoist.for_user(user)
-        tz: datetime.tzinfo = dateutil.tz.gettz(
-            recurring_payment.recurrence_info.timezone
-        )
 
         def now():
-            return datetime.datetime.now(tz=tz)
+            return datetime.datetime.now(
+                tz=recurring_payment.recurrence_info.tzinfo
+            )
 
         self._logger.info(f"{now()=}")
         recurrence = self.get_recurrence(recurring_payment.recurrence_info)

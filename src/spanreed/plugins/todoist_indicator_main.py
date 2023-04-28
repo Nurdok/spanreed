@@ -1,4 +1,4 @@
-from spanreed.apis.todoist import Todoist
+from spanreed.apis.todoist import Todoist, UserConfig
 from spanreed.apis.rpi import RPi
 import time
 import os
@@ -29,5 +29,7 @@ class TodoistIndicator:
 
 
 if __name__ == "__main__":
-    ind = TodoistIndicator(RPi(), Todoist(os.environ["TODOIST_API_TOKEN"]))
+    ind = TodoistIndicator(
+        RPi(), Todoist(UserConfig(os.environ["TODOIST_API_TOKEN"]))
+    )
     ind.run()

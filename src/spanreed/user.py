@@ -27,7 +27,7 @@ class User:
             await self.redis_api.sadd(f"user:{self.id}:plugins", plugin)
 
     @classmethod
-    async def create(cls, name="Master"):
+    async def create(cls, name: str = "Master") -> "User":
         self = User()
         self.id = await cls._generate_user_id()
         await self.set_name(name)

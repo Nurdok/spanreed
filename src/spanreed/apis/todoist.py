@@ -70,6 +70,10 @@ class Todoist:
             )
             return comment
 
+        raise RuntimeError(
+            f"No yaml comment found for task {format_task(task)}"
+        )
+
     async def _get_inbox_project(self):
         projects = await self._api.get_projects()
         for project in projects:

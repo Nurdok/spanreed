@@ -14,24 +14,22 @@ from spanreed.plugins.habit_tracker import HabitTrackerPlugin
 from spanreed.plugins.recurring_payments import RecurringPaymentsPlugin
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
-from spanreed.plugins.admin import AdminPlugin
 from spanreed.plugins.plugin_manager import PluginManagerPlugin
 
 
 def load_plugins(redis_api: redis.Redis) -> List[Plugin]:
-    core_plugins = [
+    core_plugins: list[Plugin] = [
         TelegramBotPlugin(redis_api=redis_api),
         PluginManagerPlugin(redis_api=redis_api),
         TodoistPlugin(redis_api=redis_api),
     ]
 
     # TODO: Load optional plugins dynamically.
-    optional_plugins = [
+    optional_plugins: list[Plugin] = [
         HabitTrackerPlugin(redis_api=redis_api),
         RecurringPaymentsPlugin(redis_api=redis_api),
         TodoistNoOverduePlugin(redis_api=redis_api),
         LitNotesPlugin(redis_api=redis_api),
-        AdminPlugin(redis_api=redis_api),
     ]
 
     return core_plugins + optional_plugins

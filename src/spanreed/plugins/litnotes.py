@@ -51,19 +51,17 @@ class LitNotesPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         async with bot.user_interaction():
-            book: Optional[Book] = await self._ask_for_book(user, bot)
+            book: Optional[Book] = await self._ask_for_book(bot)
             if book is None:
                 return
-            recommended_by: List[str] = await self._ask_for_recommendation(
-                user, bot
-            )
-            free_text: str = await self._ask_for_free_text(user, bot)
+            recommended_by: List[str] = await self._ask_for_recommendation(bot)
+            free_text: str = await self._ask_for_free_text(bot)
 
             await self._add_note_for_book(
                 user, bot, book, recommended_by, free_text
             )
 
-    async def _ask_for_free_text(self, user: User, bot: TelegramBotApi) -> str:
+    async def _ask_for_free_text(self, bot: TelegramBotApi) -> str:
         choice = await bot.request_user_choice(
             "Any free text to add to the note?", ["Yes", "No"]
         )
@@ -71,9 +69,7 @@ class LitNotesPlugin(Plugin):
             return await bot.request_user_input("Go ahead:")
         return ""
 
-    async def _ask_for_recommendation(
-        self, user: User, bot: TelegramBotApi
-    ) -> List[str]:
+    async def _ask_for_recommendation(self, bot: TelegramBotApi) -> List[str]:
         self._logger.info("Asking for recommendation")
         recommended_by = []
         while True:
@@ -89,9 +85,7 @@ class LitNotesPlugin(Plugin):
             )
         return recommended_by
 
-    async def _ask_for_book(
-        self, user: User, bot: TelegramBotApi
-    ) -> Optional[Book]:
+    async def _ask_for_book(self, bot: TelegramBotApi) -> Optional[Book]:
         google_books_api: GoogleBooks = GoogleBooks("")
         book_query = await bot.request_user_input(
             "Which book do you want to add a note for?"
@@ -118,20 +112,21 @@ class LitNotesPlugin(Plugin):
                     "Sorry I couldn't find the book you were looking for."
                 )
                 return None
-        elif len(books) > 1:
-            options_to_show = min(5, len(books))
-            book_choice = await bot.request_user_choice(
-                "Found multiple books. Which one did you mean?",
-                [_format_book(book) for book in books[:options_to_show]]
-                + ["None of these"],
+
+        # More than one book found
+        options_to_show = min(5, len(books))
+        book_choice = await bot.request_user_choice(
+            "Found multiple books. Which one did you mean?",
+            [_format_book(book) for book in books[:options_to_show]]
+            + ["None of these"],
+        )
+        if book_choice == options_to_show:
+            await bot.send_message(
+                "Sorry I couldn't find the book you were looking for."
             )
-            if book_choice == options_to_show:
-                await bot.send_message(
-                    "Sorry I couldn't find the book you were looking for."
-                )
-                return None
-            book = books[book_choice]
-            return book
+            return None
+        book = books[book_choice]
+        return book
 
     async def _add_note_for_book(
         self,
@@ -141,8 +136,7 @@ class LitNotesPlugin(Plugin):
         recommended_by: List[str],
         free_text: str,
     ):
-        vault = user.config["lit-notes"]["vault"]
-        file_location = user.config["lit-notes"]["file_location"]
+        user_config: UserConfig = await self.get_config(user)
 
         env = jinja2.Environment()
         template_params = dict(
@@ -151,12 +145,12 @@ class LitNotesPlugin(Plugin):
         self._logger.info(f"{template_params=}")
 
         note_title_template: jinja2.Template = env.from_string(
-            user.config["lit-notes"]["note_title_template"]
+            user_config.note_content_template
         )
         note_title = note_title_template.render(template_params)
 
         note_content_template: jinja2.Template = env.from_string(
-            user.config["lit-notes"]["note_content_template"]
+            user_config.note_content_template
         )
         note_content = note_content_template.render(template_params)
         self._logger.info(f"{note_content=}")
@@ -167,8 +161,8 @@ class LitNotesPlugin(Plugin):
         obsidian_uri = (
             "https://amir.rachum.com/fwdr?url="
             + base64.urlsafe_b64encode(
-                f"obsidian://new?vault={e(vault)}"
-                f"&file={e(file_location)}{e(note_title)}"
+                f"obsidian://new?vault={e(user_config.vault)}"
+                f"&file={e(user_config.file_location)}{e(note_title)}"
                 f"&content={e(note_content)}".encode()
             ).decode("utf-8")
         )

@@ -40,7 +40,7 @@ class EventStorageRedis:
     @classmethod
     async def for_user(cls, user: User, redis_api: redis.Redis):
         self = EventStorageRedis(user=user, redis_api=redis_api)
-        self._events: List[Event] = await self._load_from_storage()
+        self._events = await self._load_from_storage()
         return self
 
     async def _load_from_storage(self) -> List[Event]:
@@ -85,6 +85,8 @@ class EventStorageRedis:
         for event in self._events:
             if event.activity_type == activity_type and event.date == date:
                 return event.event_type
+
+        return None
 
 
 @dataclasses.dataclass
