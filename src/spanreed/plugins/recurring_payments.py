@@ -58,7 +58,7 @@ class UserConfig:
                 )
 
 
-class RecurringPaymentsPlugin(Plugin):
+class RecurringPaymentsPlugin(Plugin[UserConfig]):
     @classmethod
     def name(cls) -> str:
         return "Recurring Payments"
@@ -66,6 +66,10 @@ class RecurringPaymentsPlugin(Plugin):
     @classmethod
     def has_user_config(cls) -> bool:
         return True
+
+    @classmethod
+    def get_config_class(cls) -> type[UserConfig]:
+        return UserConfig
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:

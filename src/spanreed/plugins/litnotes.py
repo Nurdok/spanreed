@@ -2,7 +2,7 @@ import base64
 import urllib.parse
 from typing import List, Optional
 import jinja2
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -38,6 +38,10 @@ class LitNotesPlugin(Plugin):
     @classmethod
     def has_user_config(cls) -> bool:
         return True
+
+    @classmethod
+    def get_config_class(cls) -> Optional[type[UserConfig]]:
+        return UserConfig
 
     async def run(self) -> None:
         await TelegramBotApi.register_command(
