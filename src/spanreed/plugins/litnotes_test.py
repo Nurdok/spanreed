@@ -10,14 +10,8 @@ from typing import Callable
 
 from spanreed.user import User
 from spanreed.plugins.litnotes import LitNotesPlugin, UserConfig
-from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.plugin import Plugin
 from spanreed.apis.google_books import Book, GoogleBooks
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.DEBUG,
-)
 
 
 def make_mock_redis() -> MagicMock:

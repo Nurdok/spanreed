@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import redis.asyncio as redis
+from spanreed.storage import redis_api
 import asyncio
 import logging
 import json
@@ -14,12 +14,10 @@ UC = TypeVar("UC")
 
 class Plugin(abc.ABC, Generic[UC]):
     _plugins: list[Plugin] = []
-    _redis: redis.Redis
 
-    def __init__(self, redis_api: redis.Redis):
+    def __init__(self) -> None:
         Plugin.register(self)
         self._logger = logging.getLogger(self.name())
-        self._redis: redis.Redis = redis_api
 
     @classmethod
     @abc.abstractmethod
@@ -62,7 +60,7 @@ class Plugin(abc.ABC, Generic[UC]):
         if config_class is None:
             raise NotImplementedError("This plugin does not have user config.")
 
-        config = await user.redis_api.get(cls._get_config_key(user))
+        config = await redis_api.get(cls._get_config_key(user))
         if config is None:
             return config_class()
         return config_class(**json.loads(config))
@@ -80,7 +78,7 @@ class Plugin(abc.ABC, Generic[UC]):
                 f"got {type(config)}."
             )
 
-        await user.redis_api.set(
+        await redis_api.set(
             cls._get_config_key(user),
             json.dumps(asdict(config)),  # type: ignore
         )
@@ -90,9 +88,7 @@ class Plugin(abc.ABC, Generic[UC]):
         self._logger.info(f"Getting user list key {self._get_user_list_key()}")
         user_ids = [
             int(user_id)
-            for user_id in await self._redis.smembers(
-                self._get_user_list_key()
-            )
+            for user_id in await redis_api.smembers(self._get_user_list_key())
         ]
         users: list[User] = []
         for user_id in user_ids:
@@ -134,16 +130,12 @@ class Plugin(abc.ABC, Generic[UC]):
             )
             await self.ask_for_user_config(user)
 
-        await self._redis.sadd(
-            f"user:{user.id}:plugins", self.canonical_name()
-        )
-        await self._redis.sadd(self._get_user_list_key(), user.id)
+        await redis_api.sadd(f"user:{user.id}:plugins", self.canonical_name())
+        await redis_api.sadd(self._get_user_list_key(), user.id)
 
     async def unregister_user(self, user: User) -> None:
-        await self._redis.srem(
-            f"user:{user.id}:plugins", self.canonical_name()
-        )
-        await self._redis.srem(self._get_user_list_key(), user.id)
+        await redis_api.srem(f"user:{user.id}:plugins", self.canonical_name())
+        await redis_api.srem(self._get_user_list_key(), user.id)
 
     async def run_for_user(self, user: User) -> None:
         pass
@@ -203,6 +195,6 @@ class Plugin(abc.ABC, Generic[UC]):
         return plugins
 
     async def is_registered(self, user: User) -> bool:
-        return await self._redis.sismember(
+        return await redis_api.sismember(
             f"user:{user.id}:plugins", self.canonical_name()
         )
