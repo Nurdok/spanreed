@@ -166,6 +166,10 @@ class Plugin(abc.ABC, Generic[UC]):
             self._logger.exception("Exception in plugin run")
 
     @classmethod
+    def reset_registry(cls) -> None:
+        cls._plugins = []
+
+    @classmethod
     def register(cls, plugin: "Plugin") -> None:
         if plugin.canonical_name() in [
             p.canonical_name() for p in cls._plugins

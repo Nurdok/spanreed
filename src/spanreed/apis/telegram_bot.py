@@ -5,8 +5,8 @@ import os
 import logging
 import typing
 import uuid
-from typing import List, NamedTuple, Optional, Dict, Callable, Tuple
-from dataclasses import dataclass, asdict
+from typing import NamedTuple, Optional, Callable
+from dataclasses import dataclass
 from collections.abc import AsyncGenerator
 
 from spanreed.plugin import Plugin
@@ -424,7 +424,7 @@ class TelegramBotApi:
             await self.send_message(message, parse_html=parse_html)
 
     @classmethod
-    async def init_callback(cls) -> Tuple[int, asyncio.Event]:
+    async def init_callback(cls) -> tuple[int, asyncio.Event]:
         callback_id = uuid.uuid4().int
         app = await cls.get_application()
         event = asyncio.Event()
@@ -432,7 +432,7 @@ class TelegramBotApi:
         return callback_id, event
 
     async def request_user_choice(
-        self, prompt: str, choices: List[str]
+        self, prompt: str, choices: list[str]
     ) -> int:
         app = await self.get_application()
 
