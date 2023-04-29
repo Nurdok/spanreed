@@ -55,6 +55,7 @@ class LitNotesPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         async with bot.user_interaction():
+            self._logger.info("Asking for book")
             book: Optional[Book] = await self._ask_for_book(bot)
             if book is None:
                 return
@@ -70,15 +71,19 @@ class LitNotesPlugin(Plugin):
             "Any free text to add to the note?", ["Yes", "No"]
         )
         if choice == 0:
-            return await bot.request_user_input("Go ahead:")
+            return await bot.request_user_input("Enter free text:")
         return ""
 
     async def _ask_for_recommendation(self, bot: TelegramBotApi) -> List[str]:
         self._logger.info("Asking for recommendation")
-        recommended_by = []
+        recommended_by: list[str] = []
         while True:
+            if recommended_by:
+                prompt = 'Add another "Recommended by"?'
+            else:
+                prompt = 'Add "Recommended by"?'
             choice = await bot.request_user_choice(
-                'Add "Recommended by"?',
+                prompt,
                 ["Yes", "No"],
             )
             if choice == 1:
