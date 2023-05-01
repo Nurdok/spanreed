@@ -5,42 +5,15 @@ import base64
 import datetime
 import textwrap
 from unittest.mock import MagicMock, patch, AsyncMock, call
-from typing import Callable, Any
 
 from spanreed.user import User
 from spanreed.plugins.litnotes import LitNotesPlugin, UserConfig
 from spanreed.plugin import Plugin
 from spanreed.apis.google_books import Book, GoogleBooks
+from spanreed.test_utils import patch_redis, mock_user_find_by_id
 
 
-def patch_redis(f: Callable) -> Callable[..., MagicMock]:
-    def f_with_patched_redis(*args: list, **kwargs: dict) -> Any:
-        with patch("spanreed.plugin.redis_api", new=MagicMock()) as mock_redis:
-            redis_async_defs = [
-                "get",
-                "set",
-                "smembers",
-                "sadd",
-                "srem",
-                "incr",
-            ]
-            for def_name in redis_async_defs:
-                setattr(mock_redis, def_name, AsyncMock())
-            return f(*args, **kwargs, mock_redis=mock_redis)
-
-    return f_with_patched_redis
-
-
-def mock_user_find_by_id(user_id: int) -> MagicMock:
-    mock_user = MagicMock(name=f"user-{user_id}", spec=User)
-    mock_user.id = user_id
-    mock_user.name = "Test User"
-    mock_user.plugins = []
-    return mock_user
-
-
-@patch_redis
-def test_name(mock_redis: MagicMock) -> None:
+def test_name() -> None:
     Plugin.reset_registry()
     litnotes = LitNotesPlugin()
 
@@ -64,8 +37,7 @@ def test_get_users(mock_redis: MagicMock) -> None:
         assert set(u.id for u in users) == {4, 7}
 
 
-@patch_redis
-def test_ask_for_user_config(mock_redis: MagicMock) -> None:
+def test_ask_for_user_config() -> None:
     Plugin.reset_registry()
     litnotes = LitNotesPlugin()
 
@@ -108,8 +80,7 @@ def test_ask_for_user_config(mock_redis: MagicMock) -> None:
             )
 
 
-@patch_redis
-def test_ask_for_book_note(mock_redis: MagicMock) -> None:
+def test_ask_for_book_note() -> None:
     Plugin.reset_registry()
     litnotes = LitNotesPlugin()
 
