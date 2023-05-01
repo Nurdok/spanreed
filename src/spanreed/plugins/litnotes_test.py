@@ -1,8 +1,9 @@
 import re
+import urllib.parse
 import asyncio
 import base64
 import datetime
-import contextlib
+import textwrap
 from unittest.mock import MagicMock, patch, AsyncMock, call
 from typing import Callable, Any
 
@@ -136,8 +137,11 @@ def test_ask_for_book_note(mock_redis: MagicMock) -> None:
             file_location="dir/",
             note_title_template="{{ book.short_title }}",
             note_content_template=(
-                "{{ free_text }}:{% for r in "
-                "recommended_by %}{{ r }}{% endfor %}"
+                "{{ free_text }}\n"
+                "{% for r in recommended_by %}{{ r }}{% endfor %}\n"
+                "{{ book.formatted_authors }}\n"
+                "{{ book.publication_year }}\n"
+                "{{ book.thumbnail_url }}\n"
             ),
         )
 
@@ -178,7 +182,21 @@ def test_ask_for_book_note(mock_redis: MagicMock) -> None:
         assert "amir.rachum.com/fwdr" in html_msg
         if (link := re.search(r'url=([^"]+)"', html_msg)) is None:
             assert False, f"Unexpected message: {html_msg}"
-        assert (
-            base64.urlsafe_b64decode(link.group(1))
-            == b"obsidian://new?vault=v&file=dir%2Ffree%3Ame&content=free%3Ame"
+        obsidian_uri_params = urllib.parse.parse_qs(
+            urllib.parse.urlparse(
+                base64.urlsafe_b64decode(link.group(1)).decode("utf-8")
+            ).query
         )
+
+        assert obsidian_uri_params["vault"] == ["v"]
+        assert obsidian_uri_params["file"] == ["dir/Neverwhere"]
+        assert obsidian_uri_params["content"] == [
+            textwrap.dedent(
+                """\
+                    free
+                    me
+                    [[Neil Gaiman]]
+                    2003
+                    https://example.com/neverwhere.jpg"""
+            )
+        ]

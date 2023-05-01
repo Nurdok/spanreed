@@ -154,7 +154,7 @@ class LitNotesPlugin(Plugin):
         self._logger.info(f"{template_params=}")
 
         note_title_template: jinja2.Template = env.from_string(
-            user_config.note_content_template
+            user_config.note_title_template
         )
         note_title = note_title_template.render(template_params)
 

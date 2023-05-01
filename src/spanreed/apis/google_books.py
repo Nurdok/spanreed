@@ -83,7 +83,7 @@ class GoogleBooks:
             books.append(
                 Book(
                     title=volume_info.get("title", "Unknown"),
-                    authors=list(str(volume_info.get("authors", ["Unknown"]))),
+                    authors=list(volume_info.get("authors", ["Unknown"])),
                     publisher=volume_info.get("publisher", "Unknown"),
                     publication_date=parse_date(
                         volume_info.get("publishedDate", None)
