@@ -14,15 +14,13 @@ class User:
 
     async def set_name(self, name: str) -> None:
         self.name = name
-        await self.redis_api.set(f"user:{self.id}:name", name)
+        await redis_api.set(f"user:{self.id}:name", name)
 
     async def set_plugins(self, plugins: list[str]) -> None:
         self.plugins = plugins
         for plugin in plugins:
-            await self.redis_api.sadd(
-                f"config:plugin:name={plugin}:users", self.id
-            )
-            await self.redis_api.sadd(f"user:{self.id}:plugins", plugin)
+            await redis_api.sadd(f"config:plugin:name={plugin}:users", self.id)
+            await redis_api.sadd(f"user:{self.id}:plugins", plugin)
 
     @classmethod
     async def create(cls, name: str = "Master") -> "User":
