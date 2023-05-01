@@ -1,7 +1,8 @@
 import os
 import redis.asyncio as redis
 from redis.exceptions import BusyLoadingError, ConnectionError, TimeoutError
-from redis.retry import ExponentialBackoff, Retry
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
 
 
 def make_redis() -> redis.Redis:
