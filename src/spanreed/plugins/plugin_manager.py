@@ -4,14 +4,9 @@ from spanreed.user import User
 
 from typing import List
 
-import redis.asyncio as redis
-
 
 class PluginManagerPlugin(Plugin):
     """A plugin that manages user registration for other plugins."""
-
-    def __init__(self, redis_api: redis.Redis):
-        super().__init__(redis_api)
 
     @classmethod
     def name(cls) -> str:

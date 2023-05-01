@@ -2,65 +2,60 @@ import re
 import asyncio
 import base64
 import datetime
-import json
-import redis.asyncio as redis
+import contextlib
 from unittest.mock import MagicMock, patch, AsyncMock, call
-import logging
-from typing import Callable
+from typing import Callable, Any
 
 from spanreed.user import User
 from spanreed.plugins.litnotes import LitNotesPlugin, UserConfig
-from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.plugin import Plugin
 from spanreed.apis.google_books import Book, GoogleBooks
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.DEBUG,
-)
+
+def patch_redis(f: Callable) -> Callable[..., MagicMock]:
+    def f_with_patched_redis(*args: list, **kwargs: dict) -> Any:
+        with patch("spanreed.plugin.redis_api", new=MagicMock()) as mock_redis:
+            redis_async_defs = [
+                "get",
+                "set",
+                "smembers",
+                "sadd",
+                "srem",
+                "incr",
+            ]
+            for def_name in redis_async_defs:
+                setattr(mock_redis, def_name, AsyncMock())
+            return f(*args, **kwargs, mock_redis=mock_redis)
+
+    return f_with_patched_redis
 
 
-def make_mock_redis() -> MagicMock:
-    mock_redis = MagicMock(spec=redis.Redis)
-    redis_async_defs = ["get", "set", "smembers", "sadd", "srem", "incr"]
-    for def_name in redis_async_defs:
-        setattr(mock_redis, def_name, AsyncMock())
-    return mock_redis
+def mock_user_find_by_id(user_id: int) -> MagicMock:
+    mock_user = MagicMock(name=f"user-{user_id}", spec=User)
+    mock_user.id = user_id
+    mock_user.name = "Test User"
+    mock_user.plugins = []
+    return mock_user
 
 
-def mock_user_find_by_id(mock_redis: MagicMock) -> Callable[[int], MagicMock]:
-    def f(user_id: int) -> MagicMock:
-        mock_user = MagicMock(name=f"user-{user_id}", spec=User)
-        mock_user.redis_api = mock_redis
-        mock_user.id = user_id
-        mock_user.name = "Test User"
-        mock_user.plugins = []
-        return mock_user
-
-    return f
-
-
-def test_name() -> None:
+@patch_redis
+def test_name(mock_redis: MagicMock) -> None:
     Plugin.reset_registry()
-
-    mock_redis = make_mock_redis()
-    litnotes = LitNotesPlugin(redis_api=mock_redis)
+    litnotes = LitNotesPlugin()
 
     assert litnotes.name() == "Lit Notes"
     assert litnotes.canonical_name() == "lit-notes"
 
 
-def test_get_users() -> None:
+@patch_redis
+def test_get_users(mock_redis: MagicMock) -> None:
     Plugin.reset_registry()
-
-    mock_redis = make_mock_redis()
-    User.redis_api = mock_redis
-    litnotes = LitNotesPlugin(redis_api=mock_redis)
+    litnotes = LitNotesPlugin()
 
     with patch.object(
         User,
         "find_by_id",
-        new=AsyncMock(side_effect=mock_user_find_by_id(mock_redis)),
+        new=AsyncMock(side_effect=mock_user_find_by_id),
     ):
         mock_redis.smembers.return_value = {b"4", b"7"}
         users: list[User] = asyncio.run(litnotes.get_users())
@@ -68,19 +63,17 @@ def test_get_users() -> None:
         assert set(u.id for u in users) == {4, 7}
 
 
-def test_ask_for_user_config() -> None:
+@patch_redis
+def test_ask_for_user_config(mock_redis: MagicMock) -> None:
     Plugin.reset_registry()
-
-    mock_redis = make_mock_redis()
-    User.redis_api = mock_redis
-    litnotes = LitNotesPlugin(redis_api=mock_redis)
+    litnotes = LitNotesPlugin()
 
     with patch(
         "spanreed.plugins.litnotes.TelegramBotApi", autospec=True
     ) as mock_bot, patch.object(
         User,
         "find_by_id",
-        new=AsyncMock(side_effect=mock_user_find_by_id(mock_redis)),
+        new=AsyncMock(side_effect=mock_user_find_by_id),
     ):
         mock_bot.for_user = AsyncMock(return_value=mock_bot)
         mock_bot.request_user_choice = AsyncMock(return_value=0)
@@ -114,12 +107,10 @@ def test_ask_for_user_config() -> None:
             )
 
 
-def test_ask_for_book_note() -> None:
+@patch_redis
+def test_ask_for_book_note(mock_redis: MagicMock) -> None:
     Plugin.reset_registry()
-
-    mock_redis = make_mock_redis()
-    User.redis_api = mock_redis
-    litnotes = LitNotesPlugin(redis_api=mock_redis)
+    litnotes = LitNotesPlugin()
 
     book: Book = Book(
         title="Neverwhere",
@@ -137,7 +128,7 @@ def test_ask_for_book_note() -> None:
     ) as mock_gbooks, patch.object(
         LitNotesPlugin, "get_config"
     ) as mock_get_config:
-        mock_user = mock_user_find_by_id(mock_redis)(4)
+        mock_user = mock_user_find_by_id(4)
         mock_bot.for_user = AsyncMock(return_value=mock_bot)
 
         mock_get_config.return_value = UserConfig(

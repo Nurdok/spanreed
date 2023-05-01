@@ -6,10 +6,9 @@ from enum import Enum, member
 import json
 from typing import List, NamedTuple, Optional
 
-import redis.asyncio as redis
-
 from spanreed.plugin import Plugin
 from spanreed.user import User
+from spanreed.storage import redis_api
 from spanreed.apis.telegram_bot import TelegramBotApi
 
 
@@ -31,23 +30,20 @@ class Event(NamedTuple):
 
 
 class EventStorageRedis:
-    def __init__(self, *, user: User, redis_api: redis.Redis):
-        self._redis: redis.Redis = redis_api
+    def __init__(self, *, user: User):
         self._redis_key = f"events:user_id={user.id}"
         self._logger = logging.getLogger(__name__)
         self._events: List[Event] = []
 
     @classmethod
-    async def for_user(
-        cls, user: User, redis_api: redis.Redis
-    ) -> "EventStorageRedis":
-        self = EventStorageRedis(user=user, redis_api=redis_api)
+    async def for_user(cls, user: User) -> "EventStorageRedis":
+        self = EventStorageRedis(user=user)
         self._events = await self._load_from_storage()
         return self
 
     async def _load_from_storage(self) -> List[Event]:
         events: List[Event] = []
-        redis_response = await self._redis.get(self._redis_key)
+        redis_response = await redis_api.get(self._redis_key)
         if redis_response is None:
             return []
         self._logger.info(f"key={self._redis_key},value={redis_response}")
@@ -75,7 +71,7 @@ class EventStorageRedis:
                     "event_type": event.event_type.name,
                 }
             )
-        await self._redis.set(self._redis_key, json.dumps(events_json))
+        await redis_api.set(self._redis_key, json.dumps(events_json))
 
     async def add(self, event: Event) -> None:
         self._events.append(event)
@@ -110,7 +106,7 @@ class HabitTrackerPlugin(Plugin):
         self._logger.info(f"Running for user {user}")
         bot = await TelegramBotApi.for_user(user)
         self._logger.info(f"Got bot")
-        event_storage = await EventStorageRedis.for_user(user, self._redis)
+        event_storage = await EventStorageRedis.for_user(user)
 
         # TODO: Allow users to decide on their tracked habits
         activity_type = ActivityType.JOURNAL
