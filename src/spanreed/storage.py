@@ -1,5 +1,7 @@
 import os
 import redis.asyncio as redis
+from redis.exceptions import BusyLoadingError, ConnectionError, TimeoutError
+from redis.retry import ExponentialBackoff, Retry
 
 
 def make_redis() -> redis.Redis:
@@ -11,6 +13,9 @@ def make_redis() -> redis.Redis:
         password=os.environ.get("REDIS_PASSWORD", ""),
         ssl=True,
         ssl_cert_reqs="none",
+        retry_on_error=[ConnectionError, TimeoutError, BusyLoadingError],
+        retry=Retry(ExponentialBackoff(), 3),
+        retry_on_timeout=True,
     )
 
 
