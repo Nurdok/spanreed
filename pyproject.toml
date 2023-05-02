@@ -17,6 +17,7 @@ Jinja2 = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"
+freezegun = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"

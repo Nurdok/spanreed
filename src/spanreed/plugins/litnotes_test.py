@@ -15,16 +15,16 @@ from spanreed.test_utils import patch_redis, mock_user_find_by_id
 
 def test_name() -> None:
     Plugin.reset_registry()
-    litnotes = LitNotesPlugin()
+    plugin = LitNotesPlugin()
 
-    assert litnotes.name() == "Lit Notes"
-    assert litnotes.canonical_name() == "lit-notes"
+    assert plugin.name() == "Lit Notes"
+    assert plugin.canonical_name() == "lit-notes"
 
 
 @patch_redis
 def test_get_users(mock_redis: MagicMock) -> None:
     Plugin.reset_registry()
-    litnotes = LitNotesPlugin()
+    plugin = LitNotesPlugin()
 
     with patch.object(
         User,
@@ -32,14 +32,14 @@ def test_get_users(mock_redis: MagicMock) -> None:
         new=AsyncMock(side_effect=mock_user_find_by_id),
     ):
         mock_redis.smembers.return_value = {b"4", b"7"}
-        users: list[User] = asyncio.run(litnotes.get_users())
+        users: list[User] = asyncio.run(plugin.get_users())
         assert len(users) == 2
         assert set(u.id for u in users) == {4, 7}
 
 
 def test_ask_for_user_config() -> None:
     Plugin.reset_registry()
-    litnotes = LitNotesPlugin()
+    plugin = LitNotesPlugin()
 
     with patch(
         "spanreed.plugins.litnotes.TelegramBotApi", autospec=True
@@ -66,7 +66,7 @@ def test_ask_for_user_config() -> None:
             "set_config",
             new=mock_set_config,
         ):
-            asyncio.run(litnotes.ask_for_user_config(mock_user4))
+            asyncio.run(plugin.ask_for_user_config(mock_user4))
 
             assert mock_set_config.call_count == 1
             assert mock_set_config.call_args_list[0] == call(
@@ -82,7 +82,7 @@ def test_ask_for_user_config() -> None:
 
 def test_ask_for_book_note() -> None:
     Plugin.reset_registry()
-    litnotes = LitNotesPlugin()
+    plugin = LitNotesPlugin()
 
     book: Book = Book(
         title="Neverwhere",
@@ -148,7 +148,7 @@ def test_ask_for_book_note() -> None:
             assert False, f"Unexpected prompt: {prompt}"
 
         mock_bot.request_user_choice.side_effect = fake_user_choice
-        asyncio.run(litnotes._ask_for_book_note(mock_user))
+        asyncio.run(plugin._ask_for_book_note(mock_user))
         html_msg: str = mock_bot.send_message.call_args.kwargs["text"]
         assert "amir.rachum.com/fwdr" in html_msg
         if (link := re.search(r'url=([^"]+)"', html_msg)) is None:

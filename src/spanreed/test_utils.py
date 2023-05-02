@@ -27,3 +27,7 @@ def mock_user_find_by_id(user_id: int) -> MagicMock:
     mock_user.name = "Test User"
     mock_user.plugins = []
     return mock_user
+
+
+class EndPluginRun(Exception):
+    pass

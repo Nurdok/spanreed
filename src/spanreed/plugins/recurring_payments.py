@@ -1,6 +1,6 @@
 import asyncio
+import logging
 import datetime
-from typing import Optional
 from dataclasses import dataclass
 
 import dateutil
@@ -75,7 +75,11 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
     async def ask_for_user_config(cls, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         recurring_payments: list[RecurringPayment] = []
+        logger = logging.getLogger(__name__)
         while True:
+            logger.info(
+                "Asking for recurring payment. Current: %s", recurring_payments
+            )
             if recurring_payments:
                 choice = await bot.request_user_choice(
                     f"You currently have {len(recurring_payments)} recurring "
@@ -211,8 +215,9 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                     ),
                 )
             )
-
         self = await cls.get_plugin_by_class(cls)
+        self._logger.info("Setting config")
+
         await self.set_config(user, UserConfig(recurring_payments))
         asyncio.create_task(self.run_for_user(user))
 
@@ -290,6 +295,8 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
             if date_str not in dates:
                 dates.append(date_str)
                 total_cost = recurring_payment.recurrence_cost * len(dates)
+                if total_cost.is_integer():
+                    total_cost = int(total_cost)
 
                 env = jinja2.Environment()
                 template_params = dict(

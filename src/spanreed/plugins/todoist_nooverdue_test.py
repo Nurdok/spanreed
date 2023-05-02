@@ -4,35 +4,31 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugin import Plugin
-from spanreed.test_utils import mock_user_find_by_id
+from spanreed.test_utils import mock_user_find_by_id, EndPluginRun
 from spanreed.apis.todoist import Task
-
-
-class EndPluginRun(Exception):
-    pass
 
 
 def test_name() -> None:
     Plugin.reset_registry()
-    nooverdue = TodoistNoOverduePlugin()
+    plugin = TodoistNoOverduePlugin()
 
-    assert nooverdue.name() == "Todoist No Overdue"
-    assert nooverdue.canonical_name() == "todoist-no-overdue"
+    assert plugin.name() == "Todoist No Overdue"
+    assert plugin.canonical_name() == "todoist-no-overdue"
 
 
 def test_ask_for_user_config() -> None:
     Plugin.reset_registry()
-    nooverdue = TodoistNoOverduePlugin()
+    plugin = TodoistNoOverduePlugin()
 
     user: MagicMock = mock_user_find_by_id(3)
     # There's no user config for this plugin yet,
     # so this should return silently.
-    asyncio.run(nooverdue.ask_for_user_config(user))
+    asyncio.run(plugin.ask_for_user_config(user))
 
 
 def test_run_for_user() -> None:
     Plugin.reset_registry()
-    nooverdue = TodoistNoOverduePlugin()
+    plugin = TodoistNoOverduePlugin()
 
     user: MagicMock = mock_user_find_by_id(3)
 
@@ -46,7 +42,7 @@ def test_run_for_user() -> None:
 
         mock_sleep.side_effect = [EndPluginRun]
         with contextlib.suppress(EndPluginRun):
-            asyncio.run(nooverdue.run_for_user(user))
+            asyncio.run(plugin.run_for_user(user))
 
         mock_todoist.for_user.return_value.get_overdue_tasks_with_label.assert_called_once_with(
             "spanreed/no-overdue"
