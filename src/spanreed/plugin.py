@@ -194,7 +194,8 @@ class Plugin(abc.ABC, Generic[UC]):
                 plugins.append(plugin)
         return plugins
 
-    async def is_registered(self, user: User) -> bool:
+    @classmethod
+    async def is_registered(cls, user: User) -> bool:
         return await redis_api.sismember(
-            f"user:{user.id}:plugins", self.canonical_name()
+            f"user:{user.id}:plugins", cls.canonical_name()
         )
