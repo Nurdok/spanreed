@@ -40,6 +40,7 @@ class RecurringPayment:
     date_format: str
     recurrence_cost: float
     recurrence_info: RecurrenceInfo
+    verify_recurrence: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.recurrence_info, dict):
@@ -255,6 +256,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
 
         self._logger.info(f"{now()=}")
         recurrence = self.get_recurrence(recurring_payment.recurrence_info)
+        skip_current_date = False
 
         while True:
             next_event: datetime.datetime = recurrence.after(now())
@@ -293,6 +295,20 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
             dates: list[str] = sd.setdefault("dates", [])
 
             if date_str not in dates:
+                if recurring_payment.verify_recurrence:
+                    bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+                    async with bot.user_interaction():
+                        choice: int = await bot.request_user_choice(
+                            f"You have a recurring payment of {recurring_payment.recurrence_cost}"
+                            f" due now (for task with"
+                            f" label {recurring_payment.todoist_label}).\n"
+                            f"Would you like to add it to the list of dates?",
+                            ["Yes (add)", "No (skip)"],
+                        )
+                    # TODO: this might cause re-asking for the same date
+                    if choice == 1:
+                        continue
+
                 dates.append(date_str)
                 total_cost = recurring_payment.recurrence_cost * len(dates)
                 if total_cost.is_integer():

@@ -123,61 +123,74 @@ def test_ask_for_user_config() -> None:
             mock_run_for_user.assert_called_once_with(mock_user)
 
 
+class AsyncContextManager:
+    async def __aenter__(self, *args, **kwargs):
+        return self
+
+    async def __aexit__(self, *args, **kwargs):
+        pass
+
+
 @freezegun.freeze_time("2021-01-19")
-def test_run_for_single_recurrence() -> None:
+@patch("spanreed.plugins.recurring_payments.Todoist", autospec=True)
+@patch("asyncio.sleep", autospec=True)
+@patch("spanreed.plugins.recurring_payments.TelegramBotApi", autospec=True)
+def test_run_for_single_recurrence(mock_bot, mock_sleep, mock_todoist) -> None:
     Plugin.reset_registry()
     plugin = RecurringPaymentsPlugin()
 
     user: MagicMock = mock_user_find_by_id(3)
 
-    with patch(
-        "spanreed.plugins.recurring_payments.Todoist", autospec=True
-    ) as mock_todoist, patch(
-        "asyncio.sleep", autospec=True
-    ) as mock_sleep, patch(
-        "datetime.datetime.now", autospec=True
-    ) as mock_now:
-        recurring_payment = RecurringPayment(
-            todoist_label="spanreed/recurring",
-            todoist_task_template="Pay {{total_cost}} for {{dates}}",
-            date_format="%Y-%m-%d",
-            recurrence_cost=100.0,
-            recurrence_info=RecurrenceInfo(
-                timezone="Asia/Jerusalem",
-                frequency=dateutil.rrule.WEEKLY,
-                week_start_day=dateutil.rrule.SU.weekday,
-                week_day=dateutil.rrule.TU.weekday,
-                hour=14,
-                minute=50,
-                second=0,
-            ),
-        )
-        task = MagicMock(name="task", spec=Task)
-        # TODO: change to existing task
-        mock_todoist.for_user.return_value.add_task.return_value = task
-        comment = MagicMock(name="comment", spec=Comment)
-        comment.content = textwrap.dedent(
-            """\
-                ---
-                dates:
-                    - "2021-01-05"
-                    - "2021-01-12"
-                ---
-            """
-        )
-        mock_todoist.for_user.return_value.get_first_comment_with_yaml.return_value = (
-            comment
-        )
+    recurring_payment = RecurringPayment(
+        todoist_label="spanreed/recurring",
+        todoist_task_template="Pay {{total_cost}} for {{dates}}",
+        date_format="%Y-%m-%d",
+        recurrence_cost=100.0,
+        recurrence_info=RecurrenceInfo(
+            timezone="Asia/Jerusalem",
+            frequency=dateutil.rrule.WEEKLY,
+            week_start_day=dateutil.rrule.SU.weekday,
+            week_day=dateutil.rrule.TU.weekday,
+            hour=14,
+            minute=50,
+            second=0,
+        ),
+        verify_recurrence=True,
+    )
+    task = MagicMock(name="task", spec=Task)
+    # TODO: change to existing task
+    mock_todoist.for_user.return_value.add_task.return_value = task
+    comment = MagicMock(name="comment", spec=Comment)
+    comment.content = textwrap.dedent(
+        """\
+            ---
+            dates:
+                - "2021-01-05"
+                - "2021-01-12"
+            ---
+        """
+    )
+    mock_todoist.for_user.return_value.get_first_comment_with_yaml.return_value = (
+        comment
+    )
 
-        mock_now.return_value = datetime.datetime(2021, 1, 15)
+    mock_bot.for_user.return_value.user_interaction = MagicMock(
+        AsyncContextManager()
+    )
+    # "Yes", for adding the current date to the task.
+    mock_request_user_choice = AsyncMock(return_value=0)
+    mock_bot.for_user.return_value.request_user_choice = (
+        mock_request_user_choice
+    )
 
-        mock_sleep.side_effect = ["", EndPluginRun]
-        with contextlib.suppress(EndPluginRun):
-            asyncio.run(
-                plugin.run_for_single_recurrence(user, recurring_payment)
-            )
+    mock_sleep.side_effect = ["", EndPluginRun]
+    with contextlib.suppress(EndPluginRun):
+        asyncio.run(plugin.run_for_single_recurrence(user, recurring_payment))
 
-        mock_todoist.for_user.return_value.update_task.assert_called_once_with(
-            task,
-            content="Pay 300 for 2021-01-05, 2021-01-12, 2021-01-19",
-        )
+    mock_todoist.for_user.return_value.update_task.assert_called_once_with(
+        task,
+        content="Pay 300 for 2021-01-05, 2021-01-12, 2021-01-19",
+    )
+
+    mock_request_user_choice.assert_called_once()
+    assert "add it to the list" in mock_request_user_choice.call_args.args[0]
