@@ -11,11 +11,14 @@ from spanreed.plugins.recurring_payments import (
     RecurrenceInfo,
 )
 from spanreed.plugin import Plugin
-from spanreed.test_utils import mock_user_find_by_id, EndPluginRun
+from spanreed.test_utils import (
+    mock_user_find_by_id,
+    EndPluginRun,
+    patch_telegram_bot,
+)
 from spanreed.apis.todoist import Task, Comment
 from spanreed.user import User
 import dateutil
-import datetime
 
 
 def test_name() -> None:
@@ -26,19 +29,17 @@ def test_name() -> None:
     assert plugin.canonical_name() == "recurring-payments"
 
 
-def test_ask_for_user_config() -> None:
+@patch_telegram_bot("spanreed.plugins.recurring_payments")
+def test_ask_for_user_config(mock_bot) -> None:
     Plugin.reset_registry()
     plugin = RecurringPaymentsPlugin()
 
-    with patch(
-        "spanreed.plugins.recurring_payments.TelegramBotApi", autospec=True
-    ) as mock_bot, patch.object(
+    with patch.object(
         User,
         "find_by_id",
         new=AsyncMock(side_effect=mock_user_find_by_id),
     ):
         mock_user = asyncio.run(User.find_by_id(4))
-        mock_bot.for_user = AsyncMock(return_value=mock_bot)
 
         def fake_user_input(prompt: str) -> str:
             if "unique label" in prompt:
@@ -123,18 +124,10 @@ def test_ask_for_user_config() -> None:
             mock_run_for_user.assert_called_once_with(mock_user)
 
 
-class AsyncContextManager:
-    async def __aenter__(self, *args, **kwargs):
-        return self
-
-    async def __aexit__(self, *args, **kwargs):
-        pass
-
-
 @freezegun.freeze_time("2021-01-19")
 @patch("spanreed.plugins.recurring_payments.Todoist", autospec=True)
 @patch("asyncio.sleep", autospec=True)
-@patch("spanreed.plugins.recurring_payments.TelegramBotApi", autospec=True)
+@patch_telegram_bot("spanreed.plugins.recurring_payments")
 def test_run_for_single_recurrence(mock_bot, mock_sleep, mock_todoist) -> None:
     Plugin.reset_registry()
     plugin = RecurringPaymentsPlugin()
@@ -174,14 +167,8 @@ def test_run_for_single_recurrence(mock_bot, mock_sleep, mock_todoist) -> None:
         comment
     )
 
-    mock_bot.for_user.return_value.user_interaction = MagicMock(
-        AsyncContextManager()
-    )
     # "Yes", for adding the current date to the task.
-    mock_request_user_choice = AsyncMock(return_value=0)
-    mock_bot.for_user.return_value.request_user_choice = (
-        mock_request_user_choice
-    )
+    mock_bot.request_user_choice.return_value = 0
 
     mock_sleep.side_effect = ["", EndPluginRun]
     with contextlib.suppress(EndPluginRun):
@@ -192,5 +179,7 @@ def test_run_for_single_recurrence(mock_bot, mock_sleep, mock_todoist) -> None:
         content="Pay 300 for 2021-01-05, 2021-01-12, 2021-01-19",
     )
 
-    mock_request_user_choice.assert_called_once()
-    assert "add it to the list" in mock_request_user_choice.call_args.args[0]
+    mock_bot.request_user_choice.assert_called_once()
+    assert (
+        "add it to the list" in mock_bot.request_user_choice.call_args.args[0]
+    )
