@@ -10,7 +10,11 @@ from spanreed.user import User
 from spanreed.plugins.litnotes import LitNotesPlugin, UserConfig
 from spanreed.plugin import Plugin
 from spanreed.apis.google_books import Book, GoogleBooks
-from spanreed.test_utils import patch_redis, mock_user_find_by_id
+from spanreed.test_utils import (
+    patch_redis,
+    mock_user_find_by_id,
+    patch_telegram_bot,
+)
 
 
 def test_name() -> None:
@@ -37,27 +41,23 @@ def test_get_users(mock_redis: MagicMock) -> None:
         assert set(u.id for u in users) == {4, 7}
 
 
-def test_ask_for_user_config() -> None:
+@patch_telegram_bot("spanreed.plugins.litnotes")
+def test_ask_for_user_config(mock_bot) -> None:
     Plugin.reset_registry()
     plugin = LitNotesPlugin()
 
-    with patch(
-        "spanreed.plugins.litnotes.TelegramBotApi", autospec=True
-    ) as mock_bot, patch.object(
+    with patch.object(
         User,
         "find_by_id",
         new=AsyncMock(side_effect=mock_user_find_by_id),
     ):
-        mock_bot.for_user = AsyncMock(return_value=mock_bot)
-        mock_bot.request_user_choice = AsyncMock(return_value=0)
-        mock_bot.request_user_input = AsyncMock(
-            side_effect=[
-                "vault name",
-                "file location",
-                "note title template",
-                "note content template",
-            ]
-        )
+        mock_bot.request_user_choice.return_value = 0  # "Yes"
+        mock_bot.request_user_input.side_effect = [
+            "vault name",
+            "file location",
+            "note title template",
+            "note content template",
+        ]
         mock_user4 = asyncio.run(User.find_by_id(4))
         mock_set_config = AsyncMock(name="set_config")
 
@@ -80,7 +80,8 @@ def test_ask_for_user_config() -> None:
             )
 
 
-def test_ask_for_book_note() -> None:
+@patch_telegram_bot("spanreed.plugins.litnotes")
+def test_ask_for_book_note(mock_bot) -> None:
     Plugin.reset_registry()
     plugin = LitNotesPlugin()
 
@@ -93,15 +94,12 @@ def test_ask_for_book_note() -> None:
         thumbnail_url="https://example.com/neverwhere.jpg",
     )
 
-    with patch(
-        "spanreed.plugins.litnotes.TelegramBotApi", autospec=True
-    ) as mock_bot, patch.object(
+    with patch.object(
         GoogleBooks, "get_books", new=AsyncMock(return_value=[book])
     ) as mock_gbooks, patch.object(
         LitNotesPlugin, "get_config"
     ) as mock_get_config:
         mock_user = mock_user_find_by_id(4)
-        mock_bot.for_user = AsyncMock(return_value=mock_bot)
 
         mock_get_config.return_value = UserConfig(
             vault="v",
