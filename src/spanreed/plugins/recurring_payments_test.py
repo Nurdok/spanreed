@@ -30,7 +30,7 @@ def test_name() -> None:
 
 
 @patch_telegram_bot("spanreed.plugins.recurring_payments")
-def test_ask_for_user_config(mock_bot) -> None:
+def test_ask_for_user_config(mock_bot: AsyncMock) -> None:
     Plugin.reset_registry()
     plugin = RecurringPaymentsPlugin()
 
@@ -128,7 +128,9 @@ def test_ask_for_user_config(mock_bot) -> None:
 @patch("spanreed.plugins.recurring_payments.Todoist", autospec=True)
 @patch("asyncio.sleep", autospec=True)
 @patch_telegram_bot("spanreed.plugins.recurring_payments")
-def test_run_for_single_recurrence(mock_bot, mock_sleep, mock_todoist) -> None:
+def test_run_for_single_recurrence(
+    mock_bot: AsyncMock, mock_sleep: AsyncMock, mock_todoist: AsyncMock
+) -> None:
     Plugin.reset_registry()
     plugin = RecurringPaymentsPlugin()
 

@@ -29,10 +29,9 @@ class ObsidianWebhookPlugin(Plugin):
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-        async with bot.user_interaction():
-            webhook_url = await bot.request_user_input(
-                "Please enter your Obsidian webhook URL:"
-            )
+        webhook_url = await bot.request_user_input(
+            "Please enter your Obsidian webhook URL:"
+        )
         await cls.set_config(user, UserConfig(webhook_url))
 
 
@@ -51,10 +50,13 @@ class ObsidianWebhookApi:
             async with session.post(
                 self._webhook_url,
                 params={
-                    "file": note_path,
+                    "path": note_path,
                 },
                 data=content,
             ) as response:
+                self._logger.info(
+                    f"{response.url=} resulted in {response.status=}"
+                )
                 if response.status != 200:
                     self._logger.error(
                         f"Failed to append to note {note_path}: "

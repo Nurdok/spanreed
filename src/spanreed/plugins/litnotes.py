@@ -171,29 +171,35 @@ class LitNotesPlugin(Plugin):
 
         if await ObsidianWebhookPlugin.is_registered(user):
             await self._create_note_with_obsidian_webhook(
-                user, user_config, note_title, note_content
+                user, bot, user_config, note_title, note_content
             )
-
-        await self._send_obsidian_uri(
-            bot, user_config, note_title, note_content
-        )
+        else:
+            await self._send_obsidian_uri(
+                bot, user_config, note_title, note_content
+            )
 
     async def _create_note_with_obsidian_webhook(
         self,
         user: User,
+        bot: TelegramBotApi,
         user_config: UserConfig,
         note_title: str,
         note_content: str,
     ) -> None:
+        self._logger.info("Creating note with Obsidian webhook")
         webhook: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(user)
         await webhook.append_to_note(
             str(
                 (
-                    pathlib.PurePath(user_config.file_location) / note_title
-                ).with_suffix("md")
+                    pathlib.PurePosixPath(user_config.file_location)
+                    / note_title
+                ).with_suffix(".md")
             ),
             note_content,
         )
+
+        async with bot.user_interaction():
+            await bot.send_message(f"Note created in Obsidian!")
 
     async def _send_obsidian_uri(
         self,
