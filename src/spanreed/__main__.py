@@ -7,6 +7,7 @@ from spanreed.plugin import Plugin
 
 from spanreed.apis.telegram_bot import TelegramBotPlugin
 from spanreed.apis.todoist import TodoistPlugin
+from spanreed.apis.obsidian_webhook import ObsidianWebhookPlugin
 
 from spanreed.plugins.habit_tracker import HabitTrackerPlugin
 from spanreed.plugins.recurring_payments import RecurringPaymentsPlugin
@@ -19,11 +20,12 @@ def load_plugins() -> List[Plugin]:
     core_plugins: list[Plugin] = [
         TelegramBotPlugin(),
         PluginManagerPlugin(),
-        TodoistPlugin(),
     ]
 
     # TODO: Load optional plugins dynamically.
     optional_plugins: list[Plugin] = [
+        TodoistPlugin(),
+        ObsidianWebhookPlugin(),
         HabitTrackerPlugin(),
         RecurringPaymentsPlugin(),
         TodoistNoOverduePlugin(),

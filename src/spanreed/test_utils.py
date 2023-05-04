@@ -1,4 +1,5 @@
-from typing import Callable, Any
+import logging
+from typing import Callable, Any, Coroutine
 from unittest.mock import MagicMock, patch, AsyncMock
 from spanreed.user import User
 
@@ -36,10 +37,12 @@ class EndPluginRun(Exception):
 
 
 class AsyncContextManager:
-    async def __aenter__(self, *args, **kwargs):
+    async def __aenter__(
+        self, *args: Any, **kwargs: Any
+    ) -> "AsyncContextManager":
         return self
 
-    async def __aexit__(self, *args, **kwargs):
+    async def __aexit__(self, *args: Any, **kwargs: Any) -> None:
         pass
 
 
@@ -67,3 +70,13 @@ def patch_telegram_bot(
         return f_with_patched_telegram_bot
 
     return patch_telegram_bot_in_target_package
+
+
+async def async_return_false(*_args: Any, **_kwargs: Any) -> bool:
+    logging.getLogger(__name__).info("Returning False")
+    return False
+
+
+async def async_return_true(*_args: Any, **_kwargs: Any) -> bool:
+    logging.getLogger(__name__).info("Returning True")
+    return True
