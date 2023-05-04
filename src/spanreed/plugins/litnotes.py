@@ -198,8 +198,7 @@ class LitNotesPlugin(Plugin):
             note_content,
         )
 
-        async with bot.user_interaction():
-            await bot.send_message(f"Note created in Obsidian!")
+        await bot.send_message(f"Note created in Obsidian!")
 
     async def _send_obsidian_uri(
         self,
