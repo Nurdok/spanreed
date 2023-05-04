@@ -1,3 +1,4 @@
+import pathlib
 import base64
 import urllib.parse
 from typing import List, Optional
@@ -8,6 +9,10 @@ from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.google_books import GoogleBooks, Book
 from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.apis.obsidian_webhook import (
+    ObsidianWebhookApi,
+    ObsidianWebhookPlugin,
+)
 
 
 def _format_book(book: Book) -> str:
@@ -164,6 +169,39 @@ class LitNotesPlugin(Plugin):
         note_content = note_content_template.render(template_params)
         self._logger.info(f"{note_content=}")
 
+        if await ObsidianWebhookPlugin.is_registered(user):
+            await self._create_note_with_obsidian_webhook(
+                user, user_config, note_title, note_content
+            )
+
+        await self._send_obsidian_uri(
+            bot, user_config, note_title, note_content
+        )
+
+    async def _create_note_with_obsidian_webhook(
+        self,
+        user: User,
+        user_config: UserConfig,
+        note_title: str,
+        note_content: str,
+    ) -> None:
+        webhook: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(user)
+        await webhook.append_to_note(
+            str(
+                (
+                    pathlib.PurePath(user_config.file_location) / note_title
+                ).with_suffix("md")
+            ),
+            note_content,
+        )
+
+    async def _send_obsidian_uri(
+        self,
+        bot: TelegramBotApi,
+        user_config: UserConfig,
+        note_title: str,
+        note_content: str,
+    ) -> None:
         def e(text: str) -> str:
             return urllib.parse.quote(text, safe="")
 
