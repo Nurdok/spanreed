@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import datetime
+import pathlib
 from dataclasses import dataclass
+from typing import Optional
 
 import dateutil
 import dateutil.tz
@@ -11,6 +13,10 @@ import jinja2
 
 from spanreed.apis.todoist import Todoist, Task, TodoistPlugin
 from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.apis.obsidian_webhook import (
+    ObsidianWebhookApi,
+    ObsidianWebhookPlugin,
+)
 from spanreed.user import User
 from spanreed.plugin import Plugin
 
@@ -34,6 +40,13 @@ class RecurrenceInfo:
 
 
 @dataclass
+class ObsidianLog:
+    file_location: str
+    note_title: str
+    note_content_template: str
+
+
+@dataclass
 class RecurringPayment:
     todoist_label: str
     todoist_task_template: str
@@ -41,10 +54,13 @@ class RecurringPayment:
     recurrence_cost: float
     recurrence_info: RecurrenceInfo
     verify_recurrence: bool = False
+    obsidian_log: Optional[ObsidianLog] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.recurrence_info, dict):
             self.recurrence_info = RecurrenceInfo(**self.recurrence_info)
+        if isinstance(self.obsidian_log, dict):
+            self.obsidian_log = ObsidianLog(**self.obsidian_log)
 
 
 @dataclass
@@ -199,6 +215,48 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 )
             )
 
+            verify_recurrence = (
+                True
+                if await bot.request_user_choice(
+                    "Would you like me to verify with you every time the recurrence is supposed to happen?",
+                    ["Yes", "No"],
+                )
+                == 0
+                else False
+            )
+
+            obsidian_log: Optional[ObsidianLog] = None
+            if (
+                await bot.request_user_choice(
+                    "Would you like to setup automatic logging of each event"
+                    " to an Obsidian note?\n"
+                    "Note: This requires you to have the Obsidian Webhook plugin."
+                    " I'll help you configure it if you haven't already.",
+                    ["Yes", "No"],
+                )
+                == 0
+            ):
+                if not (await ObsidianWebhookPlugin.is_registered(user)):
+                    await ObsidianWebhookPlugin.ask_for_user_config(user)
+
+                note_title = await bot.request_user_input(
+                    "Please enter the name of the note you'd like to log to:"
+                )
+                file_location = await bot.request_user_input(
+                    "Please enter the directory path of the note you'd like to log to:"
+                )
+                note_content_template = await bot.request_user_input(
+                    "Please enter the template of the note content.\n"
+                    "You can use the following optional placeholders:\n"
+                    "  <b>{{date}}</b>: The event's date.\n"
+                )
+
+                obsidian_log = ObsidianLog(
+                    note_title=note_title,
+                    file_location=file_location,
+                    note_content_template=note_content_template,
+                )
+
             recurring_payments.append(
                 RecurringPayment(
                     todoist_label=todoist_label,
@@ -214,6 +272,8 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                         minute=minute,
                         second=0,
                     ),
+                    verify_recurrence=verify_recurrence,
+                    obsidian_log=obsidian_log,
                 )
             )
         self = await cls.get_plugin_by_class(cls)
@@ -334,6 +394,35 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 )
                 await todoist_api.update_task(task, content=new_task_content)
                 await todoist_api.set_due_date_to_today(task)
+                await self.add_to_obsidian_log(
+                    user, recurring_payment, date_str
+                )
+
+    async def add_to_obsidian_log(
+        self, user: User, recurring_payment: RecurringPayment, date_str: str
+    ) -> None:
+        if recurring_payment.obsidian_log is None:
+            return
+        obsidian_log: ObsidianLog = recurring_payment.obsidian_log
+
+        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
+            user
+        )
+        note_content: str = jinja2.Template(
+            obsidian_log.note_content_template
+        ).render(date=date_str)
+        self._logger.info(
+            f'Added event log to note: "{obsidian_log.note_title}"'
+        )
+        await webhook_api.append_to_note(
+            note_path=str(
+                (
+                    pathlib.PurePosixPath(obsidian_log.file_location)
+                    / obsidian_log.note_title
+                ).with_suffix(".md")
+            ),
+            content=note_content,
+        )
 
     async def run_for_user(self, user: User) -> None:
         user_config: UserConfig = await self.get_config(user)

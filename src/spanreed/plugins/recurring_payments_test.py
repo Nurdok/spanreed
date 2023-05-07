@@ -82,6 +82,14 @@ def test_ask_for_user_config(mock_bot: AsyncMock) -> None:
                 assert choices == ["Yes", "No"]
                 return 1
 
+            if "verify" in prompt:
+                assert choices == ["Yes", "No"]
+                return 1
+
+            if "Obsidian" in prompt:
+                assert choices == ["Yes", "No"]
+                return 1
+
             assert False, f"Unexpected prompt: {prompt}"
 
         mock_bot.request_user_choice.side_effect = fake_user_choice
