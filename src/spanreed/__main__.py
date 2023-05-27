@@ -14,6 +14,7 @@ from spanreed.plugins.recurring_payments import RecurringPaymentsPlugin
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.plugin_manager import PluginManagerPlugin
+from spanreed.plugins.web_ui import WebUiPlugin
 
 
 def load_plugins() -> List[Plugin]:
@@ -30,6 +31,7 @@ def load_plugins() -> List[Plugin]:
         RecurringPaymentsPlugin(),
         TodoistNoOverduePlugin(),
         LitNotesPlugin(),
+        WebUiPlugin(),
     ]
 
     return core_plugins + optional_plugins

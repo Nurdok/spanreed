@@ -14,6 +14,7 @@ python-dateutil = "*"
 pyyaml = "*"
 aiohttp = "^3.8.4"
 Jinja2 = "*"
+quart = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"
