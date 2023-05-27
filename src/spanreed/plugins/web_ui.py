@@ -75,7 +75,7 @@ class WebUiPlugin(Plugin[None]):
                     await websocket.send(message["data"].decode("utf-8"))
 
         # Start the Quart app.
-        await app.run_task(debug=True)
+        await app.run_task(debug=True, host="0.0.0.0", port=80)
 
 
 class RedisPubSubHandler(logging.Handler):
