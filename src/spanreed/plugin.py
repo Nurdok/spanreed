@@ -149,7 +149,8 @@ class Plugin(abc.ABC, Generic[UC]):
             coros = []
             for user in await self.get_users():
                 self._logger.info(
-                    f"Running plugin {self.canonical_name()} for user {user.id}"
+                    f"Running plugin {self.canonical_name()} for user"
+                    f" {user.id}"
                 )
                 coros.append(self.run_for_user(user))
 
@@ -167,7 +168,8 @@ class Plugin(abc.ABC, Generic[UC]):
             p.canonical_name() for p in cls._plugins
         ]:
             raise ValueError(
-                f"Plugin with name {plugin.canonical_name()} already registered."
+                f"Plugin with name {plugin.canonical_name()} already"
+                " registered."
             )
         cls._plugins.append(plugin)
 
