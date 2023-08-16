@@ -27,6 +27,9 @@ types-PyYAML = "*"
 types-redis = "*"
 types-python-dateutil = "*"
 
+[tool.poetry.group.rpi.dependencies]
+smbus2 = "*"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

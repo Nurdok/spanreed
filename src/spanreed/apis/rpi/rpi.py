@@ -1,5 +1,6 @@
 # mypy: ignore-errors
 import RPi.GPIO as GPIO
+import smbus2 as smbus
 
 
 class RPi:
@@ -33,3 +34,30 @@ class Led:
     def toggle(self):
         new_state = GPIO.HIGH if self._state == GPIO.LOW else GPIO.HIGH
         self._set_state(new_state)
+
+
+class I2cDevice:
+    def __init__(self, i2c_address, bus_port=1):
+        self.addr = i2c_address
+        self.bus = smbus.SMBus(bus_port)
+
+    def write_cmd(self, cmd):
+        self.bus.write_byte(self.addr, cmd)
+        # sleep(0.0001)
+
+    def write_cmd_arg(self, cmd, data):
+        self.bus.write_byte_data(self.addr, cmd, data)
+        # sleep(0.0001)
+
+    def write_block_data(self, cmd, data):
+        self.bus.write_block_data(self.addr, cmd, data)
+        # sleep(0.0001)
+
+    def read(self):
+        return self.bus.read_byte(self.addr)
+
+    def read_data(self, cmd):
+        return self.bus.read_byte_data(self.addr, cmd)
+
+    def read_block_data(self, cmd):
+        return self.bus.read_block_data(self.addr, cmd)

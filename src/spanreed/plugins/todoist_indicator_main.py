@@ -1,6 +1,6 @@
 # mypy: ignore-errors
 from spanreed.apis.todoist import Todoist, UserConfig
-from spanreed.apis.rpi import RPi
+from spanreed.apis.rpi.rpi import RPi
 import time
 import os
 
