@@ -114,6 +114,22 @@ class Lcd:
         """Initialize the LCD."""
         # self.device.write(0x00, 0x38)
         await self.clear_display()
+        await self._send_data(RegisterSelectBit.COMMAND, 0x03)
+        await self._send_data(RegisterSelectBit.COMMAND, 0x03)
+        await self._send_data(RegisterSelectBit.COMMAND, 0x03)
+        await self._send_data(RegisterSelectBit.COMMAND, 0x02)
+
+        await self._send_command(
+            Command.FUNCTION_SET,
+            FunctionSetFlag.FOUR_BIT_MODE,
+            FunctionSetFlag.TWO_LINE,
+            FunctionSetFlag.FIVE_BY_EIGHT_DOTS,
+        )
+        await self._send_command(
+            Command.DISPLAY_CONTROL, DisplayControlFlag.DISPLAY_ON
+        )
+        await self._send_command(Command.ENTRY_MODE_SET, EntryModeSetFlag.LEFT)
+        await self.clear_display()
 
     async def _send_nibble(
         self, register: RegisterSelectBit, nibble: int
