@@ -168,3 +168,14 @@ class Lcd:
             )
             for char in text[1].encode("utf-8"):
                 await self._send_data(RegisterSelectBit.DATA, char)
+
+
+async def main() -> None:
+    i2c_bus = I2cBus(1)
+    lcd = Lcd(i2c_bus, ADDRESS)
+    await lcd.init()
+    await lcd.write_text(["Hello", "World"])
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
