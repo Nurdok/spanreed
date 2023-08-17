@@ -26,16 +26,16 @@ class I2cBus:
         return I2cDevice(self, i2c_addr)
 
     async def write_byte(
-        self, i2c_addr: int, register: int, data: int
+        self, i2c_addr: int, data: int
     ) -> None:
         """Write bytes to a given register."""
+        print(f"{data=:02X}")
         await self.ensure_bus_connection()
         assert self.smbus is not None
         async with self.lock:
             return await asyncio.to_thread(
-                self.smbus.write_byte_data,
+                self.smbus.write_byte,
                 i2c_addr,
-                register,
                 data,
             )
 
@@ -45,5 +45,5 @@ class I2cDevice:
         self.controller: I2cBus = controller
         self.i2c_addr: int = i2c_addr
 
-    async def write_byte(self, register: int, data: int) -> None:
-        await self.controller.write_byte(self.i2c_addr, register, data)
+    async def write_byte(self, data: int) -> None:
+        await self.controller.write_byte(self.i2c_addr, data)

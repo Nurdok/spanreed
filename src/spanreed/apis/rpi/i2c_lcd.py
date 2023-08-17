@@ -77,7 +77,6 @@ class EnableBit(enum.IntEnum):
     """Flags for the Enable bit."""
 
     ENABLE = 0x04
-    DISABLE = 0x00
 
 
 class BacklightFlag(enum.IntEnum):
@@ -113,7 +112,6 @@ class Lcd:
     async def init(self) -> None:
         """Initialize the LCD."""
         # self.device.write(0x00, 0x38)
-        await self.clear_display()
         await self._send_data(RegisterSelectBit.COMMAND, 0x03)
         await self._send_data(RegisterSelectBit.COMMAND, 0x03)
         await self._send_data(RegisterSelectBit.COMMAND, 0x03)
@@ -128,35 +126,36 @@ class Lcd:
         await self._send_command(
             Command.DISPLAY_CONTROL, DisplayControlFlag.DISPLAY_ON
         )
+        await self._send_command(Command.CLEAR_DISPLAY)
         await self._send_command(Command.ENTRY_MODE_SET, EntryModeSetFlag.LEFT)
-        await self.clear_display()
+        await asyncio.sleep(1)
 
     async def _send_nibble(
-        self, register: RegisterSelectBit, nibble: int
+        self, nibble: int
     ) -> None:
         """Send a nibble to the LCD."""
         await self.device.write_byte(
-            register=register.value,
+            data=nibble | BacklightFlag.ON.value,
+        )
+
+        await self.device.write_byte(
             data=nibble | EnableBit.ENABLE | BacklightFlag.ON.value,
         )
         await asyncio.sleep(0.0005)
         await self.device.write_byte(
-            register=register.value,
-            data=(nibble & EnableBit.DISABLE) | BacklightFlag.ON.value,
+            data=(nibble & ~EnableBit.ENABLE) | BacklightFlag.ON.value,
         )
         await asyncio.sleep(0.0001)
 
     async def _send_data(self, register: RegisterSelectBit, data: int) -> None:
         """Send data to the LCD."""
-        nibbles: tuple[int, int] = (data & 0xF0, data << 4)
+        print(f"Sending {data:02X}")
+        nibbles: tuple[int, int] = (((data & 0xF0) | register.value), (((data << 4) & 0xF0) | register.value))
 
         for nibble in nibbles:
-            await self._send_nibble(register, nibble)
+            await self._send_nibble(nibble)
+        print()
 
-        await self.device.write_byte(
-            register=register,
-            data=data | BacklightFlag.ON.value,
-        )
 
     async def _send_command(self, cmd: Command, *flag: enum.IntEnum) -> None:
         """Send a command to the LCD."""
@@ -176,6 +175,7 @@ class Lcd:
                 Command.SET_DDRAM_ADDR, SetDdramAddrFlag.LINE_1
             )
             for char in text[0].encode("utf-8"):
+                print(f"Sending {char=}")
                 await self._send_data(RegisterSelectBit.DATA, char)
 
         if len(text) > 1:
@@ -187,10 +187,12 @@ class Lcd:
 
 
 async def main() -> None:
+    print('main')
     i2c_bus = I2cBus(1)
     lcd = Lcd(i2c_bus, ADDRESS)
     await lcd.init()
     await lcd.write_text(["Hello", "World"])
+    print('done')
 
 
 if __name__ == "__main__":
