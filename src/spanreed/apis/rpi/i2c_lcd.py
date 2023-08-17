@@ -130,9 +130,7 @@ class Lcd:
         await self._send_command(Command.ENTRY_MODE_SET, EntryModeSetFlag.LEFT)
         await asyncio.sleep(1)
 
-    async def _send_nibble(
-        self, nibble: int
-    ) -> None:
+    async def _send_nibble(self, nibble: int) -> None:
         """Send a nibble to the LCD."""
         await self.device.write_byte(
             data=nibble | BacklightFlag.ON.value,
@@ -149,13 +147,13 @@ class Lcd:
 
     async def _send_data(self, register: RegisterSelectBit, data: int) -> None:
         """Send data to the LCD."""
-        print(f"Sending {data:02X}")
-        nibbles: tuple[int, int] = (((data & 0xF0) | register.value), (((data << 4) & 0xF0) | register.value))
+        nibbles: tuple[int, int] = (
+            ((data & 0xF0) | register.value),
+            (((data << 4) & 0xF0) | register.value),
+        )
 
         for nibble in nibbles:
             await self._send_nibble(nibble)
-        print()
-
 
     async def _send_command(self, cmd: Command, *flag: enum.IntEnum) -> None:
         """Send a command to the LCD."""
@@ -175,7 +173,6 @@ class Lcd:
                 Command.SET_DDRAM_ADDR, SetDdramAddrFlag.LINE_1
             )
             for char in text[0].encode("utf-8"):
-                print(f"Sending {char=}")
                 await self._send_data(RegisterSelectBit.DATA, char)
 
         if len(text) > 1:
@@ -187,12 +184,10 @@ class Lcd:
 
 
 async def main() -> None:
-    print('main')
     i2c_bus = I2cBus(1)
     lcd = Lcd(i2c_bus, ADDRESS)
     await lcd.init()
     await lcd.write_text(["Hello", "World"])
-    print('done')
 
 
 if __name__ == "__main__":
