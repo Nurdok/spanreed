@@ -165,20 +165,18 @@ class Lcd:
     async def write_text(self, text: list[str]) -> None:
         if len(text) > 2:
             raise ValueError("Only two lines supported")
-
-        if len(text) >= 1:
-            await self._send_command(
-                Command.SET_DDRAM_ADDR, SetDdramAddrFlag.LINE_1
-            )
-            for char in text[0].encode("utf-8"):
-                await self._send_data(RegisterSelectBit.DATA, char)
-
+        await self.write_text_line(text[0], 1)
         if len(text) > 1:
-            await self._send_command(
-                Command.SET_DDRAM_ADDR, SetDdramAddrFlag.LINE_2
-            )
-            for char in text[1].encode("utf-8"):
-                await self._send_data(RegisterSelectBit.DATA, char)
+            await self.write_text_line(text[1], 2)
+
+    async def write_text_line(self, text: str, line: int = 1) -> None:
+        line_flag = (
+            SetDdramAddrFlag.LINE_1 if line == 1 else SetDdramAddrFlag.LINE_2
+        )
+        await self._send_command(Command.SET_DDRAM_ADDR, line_flag)
+
+        for char in text.encode("utf-8"):
+            await self._send_data(RegisterSelectBit.DATA, char)
 
 
 async def main() -> None:

@@ -6,6 +6,19 @@ import time
 import os
 
 
+async def marquee(lcd: Lcd, text: str, line: int) -> None:
+    """Marquee the text."""
+    width = 16
+    text = text.strip()
+    if len(text) < width:
+        await lcd.write_text_line(text.center(width), line)
+        return
+
+    for i in range(len(text) - width + 1):
+        await lcd.write_text_line(text[i : i + width], line)
+        await asyncio.sleep(0.5)
+
+
 class TodoistIndicator:
     def __init__(self, rpi: RPi, todoist: Todoist):
         self._todoist = todoist
@@ -16,17 +29,12 @@ class TodoistIndicator:
         while True:
             if tasks := (await self._todoist.get_due_tasks()):
                 task: Task = tasks[0]
-                await lcd.write_text(
-                    ["Tasks are due!".center(16), task.content[:16]]
-                )
+                await lcd.write_text_line("Tasks are due!".center(16), 1)
+                await marquee(lcd, task.content, 2)
             elif tasks := (await self._todoist.get_inbox_tasks()):
                 task: Task = tasks[0]
-                await lcd.write_text(
-                    [
-                        "Inbox not empty".center(16),
-                        task.content[:16],
-                    ]
-                )
+                await lcd.write_text_line("Inbox not empty".center(16), 1)
+                await marquee(lcd, task.content, 2)
             else:
                 await lcd.write_text(
                     ["No tasks".center(16), "Yay!".center(16)]
