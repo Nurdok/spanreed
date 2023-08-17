@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import logging
 from todoist_api_python.api_async import (
     TodoistAPIAsync,
@@ -6,10 +6,9 @@ from todoist_api_python.api_async import (
     Comment,
     Project,
 )
-from spanreed.apis.telegram_bot import TelegramBotApi
 from typing import Any
+
 from spanreed.user import User
-from spanreed.plugin import Plugin
 
 
 def format_task(task: Task) -> str:
@@ -21,28 +20,6 @@ class UserConfig:
     api_token: str
 
 
-class TodoistPlugin(Plugin[UserConfig]):
-    @classmethod
-    def name(cls) -> str:
-        return "Todoist"
-
-    @classmethod
-    def has_user_config(cls) -> bool:
-        return True
-
-    @classmethod
-    def get_config_class(cls) -> type[UserConfig]:
-        return UserConfig
-
-    @classmethod
-    async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-        api_token = await bot.request_user_input(
-            "Please enter your Todoist API token. "
-        )
-        await cls.set_config(user, UserConfig(api_token))
-
-
 class Todoist:
     def __init__(self, user_config: UserConfig):
         self._api = TodoistAPIAsync(user_config.api_token)
@@ -50,6 +27,9 @@ class Todoist:
 
     @classmethod
     async def for_user(cls, user: User) -> "Todoist":
+        # This import is here to avoid importing plugins on RPi.
+        from spanreed.plugins.todoist import TodoistPlugin
+
         return Todoist(await TodoistPlugin.get_config(user))
 
     async def add_task(self, **kwargs: Any) -> Task:

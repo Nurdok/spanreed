@@ -6,7 +6,7 @@ from typing import List
 from spanreed.plugin import Plugin
 
 from spanreed.apis.telegram_bot import TelegramBotPlugin
-from spanreed.apis.todoist import TodoistPlugin
+from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.obsidian_webhook import ObsidianWebhookPlugin
 
 from spanreed.plugins.habit_tracker import HabitTrackerPlugin

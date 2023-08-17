@@ -11,7 +11,8 @@ import dateutil.rrule
 import yaml
 import jinja2
 
-from spanreed.apis.todoist import Todoist, Task, TodoistPlugin
+from spanreed.apis.todoist import Todoist, Task
+from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.apis.obsidian_webhook import (
     ObsidianWebhookApi,

@@ -1,6 +1,7 @@
 import asyncio
 import datetime
-from spanreed.apis.todoist import Todoist, TodoistPlugin
+from spanreed.apis.todoist import Todoist
+from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.user import User
 from spanreed.plugin import Plugin
 from spanreed.apis.telegram_bot import TelegramBotApi, TelegramBotPlugin
