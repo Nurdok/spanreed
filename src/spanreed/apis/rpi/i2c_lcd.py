@@ -4,10 +4,6 @@ from spanreed.apis.rpi.i2c import I2cBus, I2cDevice
 import enum
 
 
-# LCD Address
-ADDRESS = 0x27
-
-
 class Command(enum.IntEnum):
     CLEAR_DISPLAY = 0x01
     RETURN_HOME = 0x02
@@ -106,6 +102,8 @@ def to_single_byte(data: int) -> bytes:
 
 
 class Lcd:
+    DEFAULT_ADDRESS = 0x27
+
     def __init__(self, i2c_bus: I2cBus, i2c_addr: int) -> None:
         self.device = i2c_bus.get_i2c_device(i2c_addr)
 
@@ -185,7 +183,7 @@ class Lcd:
 
 async def main() -> None:
     i2c_bus = I2cBus(1)
-    lcd = Lcd(i2c_bus, ADDRESS)
+    lcd = Lcd(i2c_bus, Lcd.DEFAULT_ADDRESS)
     await lcd.init()
     await lcd.write_text(["Hello", "World"])
 
