@@ -9,6 +9,7 @@ import os
 class TodoistIndicator:
     def __init__(self, rpi: RPi, todoist: Todoist):
         self._todoist = todoist
+        self._rpi = rpi
 
     async def run(self) -> None:
         lcd: Lcd = await self._rpi.get_lcd(1)
