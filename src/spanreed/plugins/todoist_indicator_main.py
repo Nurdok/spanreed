@@ -14,12 +14,12 @@ class TodoistIndicator:
     async def run(self) -> None:
         lcd: Lcd = await self._rpi.get_lcd(1)
         while True:
-            if tasks := self._todoist.get_due_tasks():
+            if tasks := (await self._todoist.get_due_tasks()):
                 task: Task = tasks[0]
                 await lcd.write_text(
                     ["Tasks are due!".center(16), task.content[:16]]
                 )
-            elif tasks := self._todoist.get_inbox_tasks():
+            elif tasks := (await self._todoist.get_inbox_tasks()):
                 task: Task = tasks[0]
                 await lcd.write_text(
                     [
