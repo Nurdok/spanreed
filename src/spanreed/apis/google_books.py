@@ -33,6 +33,10 @@ class Book:
         return ", ".join(f"[[{author}]]" for author in self.authors)
 
     @property
+    def formatted_authors_dataview(self) -> str:
+        return ", ".join(f"(author:: [[{author}]])" for author in self.authors)
+
+    @property
     def publication_year(self) -> str:
         if self.publication_date is None:
             return "Unknown"
