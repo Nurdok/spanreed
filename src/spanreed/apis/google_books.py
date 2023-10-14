@@ -78,15 +78,18 @@ class GoogleBooks:
         if not items:
             return []
 
-        # TODO: decide how to choose book instead of taking the first one.
         books = []
         for item in items:
             volume_info = item["volumeInfo"]
 
             logging.getLogger(__name__).info(volume_info)
+            full_title = volume_info.get("title", "Unknown")
+            if "subtitle" in volume_info:
+                full_title += f": {volume_info['subtitle']}"
+
             books.append(
                 Book(
-                    title=volume_info.get("title", "Unknown"),
+                    title=full_title,
                     authors=list(volume_info.get("authors", ["Unknown"])),
                     publisher=volume_info.get("publisher", "Unknown"),
                     publication_date=parse_date(
