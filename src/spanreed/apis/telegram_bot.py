@@ -104,6 +104,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         self,
         app_builder: Optional[ApplicationBuilder] = None,
     ) -> Application:
+        if os.environ.get("TELEGRAM_API_TOKEN") is None:
+            raise ValueError("TELEGRAM_API_TOKEN not set")
+
         if app_builder is None:
             app_builder = ApplicationBuilder()
 
