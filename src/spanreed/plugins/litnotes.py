@@ -123,24 +123,32 @@ class LitNotesPlugin(Plugin):
                 return book
             else:
                 await bot.send_message(
-                    "Sorry I couldn't find the book you were looking for."
+                    "Sorry I couldn't find the book you were looking for. "
+                    "I will forever live in shame for my failure today."
                 )
                 return None
 
-        # More than one book found
-        options_to_show = min(5, len(books))
-        book_choice = await bot.request_user_choice(
-            "Found multiple books. Which one did you mean?",
-            [_format_book(book) for book in books[:options_to_show]]
-            + ["None of these"],
-        )
-        if book_choice == options_to_show:
-            await bot.send_message(
-                "Sorry I couldn't find the book you were looking for."
+        # More than one book found.
+        while True:
+            options_to_show = min(5, len(books))
+            book_choice = await bot.request_user_choice(
+                "Found multiple books. Which one did you mean?",
+                [_format_book(book) for book in books[:options_to_show]]
+                + ["Show more", "Cancel"]
             )
-            return None
-        book = books[book_choice]
-        return book
+            if book_choice == options_to_show:  # Show more
+                books = books[options_to_show:]
+                continue
+
+            if book_choice == options_to_show + 1:  # Cancel
+                await bot.send_message(
+                    "Sorry I couldn't find the book you were looking for. "
+                    "I have brought shame upon my family."
+
+                )
+                return None
+            book = books[book_choice]
+            return book
 
     async def _add_note_for_book(
         self,
