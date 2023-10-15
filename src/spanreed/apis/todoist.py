@@ -106,3 +106,6 @@ class Todoist:
             await self._api.update_task(task.id, due_string=task.due.string)
         else:
             await self._api.update_task(task.id, due_string="today")
+
+    async def get_projects(self) -> list[Project]:
+        return await self._api.get_projects()

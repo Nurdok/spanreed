@@ -51,6 +51,7 @@ class ObsidianLog:
 class RecurringPayment:
     todoist_label: str
     todoist_task_template: str
+    todoist_project_id: int
     date_format: str
     recurrence_cost: float
     recurrence_info: RecurrenceInfo
@@ -133,6 +134,14 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 '  "Pay therapist ${{total_cost}} (for {{dates}})"\n'
                 '  "Give my daughter her allowance ({{total_cost}}₪)"\n'
             )
+
+            todoist: Todoist = await Todoist.for_user(user)
+            projects: list[Project] = await todoist.get_projects()
+            todoist_project = await bot.request_user_choice(
+                "Please choose the project where you'd like to create the task:",
+                [p.name for p in projects],
+            )
+            todoist_project_id = projects[todoist_project].id
 
             recurrence_cost = float(
                 await bot.request_user_input(
@@ -262,6 +271,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 RecurringPayment(
                     todoist_label=todoist_label,
                     todoist_task_template=todoist_task_template,
+                    todoist_project_id=todoist_project_id,
                     date_format=date_format,
                     recurrence_cost=recurrence_cost,
                     recurrence_info=RecurrenceInfo(
