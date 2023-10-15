@@ -11,7 +11,7 @@ import dateutil.rrule
 import yaml
 import jinja2
 
-from spanreed.apis.todoist import Todoist, Task
+from spanreed.apis.todoist import Todoist, Task, Project
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.apis.obsidian_webhook import (
@@ -51,7 +51,7 @@ class ObsidianLog:
 class RecurringPayment:
     todoist_label: str
     todoist_task_template: str
-    todoist_project_id: int
+    todoist_project_id: str
     date_format: str
     recurrence_cost: float
     recurrence_info: RecurrenceInfo
@@ -141,7 +141,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 "Please choose the project where you'd like to create the task:",
                 [p.name for p in projects],
             )
-            todoist_project_id = projects[todoist_project].id
+            todoist_project_id: str = projects[todoist_project].id
 
             recurrence_cost = float(
                 await bot.request_user_input(
