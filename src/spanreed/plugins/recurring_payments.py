@@ -403,7 +403,8 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 await todoist_api.update_comment(
                     comment, content=new_comment_content
                 )
-                await todoist_api.update_task(task, content=new_task_content)
+                await todoist_api.update_task(task, content=new_task_content,
+                                              project_id=recurring_payment.todoist_project_id)
                 await todoist_api.set_due_date_to_today(task)
                 await self.add_to_obsidian_log(
                     user, recurring_payment, date_str
