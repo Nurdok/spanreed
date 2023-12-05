@@ -44,7 +44,10 @@ async def run_all_tasks() -> None:
         f"Running {len(plugins)} plugins: "
         f"{[plugin.canonical_name for plugin in plugins]}"
     )
-    await asyncio.gather(*[plugin.run() for plugin in plugins])
+
+    async with asyncio.TaskGroup() as tg:
+        for plugin in plugins:
+            tg.create_task(plugin.run())
 
 
 def main() -> None:
