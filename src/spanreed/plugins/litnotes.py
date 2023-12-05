@@ -134,7 +134,7 @@ class LitNotesPlugin(Plugin):
             book_choice = await bot.request_user_choice(
                 "Found multiple books. Which one did you mean?",
                 [_format_book(book) for book in books[:options_to_show]]
-                + ["Show more", "Cancel"]
+                + ["Show more", "Cancel"],
             )
             if book_choice == options_to_show:  # Show more
                 books = books[options_to_show:]
@@ -144,7 +144,6 @@ class LitNotesPlugin(Plugin):
                 await bot.send_message(
                     "Sorry I couldn't find the book you were looking for. "
                     "I have brought shame upon my family."
-
                 )
                 return None
             book = books[book_choice]
