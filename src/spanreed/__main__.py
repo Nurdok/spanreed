@@ -15,6 +15,7 @@ from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.plugin_manager import PluginManagerPlugin
 from spanreed.plugins.web_ui import WebUiPlugin
+from spanreed.plugins.spanreed_monitor import SpanreedMonitorPlugin
 
 
 def load_plugins() -> List[Plugin]:
@@ -32,6 +33,7 @@ def load_plugins() -> List[Plugin]:
         TodoistNoOverduePlugin(),
         LitNotesPlugin(),
         WebUiPlugin(),
+        SpanreedMonitorPlugin(),
     ]
 
     return core_plugins + optional_plugins
