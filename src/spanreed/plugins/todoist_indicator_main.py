@@ -16,6 +16,9 @@ async def marquee(lcd: Lcd, text: str, line: int) -> None:
 
     for i in range(len(text) - width + 1):
         await lcd.write_text_line(text[i : i + width], line)
+        if i == 0:
+            # Give the user a chance to read the first part of the text.
+            await asyncio.sleep(3)
         await asyncio.sleep(0.5)
 
 
@@ -27,18 +30,22 @@ class TodoistIndicator:
     async def run(self) -> None:
         lcd: Lcd = await self._rpi.get_lcd(1)
         while True:
-            if tasks := (await self._todoist.get_due_tasks()):
-                task: Task = tasks[0]
-                await lcd.write_text_line("Tasks are due!".center(16), 1)
-                await marquee(lcd, task.content, 2)
-            elif tasks := (await self._todoist.get_inbox_tasks()):
-                task: Task = tasks[0]
-                await lcd.write_text_line("Inbox not empty".center(16), 1)
-                await marquee(lcd, task.content, 2)
-            else:
-                await lcd.write_text(
-                    ["No tasks".center(16), "Yay!".center(16)]
+            due_tasks = await self._todoist.get_due_tasks()
+            if due_tasks:
+                await lcd.write_text_line(
+                    f"Due tasks: {len(due_tasks)}", line=1
                 )
+            else:
+                await lcd.write_text_line("No due tasks :)", line=1)
+
+            inbox_tasks = await self._todoist.get_inbox_tasks()
+            if inbox_tasks:
+                await lcd.write_text_line(
+                    f"Inbox tasks: {len(inbox_tasks)}", line=2
+                )
+            else:
+                await lcd.write_text_line("No inbox tasks :)", line=2)
+
             await asyncio.sleep(5)
 
 
