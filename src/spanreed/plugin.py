@@ -145,18 +145,14 @@ class Plugin(abc.ABC, Generic[UC]):
     # TODO: Refactor to allow for dynamic subscription changes.
     async def run(self) -> None:
         self._logger.info(f"Running plugin {self.canonical_name()}")
-        try:
-            coros = []
+
+        async with asyncio.TaskGroup() as tg:
             for user in await self.get_users():
                 self._logger.info(
                     f"Running plugin {self.canonical_name()} for user"
                     f" {user.id}"
                 )
-                coros.append(self.run_for_user(user))
-
-            await asyncio.gather(*coros)
-        except Exception:
-            self._logger.exception("Exception in plugin run")
+                tg.create_task(self.run_for_user(user))
 
     @classmethod
     def reset_registry(cls) -> None:

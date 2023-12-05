@@ -49,6 +49,8 @@ async def run_all_tasks() -> None:
         for plugin in plugins:
             tg.create_task(plugin.run())
 
+    logging.error("All plugins have stopped. Exiting.")
+
 
 def main() -> None:
     asyncio.run(run_all_tasks())
