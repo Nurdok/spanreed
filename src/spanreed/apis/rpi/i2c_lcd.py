@@ -180,13 +180,14 @@ class Lcd:
 
         if len(text) > self.MAX_LINE_LENGTH:
             if not trim:
-                raise ValueError(f"Lines are capped at {self.MAX_LINE_LENGTH} chars, got {len(text)}. Either trim"
-                                 f" your string manually or pass trim=True")
-            text = text[:self.MAX_LINE_LENGTH]
+                raise ValueError(
+                    f"Lines are capped at {self.MAX_LINE_LENGTH} chars, got {len(text)}. Either trim"
+                    f" your string manually or pass trim=True"
+                )
+            text = text[: self.MAX_LINE_LENGTH]
 
         # Pad the string to max length to "delete" the previous text.
-        while len(text) < self.MAX_LINE_LENGTH:
-            text += " "
+        text = text.ljust(self.MAX_LINE_LENGTH, " ")
 
         for char in text.encode("utf-8"):
             await self._send_data(RegisterSelectBit.DATA, char)
