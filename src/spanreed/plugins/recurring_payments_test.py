@@ -16,7 +16,7 @@ from spanreed.test_utils import (
     EndPluginRun,
     patch_telegram_bot,
 )
-from spanreed.apis.todoist import Task, Comment
+from spanreed.apis.todoist import Task, Comment, Project
 from spanreed.user import User
 import dateutil
 
@@ -30,7 +30,11 @@ def test_name() -> None:
 
 
 @patch_telegram_bot("spanreed.plugins.recurring_payments")
-def test_ask_for_user_config(mock_bot: AsyncMock) -> None:
+@patch("spanreed.plugins.recurring_payments.Todoist", autospec=True)
+def test_ask_for_user_config(
+    mock_bot: AsyncMock,
+    mock_todoist: AsyncMock,
+) -> None:
     Plugin.reset_registry()
     plugin = RecurringPaymentsPlugin()
 
@@ -90,10 +94,24 @@ def test_ask_for_user_config(mock_bot: AsyncMock) -> None:
                 assert choices == ["Yes", "No"]
                 return 1
 
+            if "project" in prompt:
+                assert choices == ["Project A", "Project B"]
+                return 0
+
             assert False, f"Unexpected prompt: {prompt}"
 
         mock_bot.request_user_choice.side_effect = fake_user_choice
         mock_set_config = AsyncMock(name="set_config")
+
+        project_a = MagicMock(spec=Project, id=42)
+        project_a.name = "Project A"
+        project_b = MagicMock(spec=Project, id=84)
+        project_b.name = "Project B"
+
+        mock_todoist.for_user.return_value.get_projects.return_value = [
+            project_a,
+            project_b,
+        ]
 
         with patch.object(
             RecurringPaymentsPlugin,
@@ -124,6 +142,7 @@ def test_ask_for_user_config(mock_bot: AsyncMock) -> None:
                                 minute=50,
                                 second=0,
                             ),
+                            todoist_project_id=42,
                         )
                     ],
                 ),
