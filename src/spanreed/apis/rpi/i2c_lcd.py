@@ -103,6 +103,7 @@ def to_single_byte(data: int) -> bytes:
 
 class Lcd:
     DEFAULT_ADDRESS = 0x27
+    MAX_LINE_LENGTH = 16
 
     def __init__(self, i2c_bus: I2cBus, i2c_addr: int) -> None:
         self.device = i2c_bus.get_i2c_device(i2c_addr)
@@ -169,11 +170,23 @@ class Lcd:
         if len(text) > 1:
             await self.write_text_line(text[1], 2)
 
-    async def write_text_line(self, text: str, line: int = 1) -> None:
+    async def write_text_line(
+        self, text: str, line: int = 1, trim=False
+    ) -> None:
         line_flag = (
             SetDdramAddrFlag.LINE_1 if line == 1 else SetDdramAddrFlag.LINE_2
         )
         await self._send_command(Command.SET_DDRAM_ADDR, line_flag)
+
+        if len(text) > self.MAX_LINE_LENGTH:
+            if not trim:
+                raise ValueError(f"Lines are capped at {self.MAX_LINE_LENGTH} chars, got {len(text)}. Either trim"
+                                 f" your string manually or pass trim=True")
+            text = text[:self.MAX_LINE_LENGTH]
+
+        # Pad the string to max length to "delete" the previous text.
+        while len(text) < self.MAX_LINE_LENGTH:
+            text += " "
 
         for char in text.encode("utf-8"):
             await self._send_data(RegisterSelectBit.DATA, char)
