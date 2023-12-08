@@ -178,18 +178,19 @@ class Lcd:
         )
         await self._send_command(Command.SET_DDRAM_ADDR, line_flag)
 
-        if len(text) > self.MAX_LINE_LENGTH:
+        text_ascii = text.encode("ascii")
+        if len(text_ascii) > self.MAX_LINE_LENGTH:
             if not trim:
                 raise ValueError(
-                    f"Lines are capped at {self.MAX_LINE_LENGTH} chars, got {len(text)}. Either trim"
+                    f"Lines are capped at {self.MAX_LINE_LENGTH} chars, got {len(text_ascii)} ({text_ascii!r}). Either trim"
                     f" your string manually or pass trim=True"
                 )
-            text = text[: self.MAX_LINE_LENGTH]
+            text_ascii = text_ascii[: self.MAX_LINE_LENGTH]
 
         # Pad the string to max length to "delete" the previous text.
-        text = text.ljust(self.MAX_LINE_LENGTH, " ")
+        text_ascii = text_ascii.ljust(self.MAX_LINE_LENGTH, b" ")
 
-        for char in text.encode("utf-8"):
+        for char in text_ascii:
             await self._send_data(RegisterSelectBit.DATA, char)
 
 

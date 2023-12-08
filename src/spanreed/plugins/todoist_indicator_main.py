@@ -35,9 +35,7 @@ class TodoistIndicator:
         def tick():
             while True:
                 yield "/"
-                yield "-"
-                yield "\\"
-                yield "|"
+                yield "%"
 
         tick = tick()
 
@@ -58,7 +56,6 @@ class TodoistIndicator:
                 inbox_line = f"Inbox tasks: {len(inbox_tasks)}"
             await lcd.write_text_line(inbox_line, trim=True, line=2)
 
-            await asyncio.sleep(0.2)
 
     async def read_tasks_once(self):
         self._due_tasks = await self._todoist.get_due_tasks()
@@ -74,7 +71,7 @@ class TodoistIndicator:
 
         await self.read_tasks_once()
 
-        with asyncio.TaskGroup() as tg:
+        async with asyncio.TaskGroup() as tg:
             tg.create_task(self.update_display(lcd))
             tg.create_task(self.read_tasks())
 
