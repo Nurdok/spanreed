@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 from spanreed.apis.todoist import Todoist, UserConfig, Task
 from spanreed.apis.rpi.rpi import RPi
 from spanreed.apis.rpi.i2c_lcd import Lcd
@@ -29,22 +30,30 @@ class TodoistIndicator:
 
     async def run(self) -> None:
         lcd: Lcd = await self._rpi.get_lcd(1)
+
+        def tick():
+            while True:
+                yield "/"
+                yield "-"
+                yield "\\"
+                yield "|"
+
+        tick = tick()
+
         while True:
+            due_line = "No due tasks :)"
             due_tasks = await self._todoist.get_due_tasks()
             if due_tasks:
-                await lcd.write_text_line(
-                    f"Due tasks: {len(due_tasks)}", line=1
-                )
-            else:
-                await lcd.write_text_line("No due tasks :)", line=1)
+                due_line = f"Due tasks: {len(due_tasks)}"
+            await lcd.write_text_line(
+                due_line[: Lcd.MAX_LINE_LENGTH - 1] + next(tick), line=1
+            )
 
+            inbox_line = "No inbox tasks :)"
             inbox_tasks = await self._todoist.get_inbox_tasks()
             if inbox_tasks:
-                await lcd.write_text_line(
-                    f"Inbox tasks: {len(inbox_tasks)}", line=2
-                )
-            else:
-                await lcd.write_text_line("No inbox tasks :)", line=2)
+                inbox_line = f"Inbox tasks: {len(inbox_tasks)}"
+            await lcd.write_text_line(inbox_line, trim=True, line=2)
 
             await asyncio.sleep(5)
 
