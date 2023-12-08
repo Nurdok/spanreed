@@ -56,7 +56,6 @@ class TodoistIndicator:
                 inbox_line = f"Inbox tasks: {len(inbox_tasks)}"
             await lcd.write_text_line(inbox_line, trim=True, line=2)
 
-
     async def read_tasks_once(self):
         self._due_tasks = await self._todoist.get_due_tasks()
         self._inbox_tasks = await self._todoist.get_inbox_tasks()
