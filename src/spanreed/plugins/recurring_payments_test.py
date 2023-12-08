@@ -103,9 +103,9 @@ def test_ask_for_user_config(
         mock_bot.request_user_choice.side_effect = fake_user_choice
         mock_set_config = AsyncMock(name="set_config")
 
-        project_a = MagicMock(spec=Project, id=42)
+        project_a = MagicMock(spec=Project, id="pid-A")
         project_a.name = "Project A"
-        project_b = MagicMock(spec=Project, id=84)
+        project_b = MagicMock(spec=Project, id="pid-B")
         project_b.name = "Project B"
 
         mock_todoist.for_user.return_value.get_projects.return_value = [
@@ -142,7 +142,7 @@ def test_ask_for_user_config(
                                 minute=50,
                                 second=0,
                             ),
-                            todoist_project_id=42,
+                            todoist_project_id="pid-A",
                         )
                     ],
                 ),
@@ -178,6 +178,7 @@ def test_run_for_single_recurrence(
             second=0,
         ),
         verify_recurrence=True,
+        todoist_project_id="pid",
     )
     task = MagicMock(name="task", spec=Task)
     # TODO: change to existing task
@@ -206,6 +207,7 @@ def test_run_for_single_recurrence(
     mock_todoist.for_user.return_value.update_task.assert_called_once_with(
         task,
         content="Pay 300 for 2021-01-05, 2021-01-12, 2021-01-19",
+        project_id="pid",
     )
 
     mock_bot.request_user_choice.assert_called_once()
