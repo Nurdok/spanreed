@@ -49,7 +49,7 @@ class TodoistIndicator:
                 due_line.ljust(Lcd.MAX_LINE_LENGTH - 1, " ")[
                     : Lcd.MAX_LINE_LENGTH - 1
                 ]
-                + tick.next()
+                + next(tick)
             )
 
             inbox_line = "No inbox tasks :)"
@@ -58,7 +58,7 @@ class TodoistIndicator:
                 inbox_line = f"Inbox tasks: {len(inbox_tasks)}"
             await lcd.write_text_line(inbox_line, trim=True, line=2)
 
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
 
 
 async def main() -> None:
