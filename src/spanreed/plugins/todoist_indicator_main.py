@@ -46,7 +46,10 @@ class TodoistIndicator:
             if due_tasks:
                 due_line = f"Due tasks: {len(due_tasks)}"
             await lcd.write_text_line(
-                due_line[: Lcd.MAX_LINE_LENGTH - 1] + next(tick), line=1
+                due_line.ljust(Lcd.MAX_LINE_LENGTH - 1, " ")[
+                    : Lcd.MAX_LINE_LENGTH - 1
+                ]
+                + tick.next()
             )
 
             inbox_line = "No inbox tasks :)"
