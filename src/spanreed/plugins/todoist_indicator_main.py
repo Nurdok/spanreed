@@ -28,9 +28,10 @@ class TodoistIndicator:
         self._todoist = todoist
         self._rpi = rpi
 
-    async def run(self) -> None:
-        lcd: Lcd = await self._rpi.get_lcd(1)
+        self._due_tasks = []
+        self._inbox_tasks = []
 
+    async def update_display(self, lcd):
         def tick():
             while True:
                 yield "/"
@@ -42,9 +43,8 @@ class TodoistIndicator:
 
         while True:
             due_line = "No due tasks :)"
-            due_tasks = await self._todoist.get_due_tasks()
-            if due_tasks:
-                due_line = f"Due tasks: {len(due_tasks)}"
+            if self._due_tasks:
+                due_line = f"Due tasks: {len(self._due_tasks)}"
             await lcd.write_text_line(
                 due_line.ljust(Lcd.MAX_LINE_LENGTH - 1, " ")[
                     : Lcd.MAX_LINE_LENGTH - 1
@@ -58,7 +58,25 @@ class TodoistIndicator:
                 inbox_line = f"Inbox tasks: {len(inbox_tasks)}"
             await lcd.write_text_line(inbox_line, trim=True, line=2)
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.2)
+
+    async def read_tasks_once(self):
+        self._due_tasks = await self._todoist.get_due_tasks()
+        self._inbox_tasks = await self._todoist.get_inbox_tasks()
+
+    async def read_tasks(self):
+        while True:
+            await self.read_tasks_once()
+            await asyncio.sleep(5)
+
+    async def run(self) -> None:
+        lcd: Lcd = await self._rpi.get_lcd(1)
+
+        await self.read_tasks_once()
+
+        with asyncio.TaskGroup() as tg:
+            tg.create_task(self.update_display(lcd))
+            tg.create_task(self.read_tasks())
 
 
 async def main() -> None:
