@@ -25,13 +25,13 @@ async def marquee(lcd: Lcd, text: str, line: int) -> None:
 
 class TodoistIndicator:
     def __init__(self, rpi: RPi, todoist: Todoist):
-        self._todoist = todoist
-        self._rpi = rpi
+        self._todoist: Todoist = todoist
+        self._rpi: RPi = rpi
 
-        self._due_tasks = []
-        self._inbox_tasks = []
+        self._due_tasks: list[Task] = []
+        self._inbox_tasks: list[Task] = []
 
-    async def update_display(self, lcd):
+    async def update_display(self, lcd: Lcd) -> None:
         def tick():
             while True:
                 yield "/"
@@ -56,11 +56,11 @@ class TodoistIndicator:
                 inbox_line = f"Inbox tasks: {len(inbox_tasks)}"
             await lcd.write_text_line(inbox_line, trim=True, line=2)
 
-    async def read_tasks_once(self):
+    async def read_tasks_once(self) -> None:
         self._due_tasks = await self._todoist.get_due_tasks()
         self._inbox_tasks = await self._todoist.get_inbox_tasks()
 
-    async def read_tasks(self):
+    async def read_tasks(self) -> None:
         while True:
             await self.read_tasks_once()
             await asyncio.sleep(5)
