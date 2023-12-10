@@ -6,6 +6,8 @@ from spanreed.apis.rpi.i2c_lcd import Lcd
 import time
 import os
 
+from typing import Generator
+
 
 async def marquee(lcd: Lcd, text: str, line: int) -> None:
     """Marquee the text."""
@@ -32,12 +34,12 @@ class TodoistIndicator:
         self._inbox_tasks: list[Task] = []
 
     async def update_display(self, lcd: Lcd) -> None:
-        def tick():
+        def tick_fn() -> Generator[str, None, None]:
             while True:
                 yield "/"
                 yield "%"
 
-        tick = tick()
+        tick = tick_fn()
 
         while True:
             due_line = "No due tasks :)"

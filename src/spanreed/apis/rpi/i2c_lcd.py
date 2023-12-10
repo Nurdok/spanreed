@@ -171,7 +171,7 @@ class Lcd:
             await self.write_text_line(text[1], 2)
 
     async def write_text_line(
-        self, text: str, line: int = 1, trim=False
+        self, text: str, line: int = 1, trim: bool = False
     ) -> None:
         line_flag = (
             SetDdramAddrFlag.LINE_1 if line == 1 else SetDdramAddrFlag.LINE_2

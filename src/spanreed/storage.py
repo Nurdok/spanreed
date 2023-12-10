@@ -1,7 +1,12 @@
-from typing import TypedDict
+from typing import TypedDict, Optional
 import os
 import redis.asyncio as redis
-from redis.exceptions import BusyLoadingError, ConnectionError, TimeoutError
+from redis.exceptions import (
+    BusyLoadingError,
+    ConnectionError,
+    TimeoutError,
+    RedisError,
+)
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 
@@ -9,7 +14,7 @@ from redis.backoff import ExponentialBackoff
 def make_redis() -> redis.Redis:
     class CommonParams(TypedDict):
         ssl_cert_reqs: str
-        retry_on_error: list[type[Exception]]
+        retry_on_error: Optional[list[type[RedisError]]]
         retry: Retry
         retry_on_timeout: bool
 

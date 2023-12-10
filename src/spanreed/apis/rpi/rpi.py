@@ -5,7 +5,7 @@ from spanreed.apis.rpi.i2c_lcd import I2cBus, Lcd
 
 
 class RPi:
-    def __init__(self):
+    def __init__(self) -> None:
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         self._gpio_pins = {}
