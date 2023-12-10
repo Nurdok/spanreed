@@ -182,8 +182,9 @@ class Lcd:
         if len(text_ascii) > self.MAX_LINE_LENGTH:
             if not trim:
                 raise ValueError(
-                    f"Lines are capped at {self.MAX_LINE_LENGTH} chars, got {len(text_ascii)} ({text_ascii!r}). Either trim"
-                    f" your string manually or pass trim=True"
+                    f"Lines are capped at {self.MAX_LINE_LENGTH} chars, "
+                    f"got {len(text_ascii)} ({text_ascii!r}). "
+                    f"Trim your string manually or pass trim=True"
                 )
             text_ascii = text_ascii[: self.MAX_LINE_LENGTH]
 
