@@ -1,9 +1,7 @@
 import asyncio
-import itertools
 from spanreed.apis.todoist import Todoist, UserConfig, Task
 from spanreed.apis.rpi.rpi import RPi
 from spanreed.apis.rpi.i2c_lcd import Lcd
-import time
 import os
 
 from typing import Generator
