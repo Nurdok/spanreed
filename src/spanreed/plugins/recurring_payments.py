@@ -443,7 +443,8 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
         user_config: UserConfig = await self.get_config(user)
         self._logger.info(f"{user_config=}")
 
-        for recurring_payment in user_config.recurring_payments:
-            asyncio.create_task(
-                self.run_for_single_recurrence(user, recurring_payment)
-            )
+        async with asyncio.TaskGroup() as tg:
+            for recurring_payment in user_config.recurring_payments:
+                tg.create_task(
+                    self.run_for_single_recurrence(user, recurring_payment)
+                )
