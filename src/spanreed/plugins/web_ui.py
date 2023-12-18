@@ -13,6 +13,8 @@ class WebUiPlugin(Plugin[None]):
         return "Web UI"
 
     async def run(self) -> None:
+        logging.getLogger().addHandler(RedisPubSubHandler())
+
         # Create a Quart app.
         app = Quart(__name__)
 
@@ -86,6 +88,3 @@ class RedisPubSubHandler(logging.Handler):
             await redis_api.publish("logs", log_message)
 
         asyncio.create_task(publish())
-
-
-logging.getLogger().addHandler(RedisPubSubHandler())

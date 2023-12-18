@@ -16,6 +16,19 @@ from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.plugin_manager import PluginManagerPlugin
 from spanreed.plugins.web_ui import WebUiPlugin
 from spanreed.plugins.spanreed_monitor import SpanreedMonitorPlugin
+from spanreed.plugins.timekiller import TimekillerPlugin
+
+
+def setup_logger() -> None:
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
+    logging.getLogger().setLevel(logging.DEBUG)
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
 
 def load_plugins() -> List[Plugin]:
@@ -34,6 +47,7 @@ def load_plugins() -> List[Plugin]:
         LitNotesPlugin(),
         WebUiPlugin(),
         SpanreedMonitorPlugin(),
+        TimekillerPlugin(),
     ]
 
     return core_plugins + optional_plugins
@@ -55,6 +69,7 @@ async def run_all_tasks() -> None:
 
 
 def main() -> None:
+    setup_logger()
     asyncio.run(run_all_tasks())
 
 

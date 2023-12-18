@@ -1,8 +1,10 @@
 import asyncio
 import random
+import textwrap
 import datetime
 
 from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.apis.obsidian_webhook import ObsidianWebhookApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
 from spanreed.apis.telegram_bot import TelegramBotPlugin
@@ -26,7 +28,7 @@ class TimekillerPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         async with bot.user_interaction():
-            pass
+            await self._journal_prompt(user, bot)
 
     async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
         prompts: list[str] = [
@@ -59,3 +61,13 @@ class TimekillerPlugin(Plugin):
 
         prompt = random.choice(prompts)
         prompt_answer: str = await bot.request_user_input(prompt)
+        note_content: str = f"\n\n### {prompt}\n{prompt_answer}\n"
+        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
+            user
+        )
+
+        date_str: str = datetime.datetime.today().strftime("%Y-%m-%d")
+        note_name: str = f"daily/{date_str}.md"
+        self._logger.info(f"Appending to note {note_name}")
+        await webhook_api.append_to_note(note_name, note_content)
+        await bot.send_message("Noted!")

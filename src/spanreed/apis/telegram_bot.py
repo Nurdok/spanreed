@@ -28,13 +28,6 @@ from telegram.ext import (
     filters,
 )
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
-
-
 CALLBACK_EVENTS = "callback-events"
 CALLBACK_EVENT_RESULTS = "callback-event-results"
 PLUGIN_COMMANDS = "plugin-commands"
@@ -80,24 +73,24 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             if application.updater is None:
                 raise RuntimeError("Updater is None")
             await application.updater.start_polling()
-            logger.info("Started polling")
+            self._logger.info("Started polling")
 
             TelegramBotApi._application_initialized.set()
             TelegramBotApi._application = application
 
             try:
                 # Wait for cancellation so we can perform the cleanup.
-                logger.info("Waiting for cancellation...")
+                self._logger.info("Waiting for cancellation...")
                 while True:
                     await asyncio.sleep(
                         datetime.timedelta(hours=1).total_seconds()
                     )
             except asyncio.CancelledError:
-                logger.info("Cancellation received. Stopping updater...")
+                self._logger.info("Cancellation received. Stopping updater...")
                 await application.updater.stop()
-                logger.info("Stopping application...")
+                self._logger.info("Stopping application...")
                 await application.stop()
-                logger.info("Stopped")
+                self._logger.info("Stopped")
                 raise
 
     async def setup_application(
@@ -127,28 +120,27 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
         return application
 
-    @staticmethod
     async def handle_callback_query(
-        update: Update, context: ContextTypes.DEFAULT_TYPE
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        logger.info("Received callback query")
+        self._logger.info("Received callback query")
         query = update.callback_query
         if query is None:
-            logger.info("No callback query found")
+            self._logger.info("No callback query found")
             return
 
-        logger.info(f"query.data={query.data}")
+        self._logger.info(f"query.data={query.data}")
         callback_data: CallbackData = typing.cast(CallbackData, query.data)
         cid = callback_data.callback_id
 
         # Mark the index of the selected button.
-        logger.info(
+        self._logger.info(
             f"Marking callback {cid} event result as {callback_data.position}"
         )
         results = context.bot_data.setdefault(CALLBACK_EVENT_RESULTS, {})
         results[cid] = callback_data.position
 
-        logger.info(f"Setting event {cid} as done")
+        self._logger.info(f"Setting event {cid} as done")
         # Notify the waiting coroutine that we received the user's choice.
         event: asyncio.Event = context.bot_data[CALLBACK_EVENTS][cid]
         event.set()
