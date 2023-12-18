@@ -24,6 +24,28 @@ class TimekillerPlugin(Plugin):
             ),
         )
 
+    async def run_for_user(self, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+
+        while True:
+            await asyncio.sleep(
+                datetime.timedelta(
+                    hours=random.randrange(3, 7)
+                ).total_seconds()
+            )
+            now: datetime.datetime = datetime.datetime.now()
+            if now.hour < 9 or now.hour > 22:
+                continue
+
+            with bot.user_interaction():
+                if (
+                    await bot.request_user_choice(
+                        "Got some time to kill?", "Yes", "No"
+                    )
+                    == 0
+                ):
+                    await self._journal_prompt(user)
+
     async def _kill_time(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
