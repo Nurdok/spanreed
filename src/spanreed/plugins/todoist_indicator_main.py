@@ -41,22 +41,25 @@ class TodoistIndicator:
 
         tick = tick_fn()
 
-        while True:
-            due_line = "No due tasks :)"
-            if self._due_tasks:
-                due_line = f"Due tasks: {len(self._due_tasks)}"
-            await lcd.write_text_line(
-                due_line.ljust(Lcd.MAX_LINE_LENGTH - 1, " ")[
-                    : Lcd.MAX_LINE_LENGTH - 1
-                ]
-                + next(tick)
-            )
+        def format_line_with_tick(line: str) -> str:
+            return line.ljust(Lcd.MAX_LINE_LENGTH - 1, " ")[
+                : Lcd.MAX_LINE_LENGTH - 1
+            ] + next(tick)
 
-            inbox_line = "No inbox tasks :)"
-            inbox_tasks = await self._todoist.get_inbox_tasks()
-            if inbox_tasks:
-                inbox_line = f"Inbox tasks: {len(inbox_tasks)}"
-            await lcd.write_text_line(inbox_line, trim=True, line=2)
+        while True:
+            if self._due_tasks or self._inbox_tasks:
+                due_line = f"Due tasks: {len(self._due_tasks)}"
+                await lcd.write_text_line(
+                    format_line_with_tick(due_line), line=1
+                )
+
+                inbox_line = f"Inbox tasks: {len(self._inbox_tasks)}"
+                await lcd.write_text_line(inbox_line, trim=True, line=2)
+            else:
+                await lcd.write_text_line(
+                    format_line_with_tick("YOU DA".center(16)), line=1
+                )
+                await lcd.write_text_line("REAL MVP".center(16), line=2)
 
     async def read_tasks_once(self) -> None:
         self._due_tasks = await self._todoist.get_due_tasks()
