@@ -11,7 +11,7 @@ import dateutil.rrule
 import yaml
 import jinja2
 
-from spanreed.apis.todoist import Todoist, Task, Project
+from spanreed.apis.todoist import Todoist, Task, Project, Comment
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.apis.obsidian_webhook import (
@@ -337,33 +337,41 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
             await asyncio.sleep(wait_time.total_seconds())
             date_str = next_event.date().strftime("%Y-%m-%d")
 
+            task: Optional[Task] = None
+            structured_data: dict = {}
+            desc_split: list[str] = ["", "", ""]
+
             tasks: list[Task] = await todoist_api.get_tasks_with_label(
                 recurring_payment.todoist_label
             )
             if len(tasks) == 1:
+                self._logger.info("Found existing task")
                 (task,) = tasks
-            elif len(tasks) == 0:
-                self._logger.info("Creating new task")
-                task = await todoist_api.add_task(
-                    content="placeholder",
-                    labels=[recurring_payment.todoist_label],
+                comment: Comment = (
+                    await todoist_api.get_first_comment_with_yaml(
+                        task, create=True
+                    )
                 )
+                desc_split = comment.content.split("---")
+                self._logger.info(desc_split)
+                assert len(desc_split) == 3, len(desc_split)
+                comment_yaml = desc_split[1]
+                self._logger.info(f"{comment_yaml=}")
+                structured_data = yaml.safe_load(comment_yaml) or {}
+            elif len(tasks) == 0:
+                # self._logger.info("Creating new task")
+                # task = await todoist_api.add_task(
+                #     content="placeholder",
+                #     labels=[recurring_payment.todoist_label],
+                # )
+                pass
             else:
                 raise RuntimeError(
                     f"Expected either zero or exactly one task with the label"
                     f" {recurring_payment.todoist_label}, got {len(tasks)}"
                 )
 
-            comment = await todoist_api.get_first_comment_with_yaml(
-                task, create=True
-            )
-            desc_split = comment.content.split("---")
-            self._logger.info(desc_split)
-            assert len(desc_split) == 3, len(desc_split)
-            comment_yaml = desc_split[1]
-            self._logger.info(f"{comment_yaml=}")
-            sd = yaml.safe_load(comment_yaml) or {}
-            dates: list[str] = sd.setdefault("dates", [])
+            dates: list[str] = structured_data.setdefault("dates", [])
 
             if date_str not in dates:
                 if recurring_payment.verify_recurrence:
@@ -395,19 +403,40 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 ).render(template_params)
 
                 new_comment_content = "---\n".join(
-                    [desc_split[0], yaml.safe_dump(sd), desc_split[2]]
+                    [
+                        desc_split[0],
+                        yaml.safe_dump(structured_data),
+                        desc_split[2],
+                    ]
                 )
+
                 self._logger.info(
                     f"{new_task_content=}\n{new_comment_content=}"
                 )
-                await todoist_api.update_comment(
-                    comment, content=new_comment_content
-                )
-                await todoist_api.update_task(
-                    task,
-                    content=new_task_content,
-                    project_id=recurring_payment.todoist_project_id,
-                )
+
+                if task is None:
+                    self._logger.info("Creating new task")
+                    task = await todoist_api.add_task(
+                        content=new_task_content,
+                        labels=[recurring_payment.todoist_label],
+                        project_id=recurring_payment.todoist_project_id,
+                    )
+
+                    await todoist_api.add_comment(
+                        task=task, content=new_comment_content
+                    )
+
+                else:
+                    await todoist_api.update_task(
+                        task,
+                        content=new_task_content,
+                        project_id=recurring_payment.todoist_project_id,
+                    )
+                    await todoist_api.update_comment(
+                        await todoist_api.get_first_comment_with_yaml(task),
+                        content=new_comment_content,
+                    )
+
                 await todoist_api.set_due_date_to_today(task)
                 await self.add_to_obsidian_log(
                     user, recurring_payment, date_str

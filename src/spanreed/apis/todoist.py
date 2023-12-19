@@ -38,6 +38,9 @@ class Todoist:
     async def update_task(self, task: Task, **kwargs: Any) -> bool:
         return await self._api.update_task(task.id, **kwargs)
 
+    async def add_comment(self, task: Task, **kwargs: Any) -> Comment:
+        return await self._api.add_comment(task.id, **kwargs)
+
     async def update_comment(self, comment: Comment, **kwargs: Any) -> bool:
         return await self._api.update_comment(comment.id, **kwargs)
 

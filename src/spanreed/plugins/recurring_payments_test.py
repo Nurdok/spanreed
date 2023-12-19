@@ -182,7 +182,9 @@ def test_run_for_single_recurrence(
     )
     task = MagicMock(name="task", spec=Task)
     # TODO: change to existing task
-    mock_todoist.for_user.return_value.add_task.return_value = task
+    mock_todoist.for_user.return_value.get_tasks_with_label.return_value = [
+        task
+    ]
     comment = MagicMock(name="comment", spec=Comment)
     comment.content = textwrap.dedent(
         """\
