@@ -58,7 +58,7 @@ async def run_all_tasks() -> None:
 
     logging.info(
         f"Running {len(plugins)} plugins: "
-        f"{[plugin.canonical_name for plugin in plugins]}"
+        f"{[plugin.canonical_name() for plugin in plugins]}"
     )
 
     async with asyncio.TaskGroup() as tg:
