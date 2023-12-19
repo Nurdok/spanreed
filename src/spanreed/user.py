@@ -12,6 +12,9 @@ class User:
     def __str__(self) -> str:
         return f"{self.name} (id {self.id})"
 
+    def __repr__(self) -> str:
+        return f"User(id={self.id}, name={self.name})"
+
     async def set_name(self, name: str) -> None:
         self.name = name
         await redis_api.set(f"user:{self.id}:name", name)
