@@ -93,4 +93,4 @@ class RedisPubSubHandler(logging.Handler):
         async def publish() -> None:
             await redis_api.publish("logs", log_message)
 
-        asyncio.create_task(publish())
+        self._event_loop.create_task(publish())
