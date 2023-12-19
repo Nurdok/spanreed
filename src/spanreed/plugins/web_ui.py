@@ -2,6 +2,7 @@ import logging
 import asyncio
 import textwrap
 
+from spanreed import BASE_LOGGER
 from spanreed.plugin import Plugin
 from quart import Quart, websocket
 from spanreed.storage import redis_api
@@ -13,9 +14,7 @@ class WebUiPlugin(Plugin[None]):
         return "Web UI"
 
     async def run(self) -> None:
-        logging.getLogger().addHandler(
-            RedisPubSubHandler(asyncio.get_event_loop())
-        )
+        BASE_LOGGER.addHandler(RedisPubSubHandler())
 
         # Create a Quart app.
         app = Quart(__name__)
@@ -83,14 +82,10 @@ class WebUiPlugin(Plugin[None]):
 
 
 class RedisPubSubHandler(logging.Handler):
-    def __init__(self, event_loop: asyncio.AbstractEventLoop) -> None:
-        super().__init__()
-        self._event_loop = event_loop
-
     def emit(self, record: logging.LogRecord) -> None:
         log_message = self.format(record)
 
         async def publish() -> None:
             await redis_api.publish("logs", log_message)
 
-        self._event_loop.create_task(publish())
+        asyncio.create_task(publish())

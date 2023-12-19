@@ -13,11 +13,12 @@ UC = TypeVar("UC")
 
 
 class Plugin(abc.ABC, Generic[UC]):
+    BASE_LOGGER = logging.getLogger("spanreed.plugin")
     _plugins: list[Plugin] = []
 
     def __init__(self) -> None:
         Plugin.register(self)
-        self._logger = logging.getLogger(self.name())
+        self._logger = self.BASE_LOGGER.getChild(self.name())
 
     @classmethod
     @abc.abstractmethod

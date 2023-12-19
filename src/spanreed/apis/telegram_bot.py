@@ -377,7 +377,7 @@ class TelegramBotApi:
             plugin.canonical_name(), []
         ).append(command)
         _logger.info(
-            f"Current commands: {', '.join(f'{plugin}:{command}' for plugin, command in app.bot_data[PLUGIN_COMMANDS].items())}"
+            f"Current commands: {', '.join(f'{plugin}:{command.text!r}' for plugin, command in app.bot_data[PLUGIN_COMMANDS].items())}"
         )
 
     @classmethod
