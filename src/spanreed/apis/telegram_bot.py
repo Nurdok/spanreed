@@ -289,6 +289,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     PLUGIN_COMMANDS, {}
                 ).items():
                     if plugin_canonical_name not in user.plugins:
+                        self._logger.debug(f"Skipping {plugin_canonical_name=}")
                         continue
 
                     self._logger.info(
