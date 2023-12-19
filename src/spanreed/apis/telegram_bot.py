@@ -467,7 +467,7 @@ class TelegramBotApi:
         self._logger.info(f"Waiting for callback {callback_id} to be done")
         await callback_event.wait()
         self._logger.info(f"Callback {callback_id} done")
-        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
+        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
     async def request_user_input(self, prompt: str) -> str:
         app: Application = await self.get_application()
@@ -482,11 +482,11 @@ class TelegramBotApi:
         await self.send_message(prompt)
         self._logger.info(f"Waiting for user input")
         await callback_event.wait()
-        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]
+        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
     async def get_user_interaction_lock(self) -> asyncio.Lock:
         app = await self.get_application()
-        return app.bot_data.setdefault(USER_INTERACTION_LOCKS, {}).setdefault(
+        return app.bot_data.setdefault(USER_INTERACTION_LOCKS, {}).setdefault(  # type: ignore
             self._telegram_user_id, asyncio.Lock()
         )
 
