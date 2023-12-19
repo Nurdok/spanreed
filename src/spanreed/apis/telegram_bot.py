@@ -281,6 +281,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         # block the main Telegram bot coroutine.
         async def show_command_menu_task() -> None:
             self._logger.info(f"Inside internal task for /do for {user}")
+            self._logger.info(f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}")
             try:
                 bot = await TelegramBotApi.for_user(user)
 
@@ -289,7 +290,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     PLUGIN_COMMANDS, {}
                 ).items():
                     if plugin_canonical_name not in user.plugins:
-                        self._logger.debug(f"Skipping {plugin_canonical_name=}")
+                        self._logger.debug(
+                            f"Skipping {plugin_canonical_name=}"
+                        )
                         continue
 
                     self._logger.info(
@@ -371,6 +374,7 @@ class TelegramBotApi:
         app.bot_data.setdefault(PLUGIN_COMMANDS, {}).setdefault(
             plugin.canonical_name(), []
         ).append(command)
+        _logger.info(f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}")
 
     @classmethod
     async def get_application(cls) -> Application:
