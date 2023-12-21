@@ -104,8 +104,6 @@ class HabitTrackerPlugin(Plugin):
 
     async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Running for user {user}")
-        bot = await TelegramBotApi.for_user(user)
-        self._logger.info(f"Got bot")
         event_storage = await EventStorageRedis.for_user(user)
 
         # TODO: Allow users to decide on their tracked habits
@@ -125,41 +123,47 @@ class HabitTrackerPlugin(Plugin):
                     f"status is {event_type}"
                 )
             else:
-                await self.poll_user(activity_type, bot, event_storage)
+                await self.poll_user(user, activity_type, event_storage)
 
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
     async def poll_user(
         self,
+        user: User,
         activity_type: ActivityType,
-        bot: TelegramBotApi,
         event_storage: EventStorageRedis,
     ) -> None:
-        self._logger.info(f"Polling user for {activity_type}")
-        prompt = f"Did you {activity_type.name.lower()} today?"
-        choices = [
-            Choice("Yes", EventType.DONE),
-            Choice("Not yet", EventType.UNKNOWN),
-            Choice("Not happening", EventType.SKIPPED),
-        ]
+        bot = await TelegramBotApi.for_user(user)
+        async with bot.user_interaction():
+            self._logger.info(f"Polling user for {activity_type}")
+            prompt = f"Did you {activity_type.name.lower()} today?"
+            choices = [
+                Choice("Yes", EventType.DONE),
+                Choice("Not yet", EventType.UNKNOWN),
+                Choice("Not happening", EventType.SKIPPED),
+            ]
 
-        choice = choices[
-            await bot.request_user_choice(prompt, [c.text for c in choices])
-        ]
-
-        self._logger.info(f"User chose {choice.text}")
-
-        replies = {
-            EventType.DONE: "Great!",
-            EventType.UNKNOWN: "I'll ask again later.",
-            EventType.SKIPPED: "FINE, I'll remind you tomorrow, you worthles-- I mean, you're great!",
-        }
-
-        if choice.event != EventType.UNKNOWN:
-            await event_storage.add(
-                Event(
-                    datetime.date.today(), ActivityType.JOURNAL, choice.event
+            choice = choices[
+                await bot.request_user_choice(
+                    prompt, [c.text for c in choices]
                 )
-            )
+            ]
 
-        await bot.send_message(replies[choice.event])
+            self._logger.info(f"User chose {choice.text}")
+
+            replies = {
+                EventType.DONE: "Great!",
+                EventType.UNKNOWN: "I'll ask again later.",
+                EventType.SKIPPED: "FINE, I'll remind you tomorrow, you worthles-- I mean, you're great!",
+            }
+
+            if choice.event != EventType.UNKNOWN:
+                await event_storage.add(
+                    Event(
+                        datetime.date.today(),
+                        ActivityType.JOURNAL,
+                        choice.event,
+                    )
+                )
+
+            await bot.send_message(replies[choice.event])
