@@ -22,6 +22,8 @@ class TimekillerPlugin(Plugin):
             ),
         )
 
+        await super().run()
+
     async def run_for_user(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
