@@ -15,6 +15,7 @@ from spanreed.apis.telegram_bot import TelegramBotApi
 class ActivityType(Enum):
     UNKNOWN = 0
     JOURNAL = 1
+    COLLECT_METRICS = 2
 
 
 class EventType(Enum):

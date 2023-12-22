@@ -4,6 +4,12 @@ import datetime
 
 from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 from spanreed.apis.obsidian_webhook import ObsidianWebhookApi
+from spanreed.plugins.habit_tracker import (
+    EventStorageRedis,
+    ActivityType,
+    Event,
+    EventType,
+)
 from spanreed.user import User
 from spanreed.plugin import Plugin
 
@@ -51,6 +57,7 @@ class TimekillerPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         async with bot.user_interaction():
+            await self._poll_for_metrics(user, bot)
             await self._journal_prompt(user, bot)
 
     async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
@@ -93,4 +100,91 @@ class TimekillerPlugin(Plugin):
         note_name: str = f"daily/{date_str}.md"
         self._logger.info(f"Appending to note {note_name}")
         await webhook_api.append_to_note(note_name, note_content)
+        await bot.send_message("Noted!")
+
+    async def _poll_for_metrics(self, user: User, bot: TelegramBotApi) -> None:
+        event_storage: EventStorageRedis = await EventStorageRedis.for_user(
+            user
+        )
+
+        if (
+            event_storage.find_event(
+                ActivityType.COLLECT_METRICS, datetime.date.today()
+            )
+        ) is not None:
+            return
+
+        note_content: str = "### Metrics"
+
+        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
+            user
+        )
+
+        mood: int = await bot.request_user_choice(
+            "How would you rate your mood right now?\n"
+            " (1 - negative, 5 - positive)",
+            ["1", "2", "3", "4", "5"],
+        )
+        note_content += "\n" + f"mood:: {mood}"
+
+        possible_feelings: list[str] = [
+            "happy",
+            "sad",
+            "angry",
+            "depressed",
+            "anxious",
+            "excited",
+            "tired",
+            "energetic",
+            "bored",
+            "stressed",
+            "calm",
+            "confused",
+            "frustrated",
+            "grateful",
+            "proud",
+            "lonely",
+            "loved",
+            "motivated",
+            "optimistic",
+            "pessimistic",
+            "relaxed",
+            "restless",
+            "satisfied",
+            "scared",
+            "shocked",
+            "sick",
+            "sore",
+            "stressed",
+            "surprised",
+            "thankful",
+            "uncomfortable",
+            "worried",
+            "focused",
+        ]
+        feelings: list[str] = []
+
+        while True:
+            choice: int = await bot.request_user_choice(
+                "What are you feeling right now?",
+                possible_feelings + ["Cancel"],
+            )
+            if choice == len(possible_feelings):
+                break
+            feelings.append(possible_feelings[choice])
+
+        feelings = [f'"{f}"' for f in feelings]
+        note_content += "\n" + f"feelings:: [{', '.join(feelings)}]"
+
+        date_str: str = datetime.datetime.today().strftime("%Y-%m-%d")
+        note_name: str = f"daily/{date_str}.md"
+        self._logger.info(f"Appending to note {note_name}")
+        await webhook_api.append_to_note(note_name, note_content)
+        await event_storage.add(
+            Event(
+                date=datetime.date.today(),
+                activity_type=ActivityType.COLLECT_METRICS,
+                event_type=EventType.DONE,
+            )
+        )
         await bot.send_message("Noted!")
