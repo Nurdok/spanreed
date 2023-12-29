@@ -51,6 +51,7 @@ class TimekillerPlugin(Plugin):
                     )
                     == 0
                 ):
+                    await self._poll_for_metrics(user, bot)
                     await self._journal_prompt(user, bot)
 
     async def _kill_time(self, user: User) -> None:
