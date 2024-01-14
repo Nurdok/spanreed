@@ -62,4 +62,4 @@ class ObsidianApi:
         return response["result"]
 
     async def safe_generate_today_note(self) -> None:
-        return await self._send_request("generate-daily-note")
+        await self._send_request("generate-daily-note")
