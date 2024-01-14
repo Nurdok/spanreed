@@ -4,6 +4,7 @@ import datetime
 
 from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 from spanreed.apis.obsidian_webhook import ObsidianWebhookApi
+from spanreed.apis.obsidian import ObsidianApi
 from spanreed.plugins.habit_tracker import (
     EventStorageRedis,
     ActivityType,
@@ -55,11 +56,12 @@ class TimekillerPlugin(Plugin):
                     await self._journal_prompt(user, bot)
 
     async def _kill_time(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-
-        async with bot.user_interaction():
-            await self._poll_for_metrics(user, bot)
-            await self._journal_prompt(user, bot)
+        obsidian: ObsidianApi = await ObsidianApi.for_user(user)
+        await obsidian.safe_generate_today_note()
+        # bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        # async with bot.user_interaction():
+        # await self._poll_for_metrics(user, bot)
+        # await self._journal_prompt(user, bot)
 
     async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
         prompts: list[str] = [
