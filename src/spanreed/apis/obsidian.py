@@ -1,6 +1,8 @@
 import logging
 import uuid
 import json
+import asyncio
+import datetime
 
 import aiohttp
 
@@ -34,7 +36,8 @@ class ObsidianApi:
     ) -> Any:
         request_id: int = uuid.uuid4().int
         request: dict[str, Any] = {
-            "request_id": request_id,
+            # Needs to be a string because the TS JSON parser can't handle ints that big
+            "request_id": str(request_id),
             "method": method,
             "params": params or {},
         }
@@ -43,14 +46,23 @@ class ObsidianApi:
             json.dumps(request),
         )
 
-        response: dict = json.loads(
-            # Take the value from the tuple returned by `blpop`, we already know the key
-            (
-                await redis_api.blpop(
-                    f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
+        try:
+            async with asyncio.timeout(datetime.timedelta(seconds=10).seconds):
+                queue_name: str = (
+                    f"obsidian-plugin-tasks:{self._user.id}:{: request_id}"
                 )
-            )[1]
-        )
+                self._logger.info(f"Waiting for response on {queue_name=}")
+                response: dict = json.loads(
+                    # Take the value from the tuple returned by `blpop`, we already know the key
+                    (await redis_api.blpop(queue_name))[1]
+                )
+        except TimeoutError:
+            response = {
+                "success": False,
+                "error": "TimeoutError",
+                "error_message": "The request timed out.",
+            }
+
         if not response["success"]:
             msg: str = (
                 f"Obsidian API request failed:\n\t{request=}\n\t{response=}"
