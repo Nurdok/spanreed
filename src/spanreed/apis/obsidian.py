@@ -49,7 +49,7 @@ class ObsidianApi:
         try:
             async with asyncio.timeout(datetime.timedelta(seconds=10).seconds):
                 queue_name: str = (
-                    f"obsidian-plugin-tasks:{self._user.id}:{: request_id}"
+                    f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
                 )
                 self._logger.info(f"Waiting for response on {queue_name=}")
                 response: dict = json.loads(
