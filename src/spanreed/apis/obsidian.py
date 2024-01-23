@@ -4,8 +4,6 @@ import json
 import asyncio
 import datetime
 
-import aiohttp
-
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.storage import redis_api
@@ -77,3 +75,68 @@ class ObsidianApi:
 
     async def safe_generate_today_note(self) -> None:
         await self._send_request("generate-daily-note")
+
+    async def add_value_to_list_property(
+        self, filepath: str, property_name: str, value: str
+    ):
+        await self._send_request(
+            "add-value-to-list-property",
+            {
+                "filepath": filepath,
+                "operation": "addToList",
+                "property": property_name,
+                "value": value,
+            },
+        )
+
+    async def remove_value_from_list_property(
+        self, filepath: str, property_name: str, value: str
+    ):
+        await self._send_request(
+            "remove-value-from-list-property",
+            {
+                "filepath": filepath,
+                "operation": "removeFromList",
+                "property": property_name,
+                "value": value,
+            },
+        )
+
+    async def set_value_of_property(
+        self, filepath: str, property_name: str, value: str
+    ):
+        await self._send_request(
+            "setSingleProperty",
+            {
+                "filepath": filepath,
+                "operation": "setSingleProperty",
+                "property": property_name,
+                "value": value,
+            },
+        )
+
+    async def delete_property(self, filepath: str, property_name: str):
+        await self._send_request(
+            "deleteProperty",
+            {
+                "filepath": filepath,
+                "operation": "deleteProperty",
+                "property": property_name,
+            },
+        )
+
+    async def get_property(self, filepath: str, property_name: str) -> Any:
+        return json.loads(
+            await self._send_request(
+                "getProperty",
+                {
+                    "filepath": filepath,
+                    "operation": "getProperty",
+                    "property": property_name,
+                },
+            )
+        )
+
+    async def get_daily_note_for(self, date: datetime.date):
+        # TODO: Query the API for the daily note for a specific date
+        return f"daily/{date.strftime('%Y-%m-%d')}.md"

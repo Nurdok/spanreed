@@ -1,97 +1,30 @@
 import asyncio
-import dataclasses
 import datetime
-import logging
-from enum import Enum, member
-import json
-from typing import List, NamedTuple, Optional
+from dataclasses import dataclass
+from typing import Any
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.storage import redis_api
 from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.apis.obsidian import ObsidianApi
 
 
-class ActivityType(Enum):
-    UNKNOWN = 0
-    JOURNAL = 1
-    COLLECT_METRICS = 2
+@dataclass
+class Habit:
+    name: str
+    description: str
+    # TODO: Add a way to specify the frequency of the habit
 
 
-class EventType(Enum):
-    UNKNOWN = 0
-    DONE = 1
-    SKIPPED = 2
+@dataclass
+class UserConfig:
+    habit_tracker_property_name: str
+    habits: list[Habit]
 
-
-class Event(NamedTuple):
-    date: datetime.date
-    activity_type: ActivityType
-    event_type: EventType
-
-
-class EventStorageRedis:
-    def __init__(self, *, user: User):
-        self._redis_key = f"events:user_id={user.id}"
-        self._logger = logging.getLogger(__name__)
-        self._events: List[Event] = []
-
-    @classmethod
-    async def for_user(cls, user: User) -> "EventStorageRedis":
-        self = EventStorageRedis(user=user)
-        self._events = await self._load_from_storage()
-        return self
-
-    async def _load_from_storage(self) -> List[Event]:
-        events: List[Event] = []
-        redis_response = await redis_api.get(self._redis_key)
-        if redis_response is None:
-            return []
-        self._logger.info(f"key={self._redis_key},value={redis_response}")
-        try:
-            events_json = json.loads(redis_response)
-        except json.JSONDecodeError:
-            return []
-        for event_json in events_json:
-            events.append(
-                Event(
-                    datetime.date.fromisoformat(event_json["date"]),
-                    ActivityType[event_json["activity_type"]],
-                    EventType[event_json["event_type"]],
-                )
-            )
-        return events
-
-    async def _write_to_storage(self) -> None:
-        events_json = []
-        for event in self._events:
-            events_json.append(
-                {
-                    "date": event.date.isoformat(),
-                    "activity_type": event.activity_type.name,
-                    "event_type": event.event_type.name,
-                }
-            )
-        await redis_api.set(self._redis_key, json.dumps(events_json))
-
-    async def add(self, event: Event) -> None:
-        self._events.append(event)
-        await self._write_to_storage()
-
-    def find_event(
-        self, activity_type: ActivityType, date: datetime.date
-    ) -> Optional[EventType]:
-        for event in self._events:
-            if event.activity_type == activity_type and event.date == date:
-                return event.event_type
-
-        return None
-
-
-@dataclasses.dataclass
-class Choice:
-    text: str
-    event: EventType
+    def __post_init__(self) -> None:
+        for index, habit in enumerate(self.habits):
+            if isinstance(habit, dict):
+                self.habits[index] = Habit(**habit)
 
 
 class HabitTrackerPlugin(Plugin):
@@ -101,70 +34,60 @@ class HabitTrackerPlugin(Plugin):
 
     @classmethod
     def has_user_config(cls) -> bool:
-        return False
+        return True
+
+    @classmethod
+    def get_config_class(cls) -> type[UserConfig] | None:
+        return UserConfig
 
     async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Running for user {user}")
-        event_storage = await EventStorageRedis.for_user(user)
-
-        # TODO: Allow users to decide on their tracked habits
-        activity_type = ActivityType.JOURNAL
+        config: UserConfig = await self.get_config(user)
+        obsidian: ObsidianApi = await ObsidianApi.for_user(user)
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         while True:
-            self._logger.info(
-                f"Checking if we need to ask for {activity_type}"
+            property_value: Any = await obsidian.get_property(
+                await obsidian.get_daily_note_for(datetime.date.today()),
+                config.habit_tracker_property_name,
             )
-            if (
-                event_type := event_storage.find_event(
-                    activity_type, datetime.date.today()
-                )
-            ) is not None:
+            done_habits: list[str] = []
+
+            if isinstance(property_value, list):
+                done_habits = property_value
+            elif property_value is not None:
+                async with bot.user_interaction():
+                    await bot.send_message(
+                        f"Invalid value for {config.habit_tracker_property_name}: {property_value!r}"
+                        f"; expected a list of strings."
+                    )
+
+            for habit in config.habits:
                 self._logger.info(
-                    f"Skipping asking for {activity_type} because its "
-                    f"status is {event_type}"
+                    f"Checking if we need to ask for {habit.name}"
                 )
-            else:
-                await self.poll_user(user, activity_type, event_storage)
+                if habit.name in done_habits:
+                    self._logger.info(f"{habit.name} is already done")
+                    continue
+
+                await self.poll_user(user, habit)
 
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
     async def poll_user(
-        self,
-        user: User,
-        activity_type: ActivityType,
-        event_storage: EventStorageRedis,
+        self, habit: Habit, bot: TelegramBotApi, obsidian: ObsidianApi
     ) -> None:
-        bot = await TelegramBotApi.for_user(user)
         async with bot.user_interaction():
-            self._logger.info(f"Polling user for {activity_type}")
-            prompt = f"Did you {activity_type.name.lower()} today?"
-            choices = [
-                Choice("Yes", EventType.DONE),
-                Choice("Not yet", EventType.UNKNOWN),
-                Choice("Not happening", EventType.SKIPPED),
-            ]
-
-            choice = choices[
-                await bot.request_user_choice(
-                    prompt, [c.text for c in choices]
+            self._logger.info(f"Polling user for {habit.name}")
+            prompt = f"Did you {habit.description} today?"
+            if await bot.request_user_choice(prompt, ["Yes", "No"]):
+                self._logger.info(f"User said yes to {habit.name}")
+                await obsidian.add_value_to_list_property(
+                    await obsidian.get_daily_note_for(datetime.date.today()),
+                    habit.name,
+                    habit.name,
                 )
-            ]
-
-            self._logger.info(f"User chose {choice.text}")
-
-            replies = {
-                EventType.DONE: "Great!",
-                EventType.UNKNOWN: "I'll ask again later.",
-                EventType.SKIPPED: "FINE, I'll remind you tomorrow, you worthles-- I mean, you're great!",
-            }
-
-            if choice.event != EventType.UNKNOWN:
-                await event_storage.add(
-                    Event(
-                        datetime.date.today(),
-                        ActivityType.JOURNAL,
-                        choice.event,
-                    )
-                )
-
-            await bot.send_message(replies[choice.event])
+                await bot.send_message(f"Awesome! Keep it up!")
+            else:
+                self._logger.info(f"User said no to {habit.name}")
+                await bot.send_message("I'll ask again later")
