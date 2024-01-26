@@ -3,6 +3,7 @@ from spanreed.apis.todoist import Todoist, UserConfig, Task
 from spanreed.apis.rpi.rpi import RPi
 from spanreed.apis.rpi.i2c_lcd import Lcd
 import os
+from gpiozero import AngualrServo
 
 from typing import Generator
 
@@ -30,6 +31,15 @@ class TodoistIndicator:
 
         self._due_tasks: list[Task] = []
         self._inbox_tasks: list[Task] = []
+        self._servo = AngualrServo(
+            pin=26,
+            initial_angle=0,
+            min_angle=0,
+            max_angle=135,
+            min_pulse_width=0.5 / 1000,
+            max_pulse_width=2.3 / 1000,
+            frame_width=25 / 1000,
+        )
 
     async def update_display(self, lcd: Lcd) -> None:
         def tick_fn() -> Generator[str, None, None]:
@@ -58,6 +68,7 @@ class TodoistIndicator:
                     format_line_with_tick("YOU DA".center(16)), line=1
                 )
                 await lcd.write_text_line("REAL MVP".center(16), line=2)
+            await asyncio.to_thread(self._update_servo)
 
     async def read_tasks_once(self) -> None:
         self._due_tasks = await self._todoist.get_due_tasks()
@@ -67,6 +78,14 @@ class TodoistIndicator:
         while True:
             await self.read_tasks_once()
             await asyncio.sleep(5)
+
+    async def _update_servo(self) -> None:
+        if self._due_tasks:
+            self._servo.angle = 0
+        elif self._inbox_tasks:
+            self._servo.angle = 60
+        else:
+            self._servo.angle = 120
 
     async def run(self) -> None:
         lcd: Lcd = await self._rpi.get_lcd(1)
