@@ -3,7 +3,7 @@ from spanreed.apis.todoist import Todoist, UserConfig, Task
 from spanreed.apis.rpi.rpi import RPi
 from spanreed.apis.rpi.i2c_lcd import Lcd
 import os
-from gpiozero import AngualrServo
+from gpiozero import AngularServo
 
 from typing import Generator
 
@@ -31,7 +31,7 @@ class TodoistIndicator:
 
         self._due_tasks: list[Task] = []
         self._inbox_tasks: list[Task] = []
-        self._servo = AngualrServo(
+        self._servo = AngularServo(
             pin=26,
             initial_angle=0,
             min_angle=0,
@@ -92,9 +92,13 @@ class TodoistIndicator:
 
         await self.read_tasks_once()
 
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(self.update_display(lcd))
-            tg.create_task(self.read_tasks())
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self.update_display(lcd))
+                tg.create_task(self.read_tasks())
+        except BaseException:
+            self._servo.angle = 0
+            raise
 
 
 async def main() -> None:
