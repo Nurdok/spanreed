@@ -1,5 +1,5 @@
 import asyncio
-import redis.asyncio as redis
+import traceback
 import logging
 from typing import List
 
@@ -70,7 +70,19 @@ async def run_all_tasks() -> None:
 
 def main() -> None:
     setup_logger()
-    asyncio.run(run_all_tasks())
+    try:
+        asyncio.run(run_all_tasks())
+    except BaseException as e:
+        logging.info(f"Exception caught, storing in Redis: {e}")
+        from spanreed.storage import make_redis
+
+        asyncio.run(
+            make_redis().lpush(
+                SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME,
+                "".join(traceback.format_exception(type(e), e, None)),
+            )
+        )
+        raise
 
 
 if __name__ == "__main__":

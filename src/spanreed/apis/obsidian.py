@@ -47,7 +47,9 @@ class ObsidianApi:
         )
 
         try:
-            async with asyncio.timeout(datetime.timedelta(seconds=10).seconds):
+            async with asyncio.timeout(
+                datetime.timedelta(seconds=10).total_seconds()
+            ):
                 queue_name: str = (
                     f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
                 )
