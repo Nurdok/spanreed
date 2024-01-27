@@ -40,6 +40,36 @@ class HabitTrackerPlugin(Plugin):
     def get_config_class(cls) -> type[UserConfig] | None:
         return UserConfig
 
+    @classmethod
+    async def ask_for_user_config(cls, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+
+        habit_tracker_property_name: str = await bot.request_user_input(
+            "What is the name of the property that you use to track your habits?"
+        )
+
+        habits: list[Habit] = []
+        while True:
+            habit_name: str = await bot.request_user_input(
+                "What is the name of the habit you want to track?"
+            )
+            habit_description: str = await bot.request_user_input(
+                "How would you describe this habit?"
+            )
+            habits.append(Habit(habit_name, habit_description))
+            if await bot.request_user_choice(
+                "Do you want to add another habit?", ["Yes", "No"]
+            ):
+                break
+
+        await cls.set_config(
+            user,
+            UserConfig(
+                habit_tracker_property_name=habit_tracker_property_name,
+                habits=habits,
+            ),
+        )
+
     async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Running for user {user}")
         config: UserConfig = await self.get_config(user)
@@ -70,7 +100,7 @@ class HabitTrackerPlugin(Plugin):
                     self._logger.info(f"{habit.name} is already done")
                     continue
 
-                await self.poll_user(user, habit)
+                await self.poll_user(habit, bot, obsidian)
 
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
