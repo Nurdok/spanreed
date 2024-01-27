@@ -39,13 +39,16 @@ class ObsidianApi:
             "method": method,
             "params": params or {},
         }
+        self._logger.info(f"Sending request: {request=}")
         await redis_api.lpush(
             f"obsidian-plugin-tasks:{self._user.id}",
             json.dumps(request),
         )
 
         try:
-            async with asyncio.timeout(datetime.timedelta(seconds=10).seconds):
+            async with asyncio.timeout(
+                datetime.timedelta(seconds=30).total_seconds()
+            ):
                 queue_name: str = (
                     f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
                 )
@@ -54,12 +57,13 @@ class ObsidianApi:
                     # Take the value from the tuple returned by `blpop`, we already know the key
                     (await redis_api.blpop(queue_name))[1]
                 )
-        except TimeoutError:
-            response = {
-                "success": False,
-                "error": "TimeoutError",
-                "error_message": "The request timed out.",
-            }
+                self._logger.info(
+                    f"Got response for {method=} on {queue_name=}: {response=}"
+                )
+        except TimeoutError as e:
+            raise TimeoutError(
+                f"Obsidian API request timed out ({request_id=})."
+            ) from e
 
         if not response["success"]:
             msg: str = (
@@ -67,9 +71,12 @@ class ObsidianApi:
             )
             bot: TelegramBotApi = await TelegramBotApi.for_user(self._user)
             await bot.send_message(msg)
+            await bot.send_message(str(response))
+            if response["result"] == "file not found":
+                raise FileNotFoundError(msg)
             raise RuntimeError(msg)
 
-        return response["result"]
+        return response.get("result", None)
 
     async def safe_generate_today_note(self) -> None:
         await self._send_request("generate-daily-note")
@@ -78,7 +85,7 @@ class ObsidianApi:
         self, filepath: str, property_name: str, value: str
     ):
         await self._send_request(
-            "add-value-to-list-property",
+            "modify-property",
             {
                 "filepath": filepath,
                 "operation": "addToList",
@@ -91,7 +98,7 @@ class ObsidianApi:
         self, filepath: str, property_name: str, value: str
     ):
         await self._send_request(
-            "remove-value-from-list-property",
+            "modify-property",
             {
                 "filepath": filepath,
                 "operation": "removeFromList",
@@ -104,7 +111,7 @@ class ObsidianApi:
         self, filepath: str, property_name: str, value: str
     ):
         await self._send_request(
-            "setSingleProperty",
+            "modify-property",
             {
                 "filepath": filepath,
                 "operation": "setSingleProperty",
@@ -115,7 +122,7 @@ class ObsidianApi:
 
     async def delete_property(self, filepath: str, property_name: str):
         await self._send_request(
-            "deleteProperty",
+            "modify-property",
             {
                 "filepath": filepath,
                 "operation": "deleteProperty",
@@ -124,17 +131,25 @@ class ObsidianApi:
         )
 
     async def get_property(self, filepath: str, property_name: str) -> Any:
-        return json.loads(
-            await self._send_request(
-                "getProperty",
-                {
-                    "filepath": filepath,
-                    "operation": "getProperty",
-                    "property": property_name,
-                },
-            )
+        property_value: Any = await self._send_request(
+            "modify-property",
+            {
+                "filepath": filepath,
+                "operation": "getProperty",
+                "property": property_name,
+            },
         )
+        if property_value is None:
+            return None
+        return json.loads(property_value)
 
-    async def get_daily_note_for(self, date: datetime.date):
+    async def get_daily_note(
+        self, daily_note_path: str, date: datetime.date | None = None
+    ) -> str:
+        if date is None:
+            date = datetime.date.today()
         # TODO: Query the API for the daily note for a specific date
-        return f"daily/{date.strftime('%Y-%m-%d')}.md"
+        filename = f"{date.strftime('%Y-%m-%d')}.md"
+        if daily_note_path is None or daily_note_path == "":
+            return filename
+        return f"{daily_note_path}/{filename}"
