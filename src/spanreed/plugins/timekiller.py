@@ -5,12 +5,6 @@ import datetime
 from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 from spanreed.apis.obsidian_webhook import ObsidianWebhookApi
 from spanreed.apis.obsidian import ObsidianApi
-from spanreed.plugins.habit_tracker import (
-    EventStorageRedis,
-    ActivityType,
-    Event,
-    EventType,
-)
 from spanreed.user import User
 from spanreed.plugin import Plugin
 
@@ -106,17 +100,7 @@ class TimekillerPlugin(Plugin):
         await bot.send_message("Noted!")
 
     async def _poll_for_metrics(self, user: User, bot: TelegramBotApi) -> None:
-        event_storage: EventStorageRedis = await EventStorageRedis.for_user(
-            user
-        )
-
-        if (
-            event_storage.find_event(
-                ActivityType.COLLECT_METRICS, datetime.date.today()
-            )
-        ) is not None:
-            return
-
+        # TODO: Use ObsidianApi to check if we've already done this today.
         note_content: str = "### Metrics"
 
         webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
@@ -183,11 +167,4 @@ class TimekillerPlugin(Plugin):
         note_name: str = f"daily/{date_str}.md"
         self._logger.info(f"Appending to note {note_name}")
         await webhook_api.append_to_note(note_name, note_content)
-        await event_storage.add(
-            Event(
-                date=datetime.date.today(),
-                activity_type=ActivityType.COLLECT_METRICS,
-                event_type=EventType.DONE,
-            )
-        )
         await bot.send_message("Noted!")
