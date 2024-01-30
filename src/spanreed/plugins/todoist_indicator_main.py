@@ -79,13 +79,13 @@ class TodoistIndicator:
             await self.read_tasks_once()
             await asyncio.sleep(5)
 
-    async def _update_servo(self) -> None:
+    def _update_servo(self) -> None:
         if self._due_tasks:
-            self._servo.angle = 0
+            self._servo.angle = 90
         elif self._inbox_tasks:
-            self._servo.angle = 60
+            self._servo.angle = 90
         else:
-            self._servo.angle = 120
+            self._servo.angle = 90
 
     async def run(self) -> None:
         lcd: Lcd = await self._rpi.get_lcd(1)
