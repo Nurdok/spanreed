@@ -3,6 +3,7 @@ import uuid
 import json
 import asyncio
 import datetime
+import dataclasses
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -139,9 +140,8 @@ class ObsidianApi:
                 "property": property_name,
             },
         )
-        if property_value is None:
-            return None
-        return json.loads(property_value)
+        self._logger.info(f"Got property value: {property_value=}")
+        return property_value
 
     async def get_daily_note(
         self, daily_note_path: str, date: datetime.date | None = None
@@ -153,3 +153,19 @@ class ObsidianApi:
         if daily_note_path is None or daily_note_path == "":
             return filename
         return f"{daily_note_path}/{filename}"
+
+    async def query_dataview(self, query: str) -> list[dict[str, Any]]:
+        query_result = await self._send_request("query-dataview", {"query": query})
+        self._logger.info(f"Got query result: {query_result=}")
+        result_type = query_result.get("type", None)
+        if result_type == "list":
+            return query_result["values"]
+        if result_type == "table":
+            return [dataclasses.make_dataclass(
+                "QueryResultRow",
+                [
+                    (header_name.lower(), str)
+                    for header_name in query_result["headers"]
+                ],
+            )(*values) for values in query_result["values"]]
+        return query_result
