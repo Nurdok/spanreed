@@ -115,7 +115,7 @@ class ObsidianApi:
             "modify-property",
             {
                 "filepath": filepath,
-                "operation": "setSingleProperty",
+                "operation": "setSingleValue",
                 "property": property_name,
                 "value": value,
             },
