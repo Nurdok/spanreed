@@ -3,7 +3,7 @@ from spanreed.apis.todoist import Todoist, UserConfig, Task
 from spanreed.apis.rpi.rpi import RPi
 from spanreed.apis.rpi.i2c_lcd import Lcd
 import os
-from gpiozero import AngularServo
+from gpiozero import AngularServo  # type: ignore
 
 from typing import Generator
 
@@ -100,12 +100,24 @@ class TodoistIndicator:
             self._servo.angle = 0
             raise
 
+    async def calibrate_servo(self) -> None:
+        self._servo.angle = 0
+        print("Servo is at 0 degrees")
+        while inp := int(input("Set angle? (-1) to quit")):
+            if inp == -1:
+                break
+            self._servo.angle = inp
+            input("Press enter to reset Servo")
+            self._servo.angle = 0
+            print("Servo is at 0 degrees")
+
 
 async def main() -> None:
     ind = TodoistIndicator(
         RPi(), Todoist(UserConfig(os.environ["TODOIST_API_TOKEN"]))
     )
-    await ind.run()
+    await ind.calibrate_servo()
+    # await ind.run()
 
 
 if __name__ == "__main__":
