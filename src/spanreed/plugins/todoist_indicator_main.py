@@ -117,7 +117,7 @@ async def main() -> None:
     ind = TodoistIndicator(
         RPi(), Todoist(UserConfig(os.environ["TODOIST_API_TOKEN"]))
     )
-    #await ind.calibrate_servo()
+    # await ind.calibrate_servo()
     await ind.run()
 
 
