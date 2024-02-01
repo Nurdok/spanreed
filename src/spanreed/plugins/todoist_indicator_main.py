@@ -107,6 +107,7 @@ class TodoistIndicator:
             if inp == -1:
                 break
             self._servo.angle = inp
+            print(f"Servo it at {inp} degress")
             input("Press enter to reset Servo")
             self._servo.angle = 0
             print("Servo is at 0 degrees")
@@ -116,8 +117,8 @@ async def main() -> None:
     ind = TodoistIndicator(
         RPi(), Todoist(UserConfig(os.environ["TODOIST_API_TOKEN"]))
     )
-    await ind.calibrate_servo()
-    # await ind.run()
+    #await ind.calibrate_servo()
+    await ind.run()
 
 
 if __name__ == "__main__":
