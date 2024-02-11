@@ -6,17 +6,17 @@ from spanreed.apis.rpi.rpi import RPi, RgbLed
 async def rgb_led_experiment():
     rpi = RPi()
     rgb_led = rpi.get_rgb_led(4, 27, 22)
-    while True:
-        rgb_led.set_color(0xFF0000)
-        await asyncio.sleep(1)
-        rgb_led.set_color(0x00FF00)
-        await asyncio.sleep(1)
-        rgb_led.set_color(0x0000FF)
-        await asyncio.sleep(1)
-        rgb_led.set_color(0xFFFFFF)
-        await asyncio.sleep(1)
-        rgb_led.set_color(0x000000)
-        await asyncio.sleep(1)
+    sequence = (0xFF0000, 0x00FF00, 0x0000FF, 0xFFFFFF, 0x000000)
+    current = 0x000000
+    for color in sequence:
+        while current != color:
+            if current < color:
+                current += 1
+            else:
+                current -= 1
+
+            rgb_led.set_color(current)
+            await asyncio.sleep(0.1)
 
 
 def main():
