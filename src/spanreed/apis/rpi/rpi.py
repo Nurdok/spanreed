@@ -58,7 +58,8 @@ class RgbLed:
         )
 
     def get_duty_cycle_for_numeric_color(self, color):
-        return color * 100 / self.SIGNAL_FREQ_HZ
+        # Convert 0-255 color to 0-100% duty cycle
+        return color * 100 / 255
 
     def set_color(self, hex_color: int | str):
         if isinstance(hex_color, int):
