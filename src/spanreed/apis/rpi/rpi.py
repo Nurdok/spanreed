@@ -68,7 +68,7 @@ class RgbLed:
         )
 
     def set_color(self, red, green, blue):
-        for pwm, value in zip(self._rgb_pins, (red, green, blue)):
+        for pwm, value in zip(self._rgb_pwms, (red, green, blue)):
             pwm.ChangeDutyCycle(self.get_duty_cycle_for_numeric_color(value))
 
     def turn_off(self):
