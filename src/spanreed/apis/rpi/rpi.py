@@ -68,9 +68,9 @@ class RgbLed:
             hex_color = hex_color[1:]
         if hex_color.startswith("0x"):
             hex_color = hex_color[2:]
-        print(f"Before: {hex_color}")
+        print(f"Before: {hex_color!r}")
         hex_color.zfill(6)
-        print(f"Setting color: {hex_color}")
+        print(f"Setting color: {hex_color!r}")
         self._set_color(
             *tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
         )
