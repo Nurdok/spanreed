@@ -67,11 +67,11 @@ class RgbLed:
             hex_color = hex_color[1:]
         if hex_color.startswith("0x"):
             hex_color = hex_color[2:]
-        self.set_color(
+        self._set_color(
             *tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
         )
 
-    def set_color(self, red, green, blue):
+    def _set_color(self, red, green, blue):
         for pwm, value in zip(self._rgb_pwms, (red, green, blue)):
             pwm.ChangeDutyCycle(self.get_duty_cycle_for_numeric_color(value))
 
