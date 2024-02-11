@@ -49,9 +49,12 @@ class RgbLed:
     SIGNAL_FREQ_HZ = 75
 
     def __init__(self, red_pin, green_pin, blue_pin):
+        pins = (red_pin, green_pin, blue_pin)
+        for pin in pins:
+            GPIO.setup(pin, GPIO.OUT)
+
         self._rgb_pwms = tuple(
-            GPIO.PWM(pin, self.SIGNAL_FREQ_HZ)
-            for pin in (red_pin, green_pin, blue_pin)
+            GPIO.PWM(pin, self.SIGNAL_FREQ_HZ) for pin in pins
         )
 
     def get_duty_cycle_for_numeric_color(self, color):
