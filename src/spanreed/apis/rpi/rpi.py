@@ -50,12 +50,13 @@ class RgbLed:
 
     def __init__(self, red_pin, green_pin, blue_pin):
         pins = (red_pin, green_pin, blue_pin)
+        self._rgb_pwms: list[GPIO.PWM] = []
+
         for pin in pins:
             GPIO.setup(pin, GPIO.OUT)
-
-        self._rgb_pwms = tuple(
-            GPIO.PWM(pin, self.SIGNAL_FREQ_HZ) for pin in pins
-        )
+            pwm = GPIO.PWM(pin, self.SIGNAL_FREQ_HZ)
+            self._rgb_pwms.append(pwm)
+            pwm.start(0)
 
     def get_duty_cycle_for_numeric_color(self, color):
         # Convert 0-255 color to 0-100% duty cycle
