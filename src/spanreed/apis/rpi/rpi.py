@@ -15,6 +15,9 @@ class RPi:
             return self._gpio_pins[gpio_pin]
         return Led(gpio_pin)
 
+    def get_rgb_led(self, red_pin, green_pin, blue_pin) -> "RgbLed":
+        return RgbLed(red_pin, green_pin, blue_pin)
+
     async def get_lcd(self, bus_port) -> "Lcd":
         lcd = Lcd(I2cBus(bus_port), Lcd.DEFAULT_ADDRESS)
         await lcd.init()
@@ -40,3 +43,34 @@ class Led:
     def toggle(self):
         new_state = GPIO.HIGH if self._state == GPIO.LOW else GPIO.HIGH
         self._set_state(new_state)
+
+
+class RgbLed:
+    SIGNAL_FREQ_HZ = 75
+
+    def __init__(self, red_pin, green_pin, blue_pin):
+        self._rgb_pwms = tuple(
+            GPIO.PWM(pin, self.SIGNAL_FREQ_HZ) for pin in self._rgb_pins
+        )
+
+    def get_duty_cycle_for_numeric_color(self, color):
+        return color * 100 / self.SIGNAL_FREQ_HZ
+
+    def set_color(self, hex_color: int | str):
+        if isinstance(hex_color, int):
+            hex_color = hex(hex_color)
+        if hex_color.startswith("#"):
+            hex_color = hex_color[1:]
+        if hex_color.startswith("0x"):
+            hex_color = hex_color[2:]
+        self.set_color(
+            *tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+        )
+
+    def set_color(self, red, green, blue):
+        for pwm, value in zip(self._rgb_pins, (red, green, blue)):
+            pwm.ChangeDutyCycle(self.get_duty_cycle_for_numeric_color(value))
+
+    def turn_off(self):
+        for pwm in self._rgb_pwms:
+            pwm.stop()
