@@ -4,11 +4,11 @@ import random
 from spanreed.apis.rpi.rpi import RPi, RgbLed
 
 
-async def rgb_led_experiment():
+async def rgb_led_experiment() -> None:
     rpi = RPi()
     rgb_led = rpi.get_rgb_led(4, 27, 22)
     while True:
-        rgb_led._set_color(
+        rgb_led.set_rgb_color(
             random.randrange(0, 255),
             random.randrange(0, 255),
             random.randrange(0, 255),
@@ -16,7 +16,7 @@ async def rgb_led_experiment():
         await asyncio.sleep(1)
 
 
-def main():
+def main() -> None:
     asyncio.run(rgb_led_experiment())
 
 
