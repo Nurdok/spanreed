@@ -3,6 +3,8 @@ import asyncio
 import datetime
 from contextlib import suppress
 
+import telegram.error
+
 from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
@@ -29,9 +31,10 @@ class SpanreedMonitorPlugin(Plugin):
                         _, exception = await redis_api.blpop(
                             self.EXCEPTION_QUEUE_NAME
                         )
-                        await bot.send_message(
-                            f"Exception retrieved from stroage:\n\n{str(exception.decode('utf-8'))}"
-                        )
+                        with suppress(telegram.error.BadRequest):
+                            await bot.send_message(
+                                f"Exception retrieved from storage:\n\n{str(exception.decode('utf-8'))}"
+                            )
                         await bot.send_message("Spanreed is still running.")
         except asyncio.CancelledError:
             self._logger.info("Spanreed Monitor cancelled.")

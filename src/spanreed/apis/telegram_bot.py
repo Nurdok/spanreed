@@ -17,6 +17,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     constants,
+    Message,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -357,6 +358,10 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         return
 
 
+class UserInteractionPreempted(Exception):
+    pass
+
+
 class TelegramBotApi:
     _application: Application
     _application_initialized = asyncio.Event()
@@ -407,12 +412,12 @@ class TelegramBotApi:
 
     async def send_message(
         self, text: str, *, parse_html: bool = True
-    ) -> None:
+    ) -> Message:
         app: Application = await self.get_application()
         parse_mode = None
         if parse_html:
             parse_mode = "HTML"
-        await app.bot.send_message(
+        return await app.bot.send_message(
             chat_id=self._telegram_user_id, text=text, parse_mode=parse_mode
         )
 
@@ -434,6 +439,9 @@ class TelegramBotApi:
         event = asyncio.Event()
         app.bot_data.setdefault(CALLBACK_EVENTS, {})[callback_id] = event
         return callback_id, event
+
+    def get_interaction_timeout(self) -> datetime.timedelta:
+        return datetime.timedelta(minutes=10)
 
     async def request_user_choice(
         self, prompt: str, choices: list[str]
@@ -457,7 +465,7 @@ class TelegramBotApi:
                 ]
             )
 
-        await app.bot.send_message(
+        message: Message = await app.bot.send_message(
             chat_id=self._telegram_user_id,
             text=prompt,
             reply_markup=InlineKeyboardMarkup(keyboard),
@@ -465,7 +473,17 @@ class TelegramBotApi:
 
         # Wait for the user to select a choice.
         self._logger.info(f"Waiting for callback {callback_id} to be done")
-        await callback_event.wait()
+        try:
+            async with asyncio.timeout(
+                self.get_interaction_timeout().total_seconds()
+            ):
+                await callback_event.wait()
+        except asyncio.TimeoutError as e:
+            self._logger.warning("User choice timed out")
+            await app.bot.delete_message(
+                chat_id=self._telegram_user_id, message_id=message.message_id
+            )
+            raise UserInteractionPreempted() from e
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
@@ -479,9 +497,19 @@ class TelegramBotApi:
             self._telegram_user_id
         ] = callback_id
 
-        await self.send_message(prompt)
+        message: Message = await self.send_message(prompt)
         self._logger.info(f"Waiting for user input")
-        await callback_event.wait()
+        try:
+            async with asyncio.timeout(
+                self.get_interaction_timeout().total_seconds()
+            ):
+                await callback_event.wait()
+        except asyncio.TimeoutError as e:
+            self._logger.warning("User choice timed out")
+            await app.bot.delete_message(
+                chat_id=self._telegram_user_id, message_id=message.message_id
+            )
+            raise UserInteractionPreempted() from e
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
     async def get_user_interaction_lock(self) -> asyncio.Lock:
@@ -491,12 +519,18 @@ class TelegramBotApi:
         )
 
     @contextlib.asynccontextmanager
-    async def user_interaction(self) -> AsyncGenerator[None, None]:
+    async def user_interaction(
+        self, propate_preemption: bool = False
+    ) -> AsyncGenerator[None, None]:
         # TODO: Need to mark somehow where to return any user input.
         self._logger.info("Acquiring user interaction lock")
         async with await self.get_user_interaction_lock():
             self._logger.info("Acquired user interaction lock")
             self._have_interaction_lock = True
-            yield
-            self._have_interaction_lock = False
+            if propate_preemption:
+                yield
+            else:
+                with contextlib.suppress(UserInteractionPreempted):
+                    yield
+        self._have_interaction_lock = False
         self._logger.info("Released user interaction lock")
