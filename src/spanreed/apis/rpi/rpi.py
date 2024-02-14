@@ -1,6 +1,4 @@
-# mypy: ignore-errors
 import RPi.GPIO as GPIO
-import smbus2 as smbus
 from spanreed.apis.rpi.i2c_lcd import I2cBus, Lcd
 
 
@@ -10,37 +8,39 @@ class RPi:
         GPIO.setwarnings(False)
         self._gpio_pins = {}
 
-    def get_led(self, gpio_pin) -> "Led":
+    def get_led(self, gpio_pin: int) -> "Led":
         if gpio_pin in self._gpio_pins:
             return self._gpio_pins[gpio_pin]
         return Led(gpio_pin)
 
-    def get_rgb_led(self, red_pin, green_pin, blue_pin) -> "RgbLed":
+    def get_rgb_led(
+        self, red_pin: int, green_pin: int, blue_pin: int
+    ) -> "RgbLed":
         return RgbLed(red_pin, green_pin, blue_pin)
 
-    async def get_lcd(self, bus_port) -> "Lcd":
+    async def get_lcd(self, bus_port: int) -> "Lcd":
         lcd = Lcd(I2cBus(bus_port), Lcd.DEFAULT_ADDRESS)
         await lcd.init()
         return lcd
 
 
 class Led:
-    def __init__(self, gpio_pin):
+    def __init__(self, gpio_pin: int) -> None:
         self._gpio_pin = gpio_pin
         self._state = GPIO.LOW
         GPIO.setup(gpio_pin, GPIO.OUT)
 
-    def _set_state(self, state):
+    def _set_state(self, state) -> None:
         self._state = state
         GPIO.output(self._gpio_pin, state)
 
-    def turn_on(self):
+    def turn_on(self) -> None:
         self._set_state(GPIO.HIGH)
 
-    def turn_off(self):
+    def turn_off(self) -> None:
         self._set_state(GPIO.LOW)
 
-    def toggle(self):
+    def toggle(self) -> None:
         new_state = GPIO.HIGH if self._state == GPIO.LOW else GPIO.HIGH
         self._set_state(new_state)
 
@@ -48,7 +48,7 @@ class Led:
 class RgbLed:
     SIGNAL_FREQ_HZ = 75
 
-    def __init__(self, red_pin, green_pin, blue_pin):
+    def __init__(self, red_pin, green_pin, blue_pin) -> None:
         pins = (red_pin, green_pin, blue_pin)
         self._rgb_pwms: list[GPIO.PWM] = []
 
@@ -58,11 +58,11 @@ class RgbLed:
             self._rgb_pwms.append(pwm)
             pwm.start(0)
 
-    def get_duty_cycle_for_numeric_color(self, color):
+    def get_duty_cycle_for_numeric_color(self, color: int) -> float:
         # Convert 0-255 color to 0-100% duty cycle
         return color * 100 / 255
 
-    def set_color(self, hex_color: int | str):
+    def set_color(self, hex_color: int | str) -> None:
         if isinstance(hex_color, int):
             hex_color = hex(hex_color)
         if hex_color.startswith("#"):
@@ -71,17 +71,17 @@ class RgbLed:
             hex_color = hex_color[2:]
         hex_color = hex_color.zfill(6)
         print(f"Setting color: {hex_color!r}")
-        self._set_color(
+        self.set_rgb_color(
             *tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
         )
 
-    def set_rgb_color(self, red, green, blue):
+    def set_rgb_color(self, red, green, blue) -> None:
         for pwm, value in zip(self._rgb_pwms, (red, green, blue)):
             print(
                 f"Setting value: {self.get_duty_cycle_for_numeric_color(value)}"
             )
             pwm.ChangeDutyCycle(self.get_duty_cycle_for_numeric_color(value))
 
-    def turn_off(self):
+    def turn_off(self) -> None:
         for pwm in self._rgb_pwms:
             pwm.stop()
