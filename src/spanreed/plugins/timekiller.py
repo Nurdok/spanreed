@@ -53,8 +53,8 @@ class TimekillerPlugin(Plugin):
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         async with bot.user_interaction():
-            #await self._poll_for_metrics(user, bot)
-            #await self._journal_prompt(user, bot)
+            # await self._poll_for_metrics(user, bot)
+            # await self._journal_prompt(user, bot)
             await self.prompt_for_currently_reading_books(user, bot, obsidian)
 
     async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
@@ -185,7 +185,7 @@ class TimekillerPlugin(Plugin):
         for book in books:
             if (
                 await bot.request_user_choice(
-                    f"Are you still reading \"{book.title}\"?",
+                    f'Are you still reading "{book.title}"?',
                     ["Yes", "No"],
                 )
                 == 1
@@ -245,11 +245,11 @@ class TimekillerPlugin(Plugin):
                 )
                 == 0
             ):
-                obsidian_webook: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
-                    user
+                obsidian_webook: ObsidianWebhookApi = (
+                    await ObsidianWebhookApi.for_user(user)
                 )
                 await obsidian_webook.append_to_note(
                     book.file["path"],
-                    "\n\n### Thoughts\n" +
-                    await bot.request_user_input("Go ahead then:"),
+                    "\n\n### Thoughts\n"
+                    + await bot.request_user_input("Go ahead then:"),
                 )

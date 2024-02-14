@@ -84,7 +84,7 @@ class ObsidianApi:
 
     async def add_value_to_list_property(
         self, filepath: str, property_name: str, value: str
-    ):
+    ) -> None:
         await self._send_request(
             "modify-property",
             {
@@ -97,7 +97,7 @@ class ObsidianApi:
 
     async def remove_value_from_list_property(
         self, filepath: str, property_name: str, value: str
-    ):
+    ) -> None:
         await self._send_request(
             "modify-property",
             {
@@ -110,7 +110,7 @@ class ObsidianApi:
 
     async def set_value_of_property(
         self, filepath: str, property_name: str, value: str
-    ):
+    ) -> None:
         await self._send_request(
             "modify-property",
             {
@@ -121,7 +121,7 @@ class ObsidianApi:
             },
         )
 
-    async def delete_property(self, filepath: str, property_name: str):
+    async def delete_property(self, filepath: str, property_name: str) -> None:
         await self._send_request(
             "modify-property",
             {
@@ -154,18 +154,23 @@ class ObsidianApi:
             return filename
         return f"{daily_note_path}/{filename}"
 
-    async def query_dataview(self, query: str) -> list[dict[str, Any]]:
-        query_result = await self._send_request("query-dataview", {"query": query})
+    async def query_dataview(self, query: str) -> list[Any]:
+        query_result = await self._send_request(
+            "query-dataview", {"query": query}
+        )
         self._logger.info(f"Got query result: {query_result=}")
         result_type = query_result.get("type", None)
         if result_type == "list":
             return query_result["values"]
         if result_type == "table":
-            return [dataclasses.make_dataclass(
-                "QueryResultRow",
-                [
-                    (header_name.lower(), str)
-                    for header_name in query_result["headers"]
-                ],
-            )(*values) for values in query_result["values"]]
+            return [
+                dataclasses.make_dataclass(
+                    "QueryResultRow",
+                    [
+                        (header_name.lower(), str)
+                        for header_name in query_result["headers"]
+                    ],
+                )(*values)
+                for values in query_result["values"]
+            ]
         return query_result

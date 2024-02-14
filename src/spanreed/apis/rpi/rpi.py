@@ -6,11 +6,8 @@ class RPi:
     def __init__(self) -> None:
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
-        self._gpio_pins = {}
 
     def get_led(self, gpio_pin: int) -> "Led":
-        if gpio_pin in self._gpio_pins:
-            return self._gpio_pins[gpio_pin]
         return Led(gpio_pin)
 
     def get_rgb_led(
@@ -30,7 +27,7 @@ class Led:
         self._state = GPIO.LOW
         GPIO.setup(gpio_pin, GPIO.OUT)
 
-    def _set_state(self, state) -> None:
+    def _set_state(self, state: int) -> None:
         self._state = state
         GPIO.output(self._gpio_pin, state)
 
@@ -48,7 +45,7 @@ class Led:
 class RgbLed:
     SIGNAL_FREQ_HZ = 75
 
-    def __init__(self, red_pin, green_pin, blue_pin) -> None:
+    def __init__(self, red_pin: int, green_pin: int, blue_pin: int) -> None:
         pins = (red_pin, green_pin, blue_pin)
         self._rgb_pwms: list[GPIO.PWM] = []
 
@@ -75,7 +72,7 @@ class RgbLed:
             *tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
         )
 
-    def set_rgb_color(self, red, green, blue) -> None:
+    def set_rgb_color(self, red: int, green: int, blue: int) -> None:
         for pwm, value in zip(self._rgb_pwms, (red, green, blue)):
             print(
                 f"Setting value: {self.get_duty_cycle_for_numeric_color(value)}"
