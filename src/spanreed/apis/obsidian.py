@@ -65,6 +65,7 @@ class ObsidianApi:
             raise TimeoutError(
                 f"Obsidian API request timed out ({request_id=})."
             ) from e
+        self._logger.info(f"Got response: {response=}")
 
         if not response["success"]:
             msg: str = (
