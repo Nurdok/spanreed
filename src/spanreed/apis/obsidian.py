@@ -41,10 +41,15 @@ class ObsidianApi:
             "params": params or {},
         }
         self._logger.info(f"Sending request: {request=}")
-        await redis_api.lpush(
-            f"obsidian-plugin-tasks:{self._user.id}",
-            json.dumps(request),
-        )
+
+        try:
+            await redis_api.lpush(
+                f"obsidian-plugin-tasks:{self._user.id}",
+                json.dumps(request),
+            )
+        except Exception:
+            self._logger.error(f"Failed to send request: {request=}")
+            raise
 
         try:
             async with asyncio.timeout(
