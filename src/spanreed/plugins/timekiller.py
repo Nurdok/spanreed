@@ -44,10 +44,10 @@ class TimekillerPlugin(Plugin):
                         "Got some time to kill?",
                         ["Yes", "No"],
                     )
-                    == 0
+                    != 0
                 ):
-                    await self._poll_for_metrics(user, bot)
-                    await self._journal_prompt(user, bot)
+                    continue
+            await self._kill_time(user)
 
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
