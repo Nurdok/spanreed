@@ -2,6 +2,7 @@ import asyncio
 import datetime
 from dataclasses import dataclass
 from typing import Any
+from contextlib import suppress
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -105,39 +106,44 @@ class HabitTrackerPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         while True:
-            property_value: Any = await self.get_habit_tracker_property_value(
-                obsidian,
-                bot,
-                config.habit_tracker_property_name,
-                config.daily_note_path,
-            )
-            done_habits: list[str] = []
-
-            if isinstance(property_value, list):
-                done_habits = property_value
-            elif property_value is not None:
-                async with bot.user_interaction():
-                    await bot.send_message(
-                        f"Invalid value for "
-                        f"{config.habit_tracker_property_name}: "
-                        f"{property_value!r}"
-                        f"; expected a list of strings."
-                    )
-
-            for habit in config.habits:
-                self._logger.info(
-                    f"Checking if we need to ask for {habit.name}"
-                )
-                if habit.name in done_habits:
-                    self._logger.info(f"{habit.name} is already done")
-                    continue
-
-                if await self.poll_user(habit, bot):
-                    await obsidian.add_value_to_list_property(
-                        await obsidian.get_daily_note(config.daily_note_path),
+            with suppress(TimeoutError):
+                property_value: Any = (
+                    await self.get_habit_tracker_property_value(
+                        obsidian,
+                        bot,
                         config.habit_tracker_property_name,
-                        habit.name,
+                        config.daily_note_path,
                     )
+                )
+                done_habits: list[str] = []
+
+                if isinstance(property_value, list):
+                    done_habits = property_value
+                elif property_value is not None:
+                    async with bot.user_interaction():
+                        await bot.send_message(
+                            f"Invalid value for "
+                            f"{config.habit_tracker_property_name}: "
+                            f"{property_value!r}"
+                            f"; expected a list of strings."
+                        )
+
+                for habit in config.habits:
+                    self._logger.info(
+                        f"Checking if we need to ask for {habit.name}"
+                    )
+                    if habit.name in done_habits:
+                        self._logger.info(f"{habit.name} is already done")
+                        continue
+
+                    if await self.poll_user(habit, bot):
+                        await obsidian.add_value_to_list_property(
+                            await obsidian.get_daily_note(
+                                config.daily_note_path
+                            ),
+                            config.habit_tracker_property_name,
+                            habit.name,
+                        )
 
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
