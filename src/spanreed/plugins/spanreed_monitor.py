@@ -1,5 +1,6 @@
 import asyncio
 import traceback
+import logging
 
 import datetime
 from contextlib import suppress, asynccontextmanager
@@ -51,12 +52,16 @@ class SpanreedMonitorPlugin(Plugin):
 async def suppress_and_log_exception(
     *exceptions: type[Exception],
 ) -> AsyncGenerator[None, None]:
+    logger = logging.getLogger(__name__)
     try:
         yield
     except Exception as e:
         if not any(isinstance(e, exception) for exception in exceptions):
             raise
+        exception_str = "".join(
+            traceback.format_exception(type(e), e, None, limit=1)
+        )
+        logger.error(f"Suppressed exception: {exception_str}")
         await redis_api.lpush(
-            SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME,
-            "".join(traceback.format_exception(type(e), e, None)),
+            SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME, exception_str
         )

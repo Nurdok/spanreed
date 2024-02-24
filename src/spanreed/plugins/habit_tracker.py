@@ -145,6 +145,9 @@ class HabitTrackerPlugin(Plugin):
                             config.habit_tracker_property_name,
                             habit.name,
                         )
+                        await bot.send_message(f"Awesome! Keep it up!")
+                    else:
+                        await bot.send_message("I'll ask again later")
 
             self._logger.info("Sleeping for 4 hours")
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
@@ -155,8 +158,6 @@ class HabitTrackerPlugin(Plugin):
             prompt = f"Did you {habit.description} today?"
             if await bot.request_user_choice(prompt, ["Yes", "No"]) == 0:
                 self._logger.info(f"User said yes to {habit.name}")
-                await bot.send_message(f"Awesome! Keep it up!")
                 return True
             self._logger.info(f"User said no to {habit.name}")
-            await bot.send_message("I'll ask again later")
             return False
