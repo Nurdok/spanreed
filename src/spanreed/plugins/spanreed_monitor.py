@@ -1,7 +1,10 @@
 import asyncio
+import traceback
 
 import datetime
-from contextlib import suppress
+from contextlib import suppress, asynccontextmanager
+
+from typing import AsyncGenerator
 
 import telegram.error
 
@@ -33,9 +36,27 @@ class SpanreedMonitorPlugin(Plugin):
                         )
                         with suppress(telegram.error.BadRequest):
                             await bot.send_message(
-                                f"Exception retrieved from storage:\n\n{str(exception.decode('utf-8'))}"
+                                f"Exception retrieved from storage:\n\n"
+                                f"```\n{str(exception.decode('utf-8'))}\n```",
+                                parse_html=False,
+                                parse_markdown=True,
                             )
                         await bot.send_message("Spanreed is still running.")
         except asyncio.CancelledError:
             self._logger.info("Spanreed Monitor cancelled.")
             await bot.send_message("Spanreed is shutting down.")
+
+
+@asynccontextmanager
+async def suppress_and_log_exception(
+    *exceptions: type[Exception],
+) -> AsyncGenerator[None, None]:
+    try:
+        yield
+    except Exception as e:
+        if not any(isinstance(e, exception) for exception in exceptions):
+            raise
+        await redis_api.lpush(
+            SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME,
+            "".join(traceback.format_exception(type(e), e, None)),
+        )

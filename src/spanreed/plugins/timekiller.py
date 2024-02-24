@@ -2,11 +2,16 @@ import asyncio
 import random
 import datetime
 
-from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.apis.telegram_bot import (
+    TelegramBotApi,
+    PluginCommand,
+    UserInteractionPreempted,
+)
 from spanreed.apis.obsidian_webhook import ObsidianWebhookApi
 from spanreed.apis.obsidian import ObsidianApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
+from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 
 class TimekillerPlugin(Plugin):
@@ -38,16 +43,19 @@ class TimekillerPlugin(Plugin):
             if now.hour < 9 or now.hour > 22:
                 continue
 
-            async with bot.user_interaction():
-                if (
-                    await bot.request_user_choice(
-                        "Got some time to kill?",
-                        ["Yes", "No"],
-                    )
-                    != 0
-                ):
-                    continue
-            await self._kill_time(user)
+            async with suppress_and_log_exception(
+                TimeoutError, UserInteractionPreempted
+            ):
+                async with bot.user_interaction():
+                    if (
+                        await bot.request_user_choice(
+                            "Got some time to kill?",
+                            ["Yes", "No"],
+                        )
+                        != 0
+                    ):
+                        continue
+                await self._kill_time(user)
 
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)

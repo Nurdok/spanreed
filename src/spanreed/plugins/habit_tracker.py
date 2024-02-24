@@ -2,12 +2,12 @@ import asyncio
 import datetime
 from dataclasses import dataclass
 from typing import Any
-from contextlib import suppress
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.apis.obsidian import ObsidianApi
+from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 
 @dataclass
@@ -106,7 +106,8 @@ class HabitTrackerPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         while True:
-            with suppress(TimeoutError):
+            self._logger.info(f"Running periodic check for user {user}")
+            async with suppress_and_log_exception(TimeoutError):
                 property_value: Any = (
                     await self.get_habit_tracker_property_value(
                         obsidian,
@@ -145,6 +146,7 @@ class HabitTrackerPlugin(Plugin):
                             habit.name,
                         )
 
+            self._logger.info("Sleeping for 4 hours")
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
     async def poll_user(self, habit: Habit, bot: TelegramBotApi) -> bool:

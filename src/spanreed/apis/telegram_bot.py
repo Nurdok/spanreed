@@ -53,6 +53,10 @@ class UserConfig:
 
 
 class TelegramBotPlugin(Plugin[UserConfig]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.background_tasks = set()
+
     @classmethod
     def name(cls) -> str:
         return "Telegram Bot"
@@ -260,7 +264,13 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     delay=1,
                 )
 
-        asyncio.create_task(start_task())
+        self.create_task(start_task())
+
+    def create_task(self, coro: typing.Coroutine) -> None:
+        task = asyncio.create_task(coro)
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
+        return
 
     async def show_command_menu(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -314,11 +324,14 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 self._logger.info(
                     f"Running {chosen_command=}: {chosen_command.callback=}"
                 )
-                await chosen_command.callback(user)
+                try:
+                    await chosen_command.callback(user)
+                except:
+                    self._logger.exception(f"Error running {chosen_command=}")
             except:
                 self._logger.exception("Error in show_command_menu_task")
 
-        asyncio.create_task(show_command_menu_task())
+        self.create_task(show_command_menu_task())
 
     async def handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -411,12 +424,18 @@ class TelegramBotApi:
         cls._application_initialized.set()
 
     async def send_message(
-        self, text: str, *, parse_html: bool = True
+        self,
+        text: str,
+        *,
+        parse_html: bool = True,
+        parse_markdown: bool = False,
     ) -> Message:
         app: Application = await self.get_application()
         parse_mode = None
         if parse_html:
             parse_mode = "HTML"
+        elif parse_markdown:
+            parse_mode = "MarkdownV2"
         return await app.bot.send_message(
             chat_id=self._telegram_user_id, text=text, parse_mode=parse_mode
         )
