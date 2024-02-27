@@ -42,14 +42,12 @@ class ObsidianApi:
         }
         self._logger.info(f"Sending request: {request=}")
 
+        request_queue_name: str = f"obsidian-plugin-tasks:{self._user.id}"
         try:
             async with asyncio.timeout(
                 datetime.timedelta(seconds=30).total_seconds()
             ):
-                await redis_api.lpush(
-                    f"obsidian-plugin-tasks:{self._user.id}",
-                    json.dumps(request),
-                )
+                await redis_api.lpush(request_queue_name, json.dumps(request))
         except Exception:
             self._logger.error(f"Failed to send request: {request=}")
             raise
@@ -58,18 +56,20 @@ class ObsidianApi:
             async with asyncio.timeout(
                 datetime.timedelta(seconds=30).total_seconds()
             ):
-                queue_name: str = (
+                response_queue_name: str = (
                     f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
                 )
-                self._logger.info(f"Waiting for response on {queue_name=}")
+                self._logger.info(f"Waiting for response on {response_queue_name=}")
                 response: dict = json.loads(
                     # Take the value from the tuple returned by `blpop`, we already know the key
-                    (await redis_api.blpop(queue_name))[1]
+                    (await redis_api.blpop(response_queue_name))[1]
                 )
                 self._logger.info(
-                    f"Got response for {method=} on {queue_name=}: {response=}"
+                    f"Got response for {method=} on {response_queue_name=}: {response=}"
                 )
-        except TimeoutError as e:
+        except TimeoutError:
+            # Delete the request from the queue
+            await redis_api.lrem(request_queue_name, 0, json.dumps(request))
             raise TimeoutError(
                 f"Obsidian API request timed out ({request_id=})."
             )
