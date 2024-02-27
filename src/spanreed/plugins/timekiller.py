@@ -60,14 +60,14 @@ class TimekillerPlugin(Plugin):
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-        choices: list[str] = ["Mood", "Habits", "Books", "Cancel"]
+        choices: list[str] = ["Mood", "Journaling Prompt", "Books", "Cancel"]
         async with bot.user_interaction():
             choice: int = await bot.request_user_choice(
                 "What's your poison?", choices
             )
             if choices[choice] == "Mood":
                 await self._poll_for_metrics(user, bot)
-            elif choices[choice] == "Habits":
+            elif choices[choice] == "Journaling Prompt":
                 await self._journal_prompt(user, bot)
             elif choices[choice] == "Books":
                 await self.prompt_for_currently_reading_books(
@@ -103,18 +103,31 @@ class TimekillerPlugin(Plugin):
             "What project are you currently working on?",
         ]
 
-        prompt = random.choice(prompts)
-        prompt_answer: str = await bot.request_user_input(prompt)
-        note_content: str = f"\n\n### {prompt}\n{prompt_answer}\n"
         webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
             user
         )
-
         date_str: str = datetime.datetime.today().strftime("%Y-%m-%d")
         note_name: str = f"daily/{date_str}.md"
-        self._logger.info(f"Appending to note {note_name}")
-        await webhook_api.append_to_note(note_name, note_content)
-        await bot.send_message("Noted!")
+
+        while True:
+            prompt = random.choice(prompts)
+            choices = ["Answer", "Change", "Cancel"]
+            choice: int = await bot.request_user_choice(
+                f"Prompt: {prompt}", choices,
+                columns=3
+            )
+            if choices[choice] == "Cancel":
+                break
+            elif choices[choice] == "Change":
+                continue
+
+            prompt_answer: str = await bot.request_user_input(prompt)
+            note_content: str = f"\n\n### {prompt}\n{prompt_answer}\n"
+            self._logger.info(f"Appending to note {note_name}")
+            await webhook_api.append_to_note(note_name, note_content)
+            await bot.send_message("Noted!")
+            if (await bot.request_user_choice("Another?", ["Yes", "No"], columns=2)) == 1:
+                break
 
     async def _poll_for_metrics(self, user: User, bot: TelegramBotApi) -> None:
         # TODO: Use ObsidianApi to check if we've already done this today.
@@ -172,7 +185,7 @@ class TimekillerPlugin(Plugin):
         while True:
             choice: int = await bot.request_user_choice(
                 "What are you feeling right now?",
-                possible_feelings + ["Cancel"],
+                possible_feelings + ["Done"],
                 columns=3,
             )
             if choice == len(possible_feelings):
