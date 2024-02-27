@@ -38,7 +38,7 @@ class SpanreedMonitorPlugin(Plugin):
                         with suppress(telegram.error.BadRequest):
                             await bot.send_message(
                                 f"Exception retrieved from storage:\n\n"
-                                f"```\n{str(exception.decode('utf-8'))}\n```",
+                                f"```python\n{str(exception.decode('utf-8'))}\n```",
                                 parse_html=False,
                                 parse_markdown=True,
                             )

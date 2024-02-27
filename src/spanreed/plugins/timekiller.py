@@ -60,10 +60,19 @@ class TimekillerPlugin(Plugin):
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        choices: list[str] = ["Mood", "Habits", "Books", "Cancel"]
         async with bot.user_interaction():
-            # await self._poll_for_metrics(user, bot)
-            # await self._journal_prompt(user, bot)
-            await self.prompt_for_currently_reading_books(user, bot, obsidian)
+            choice: int = await bot.request_user_choice(
+                "What's your poison?", choices
+            )
+            if choices[choice] == "Mood":
+                await self._poll_for_metrics(user, bot)
+            elif choices[choice] == "Habits":
+                await self._journal_prompt(user, bot)
+            elif choices[choice] == "Books":
+                await self.prompt_for_currently_reading_books(
+                    user, bot, obsidian
+                )
 
     async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
         prompts: list[str] = [
@@ -119,6 +128,7 @@ class TimekillerPlugin(Plugin):
             "How would you rate your mood right now?\n"
             " (1 - negative, 5 - positive)",
             ["1", "2", "3", "4", "5"],
+            columns=5,
         )
         note_content += "\n" + f"mood:: {mood}"
 
@@ -163,6 +173,7 @@ class TimekillerPlugin(Plugin):
             choice: int = await bot.request_user_choice(
                 "What are you feeling right now?",
                 possible_feelings + ["Cancel"],
+                columns=3,
             )
             if choice == len(possible_feelings):
                 break

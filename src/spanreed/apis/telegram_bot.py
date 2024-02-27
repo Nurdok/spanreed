@@ -463,7 +463,11 @@ class TelegramBotApi:
         return datetime.timedelta(minutes=10)
 
     async def request_user_choice(
-        self, prompt: str, choices: list[str]
+        self,
+        prompt: str,
+        choices: list[str],
+        *,
+        columns: int = 1
     ) -> int:
         app = await self.get_application()
 
@@ -474,15 +478,14 @@ class TelegramBotApi:
             return CallbackData(callback_id, self._telegram_user_id, position)
 
         # Set up the keyboard.
-        keyboard = []
+        keyboard = [[]]
         for i, choice in enumerate(choices):
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        choice, callback_data=make_callback_data(i)
-                    )
-                ]
+            button_to_append = InlineKeyboardButton(
+                choice, callback_data=make_callback_data(i)
             )
+            if len(keyboard[-1]) == columns:
+                keyboard.append([])
+            keyboard[-1].append(button_to_append)
 
         message: Message = await app.bot.send_message(
             chat_id=self._telegram_user_id,
