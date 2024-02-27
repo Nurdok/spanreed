@@ -113,8 +113,7 @@ class TimekillerPlugin(Plugin):
             prompt = random.choice(prompts)
             choices = ["Answer", "Change", "Cancel"]
             choice: int = await bot.request_user_choice(
-                f"Prompt: {prompt}", choices,
-                columns=3
+                f"Prompt: {prompt}", choices, columns=3
             )
             if choices[choice] == "Cancel":
                 break
@@ -126,7 +125,11 @@ class TimekillerPlugin(Plugin):
             self._logger.info(f"Appending to note {note_name}")
             await webhook_api.append_to_note(note_name, note_content)
             await bot.send_message("Noted!")
-            if (await bot.request_user_choice("Another?", ["Yes", "No"], columns=2)) == 1:
+            if (
+                await bot.request_user_choice(
+                    "Another?", ["Yes", "No"], columns=2
+                )
+            ) == 1:
                 break
 
     async def _poll_for_metrics(self, user: User, bot: TelegramBotApi) -> None:
