@@ -57,7 +57,9 @@ class LiPoFuelGauge:
         print("---")
         msb = await self.device.read_byte_data(VCELL_REG)
         lsb = await self.device.read_byte_data(VCELL_REG + 1)
-        voltage = (msb << 8 + lsb) >> 4
+        # Not sure why the "*1.25" is needed, but it is.
+        # Source: https://github.com/sparkfun/Lipo_Fuel_Gauge/blob/master/Firmware/SparkFunLipoFuelGauge/main.c
+        voltage = (((msb << 8) + lsb) >> 4) * 1.25
         print("{} %, {} V".format(percentage, voltage))
 
 
