@@ -13,6 +13,17 @@ COMMAND_REG = 0xFE
 
 
 class LiPoFuelGauge:
+    """API for interacting with a MAX17043 LiPo fuel gauge.
+
+    Note:
+        MAX17044 is currently not supported. It has different units of
+        measurement for voltage and battery percentage. It should be easy to
+        add support for it if needed.
+
+    """
+
+    DEFAULT_ADDRESS = 0x36
+
     def __init__(self, i2c_bus: I2cBus, i2c_addr: int) -> None:
         self.device: I2cDevice = i2c_bus.get_i2c_device(i2c_addr)
 
@@ -56,7 +67,7 @@ class LiPoFuelGauge:
 
         # According to the datasheet:
         # > The SOC register is a read-only register that displays the state of
-        # > charge of the cell as calculated by the ModelGauge algorithm. 
+        # > charge of the cell as calculated by the ModelGauge algorithm.
         # > Units of % can be directly determined by observing only the high
         # > byte of the SOC register. The low byte provides additional
         # resolution in units 1/256%.
