@@ -72,3 +72,7 @@ async def main():
         await gauge.get_soc()
         await gauge.get_alert()
         await asyncio.sleep(1)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
