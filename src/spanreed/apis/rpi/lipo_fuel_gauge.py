@@ -60,7 +60,7 @@ class LiPoFuelGauge:
         # Not sure why the "*1.25" is needed, but it is.
         # Source: https://github.com/sparkfun/Lipo_Fuel_Gauge/blob/master/Firmware/SparkFunLipoFuelGauge/main.c
         voltage = (((msb << 8) + lsb) >> 4) * 1.25
-        print("{} %, {} V".format(percentage, voltage))
+        print(f"{percentage}%, {voltage/1000:.3}V")
 
 
 async def main():
