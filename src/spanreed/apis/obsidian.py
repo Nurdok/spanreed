@@ -59,7 +59,9 @@ class ObsidianApi:
                 response_queue_name: str = (
                     f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
                 )
-                self._logger.info(f"Waiting for response on {response_queue_name=}")
+                self._logger.info(
+                    f"Waiting for response on {response_queue_name=}"
+                )
                 response: dict = json.loads(
                     # Take the value from the tuple returned by `blpop`, we already know the key
                     (await redis_api.blpop(response_queue_name))[1]

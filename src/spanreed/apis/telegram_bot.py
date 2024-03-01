@@ -291,11 +291,15 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         # We need to do user interaction is a separate task because we can't
         # block the main Telegram bot coroutine.
         async def show_command_menu_task() -> None:
+            from spanreed.plugins.spanreed_monitor import (
+                suppress_and_log_exception,
+            )
+
             self._logger.info(f"Inside internal task for /do for {user}")
             self._logger.info(
                 f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}"
             )
-            try:
+            async with suppress_and_log_exception(BaseException):
                 bot = await TelegramBotApi.for_user(user)
 
                 shown_commands = []
@@ -324,12 +328,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 self._logger.info(
                     f"Running {chosen_command=}: {chosen_command.callback=}"
                 )
-                try:
-                    await chosen_command.callback(user)
-                except:
-                    self._logger.exception(f"Error running {chosen_command=}")
-            except:
-                self._logger.exception("Error in show_command_menu_task")
+                await chosen_command.callback(user)
 
         self.create_task(show_command_menu_task())
 
@@ -463,11 +462,7 @@ class TelegramBotApi:
         return datetime.timedelta(minutes=10)
 
     async def request_user_choice(
-        self,
-        prompt: str,
-        choices: list[str],
-        *,
-        columns: int = 1
+        self, prompt: str, choices: list[str], *, columns: int = 1
     ) -> int:
         app = await self.get_application()
 

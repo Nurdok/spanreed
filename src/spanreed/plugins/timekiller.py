@@ -66,7 +66,7 @@ class TimekillerPlugin(Plugin):
                 "What's your poison?", choices
             )
             if choices[choice] == "Mood":
-                await self._poll_for_metrics(user, bot)
+                await self._poll_for_metrics(user, bot, obsidian)
             elif choices[choice] == "Journaling Prompt":
                 await self._journal_prompt(user, bot)
             elif choices[choice] == "Books":
@@ -107,7 +107,7 @@ class TimekillerPlugin(Plugin):
             user
         )
         date_str: str = datetime.datetime.today().strftime("%Y-%m-%d")
-        note_name: str = f"daily/{date_str}.md"
+        note_name: str = f"Daily/{date_str}.md"
 
         while True:
             prompt = random.choice(prompts)
@@ -132,21 +132,19 @@ class TimekillerPlugin(Plugin):
             ) == 1:
                 break
 
-    async def _poll_for_metrics(self, user: User, bot: TelegramBotApi) -> None:
+    async def _poll_for_metrics(
+        self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+    ) -> None:
         # TODO: Use ObsidianApi to check if we've already done this today.
-        note_content: str = "### Metrics"
-
-        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
-            user
+        mood: int = (
+            await bot.request_user_choice(
+                "How would you rate your mood right now?\n"
+                " (1 - negative, 5 - positive)",
+                ["1", "2", "3", "4", "5"],
+                columns=5,
+            )
+            + 1
         )
-
-        mood: int = await bot.request_user_choice(
-            "How would you rate your mood right now?\n"
-            " (1 - negative, 5 - positive)",
-            ["1", "2", "3", "4", "5"],
-            columns=5,
-        )
-        note_content += "\n" + f"mood:: {mood}"
 
         possible_feelings: list[str] = [
             "happy",
@@ -195,13 +193,11 @@ class TimekillerPlugin(Plugin):
                 break
             feelings.append(possible_feelings[choice])
 
-        feelings = [f'"{f}"' for f in feelings]
-        note_content += "\n" + f"feelings:: [{', '.join(feelings)}]"
-
-        date_str: str = datetime.datetime.today().strftime("%Y-%m-%d")
-        note_name: str = f"daily/{date_str}.md"
-        self._logger.info(f"Appending to note {note_name}")
-        await webhook_api.append_to_note(note_name, note_content)
+        await obsidian.safe_generate_today_note()
+        # TODO: Use ObsidianApi to get the daily note path.
+        daily_note: str = await obsidian.get_daily_note("Daily")
+        await obsidian.set_value_of_property(daily_note, "mood", str(mood))
+        await obsidian.set_value_of_property(daily_note, "feelings", feelings)
         await bot.send_message("Noted!")
 
     async def prompt_for_currently_reading_books(
