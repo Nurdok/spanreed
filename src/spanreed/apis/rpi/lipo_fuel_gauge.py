@@ -50,30 +50,37 @@ class LiPoFuelGauge:
         version = hex(0xFF * msb + lsb)
         print("version : {}".format(version))
 
-    async def get_soc(self) -> None:
+    async def get_percentage(self) -> int:
         msb = await self.device.read_byte_data(SOC_REG)
         lsb = await self.device.read_byte_data(SOC_REG + 1)
-        percentage = (0xFF * msb + lsb) >> 8
-        print("---")
+
+        # According to the datasheet:
+        # > The SOC register is a read-only register that displays the state of
+        # > charge of the cell as calculated by the ModelGauge algorithm. 
+        # > Units of % can be directly determined by observing only the high
+        # > byte of the SOC register. The low byte provides additional
+        # resolution in units 1/256%.
+        return msb + (lsb / 256)
+
+    async def get_voltage_mv(self) -> int:
         msb = await self.device.read_byte_data(VCELL_REG)
         lsb = await self.device.read_byte_data(VCELL_REG + 1)
-        # Not sure why the "*1.25" is needed, but it is.
-        # Source: https://github.com/sparkfun/Lipo_Fuel_Gauge/blob/master/Firmware/SparkFunLipoFuelGauge/main.c
-        voltage = (((msb << 8) + lsb) >> 4) * 1.25
-        print(f"{percentage}%, {voltage/1000:.3}V")
+
+        # According to the datasheet:
+        # > Battery voltage is measured at the CELL pin input with
+        # > respect to GND over a 0 to 5.00V range for the
+        # > MAX17043 resolutions of 1.25mV and 2.50mV, respectively.
+        # In short, we need to multiply the 16bit register value by 1.25.
+        return (((msb << 8) + lsb) >> 4) * 1.25
 
 
 async def main():
     gauge = LiPoFuelGauge(I2cBus(1), 0x36)
-    await gauge.reset()
-    await gauge.quick_start()
-    await gauge.get_version()
-    await gauge.get_config()
-    await gauge.get_soc()
     while True:
-        await gauge.get_soc()
-        await gauge.get_alert()
-        await asyncio.sleep(1)
+        percentage: int = await gauge.get_percentage()
+        voltage: int = await gauge.get_voltage_mv()
+        print(f"{percentage:.4}%, {voltage/1000:.3}V")
+        await asyncio.sleep(3)
 
 
 if __name__ == "__main__":
