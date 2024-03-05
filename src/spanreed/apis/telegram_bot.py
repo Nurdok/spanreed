@@ -5,7 +5,7 @@ import os
 import logging
 import typing
 import uuid
-from typing import NamedTuple, Optional, Callable
+from typing import NamedTuple, Optional, Callable, cast
 from dataclasses import dataclass
 from collections.abc import AsyncGenerator
 
@@ -435,9 +435,9 @@ class TelegramBotApi:
             parse_mode = "HTML"
         elif parse_markdown:
             parse_mode = "MarkdownV2"
-        return await app.bot.send_message(
+        return cast(Message, await app.bot.send_message(
             chat_id=self._telegram_user_id, text=text, parse_mode=parse_mode
-        )
+        ))
 
     async def send_multiple_messages(
         self, *text: str, delay: int = 1, parse_html: bool = True
@@ -473,7 +473,8 @@ class TelegramBotApi:
             return CallbackData(callback_id, self._telegram_user_id, position)
 
         # Set up the keyboard.
-        keyboard = [[]]
+        keyboard: list[list[InlineKeyboardButton]] = [[]]
+
         for i, choice in enumerate(choices):
             button_to_append = InlineKeyboardButton(
                 choice, callback_data=make_callback_data(i)
@@ -537,14 +538,14 @@ class TelegramBotApi:
 
     @contextlib.asynccontextmanager
     async def user_interaction(
-        self, propate_preemption: bool = False
+        self, propagate_preemption: bool = True
     ) -> AsyncGenerator[None, None]:
         # TODO: Need to mark somehow where to return any user input.
         self._logger.info("Acquiring user interaction lock")
         async with await self.get_user_interaction_lock():
             self._logger.info("Acquired user interaction lock")
             self._have_interaction_lock = True
-            if propate_preemption:
+            if propagate_preemption:
                 yield
             else:
                 with contextlib.suppress(UserInteractionPreempted):

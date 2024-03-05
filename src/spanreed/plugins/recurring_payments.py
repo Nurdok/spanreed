@@ -376,7 +376,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
             if date_str not in dates:
                 if recurring_payment.verify_recurrence:
                     bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-                    async with bot.user_interaction():
+                    async with bot.user_interaction(propagate_preemption=True):
                         choice: int = await bot.request_user_choice(
                             f"You have a recurring payment of {recurring_payment.recurrence_cost}"
                             f" due now (for task with"
