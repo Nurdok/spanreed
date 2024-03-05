@@ -50,7 +50,7 @@ class SpanreedMonitorPlugin(Plugin):
 
 @asynccontextmanager
 async def suppress_and_log_exception(
-    *exceptions: type[Exception],
+    *exceptions: type[BaseException],
 ) -> AsyncGenerator[None, None]:
     logger = logging.getLogger(__name__)
     try:

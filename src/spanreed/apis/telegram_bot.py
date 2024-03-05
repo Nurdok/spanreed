@@ -55,7 +55,7 @@ class UserConfig:
 class TelegramBotPlugin(Plugin[UserConfig]):
     def __init__(self) -> None:
         super().__init__()
-        self.background_tasks = set()
+        self.background_tasks: set[asyncio.Task] = set()
 
     @classmethod
     def name(cls) -> str:
