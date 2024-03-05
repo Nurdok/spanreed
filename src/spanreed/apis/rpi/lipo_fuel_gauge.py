@@ -61,7 +61,7 @@ class LiPoFuelGauge:
         version = hex(0xFF * msb + lsb)
         print("version : {}".format(version))
 
-    async def get_percentage(self) -> int:
+    async def get_percentage(self) -> float:
         msb = await self.device.read_byte_data(SOC_REG)
         lsb = await self.device.read_byte_data(SOC_REG + 1)
 
@@ -73,7 +73,7 @@ class LiPoFuelGauge:
         # resolution in units 1/256%.
         return msb + (lsb / 256)
 
-    async def get_voltage_mv(self) -> int:
+    async def get_voltage_mv(self) -> float:
         msb = await self.device.read_byte_data(VCELL_REG)
         lsb = await self.device.read_byte_data(VCELL_REG + 1)
 
@@ -85,11 +85,11 @@ class LiPoFuelGauge:
         return (((msb << 8) + lsb) >> 4) * 1.25
 
 
-async def main():
+async def main() -> None:
     gauge = LiPoFuelGauge(I2cBus(1), 0x36)
     while True:
-        percentage: int = await gauge.get_percentage()
-        voltage: int = await gauge.get_voltage_mv()
+        percentage: float = await gauge.get_percentage()
+        voltage: float = await gauge.get_voltage_mv()
         print(f"{percentage:.4}%, {voltage/1000:.3}V")
         await asyncio.sleep(3)
 
