@@ -435,9 +435,14 @@ class TelegramBotApi:
             parse_mode = "HTML"
         elif parse_markdown:
             parse_mode = "MarkdownV2"
-        return cast(Message, await app.bot.send_message(
-            chat_id=self._telegram_user_id, text=text, parse_mode=parse_mode
-        ))
+        return cast(
+            Message,
+            await app.bot.send_message(
+                chat_id=self._telegram_user_id,
+                text=text,
+                parse_mode=parse_mode,
+            ),
+        )
 
     async def send_multiple_messages(
         self, *text: str, delay: int = 1, parse_html: bool = True
