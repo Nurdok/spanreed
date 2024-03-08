@@ -120,7 +120,7 @@ class ObsidianApi:
         )
 
     async def set_value_of_property(
-        self, filepath: str, property_name: str, value: str
+        self, filepath: str, property_name: str, value: str | list[str]
     ) -> None:
         await self._send_request(
             "modify-property",

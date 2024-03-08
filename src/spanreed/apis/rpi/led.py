@@ -1,13 +1,14 @@
 import RPi.GPIO as GPIO
+from typing import Literal
 
 
 class Led:
     def __init__(self, gpio_pin: int) -> None:
         self._gpio_pin = gpio_pin
-        self._state = GPIO.LOW
+        self._state: Literal[0, 1] = GPIO.LOW
         GPIO.setup(gpio_pin, GPIO.OUT)
 
-    def _set_state(self, state: int) -> None:
+    def _set_state(self, state: Literal[0, 1]) -> None:
         self._state = state
         GPIO.output(self._gpio_pin, state)
 

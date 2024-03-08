@@ -39,27 +39,25 @@ class LiPoFuelGauge:
         await self.device.write_byte_data(MODE_REG, 0x00)
         await self.device.write_byte_data(MODE_REG + 1, 0x40)
 
-    async def get_alert(self) -> None:
+    async def get_alert(self) -> tuple[int, int]:
         # msb = await self.device.read_byte_data(CONFIG_REG)
         lsb = await self.device.read_byte_data(CONFIG_REG + 1)
         alert_status = (0x20 & lsb) >> 5
-        alert_thd = 32 - (0x1F & lsb)
-        print("alert status : {}".format(alert_status))
-        print("alert thd : {}".format(alert_thd))
+        alert_threshold = 32 - (0x1F & lsb)
+        return alert_status, alert_threshold
 
-    async def get_config(self) -> None:
+    async def get_config(self) -> tuple[int, int]:
         msb = await self.device.read_byte_data(CONFIG_REG)
         lsb = await self.device.read_byte_data(CONFIG_REG + 1)
         config = (msb << 8) + lsb
         sleep_status = (0x80 & lsb) >> 7
-        print("sleep : {}".format(sleep_status))
-        print("config : {}".format(hex(config)))
+        return config, sleep_status
 
-    async def get_version(self) -> None:
+    async def get_version(self) -> int:
         msb = await self.device.read_byte_data(VERSION_REG)
         lsb = await self.device.read_byte_data(VERSION_REG + 1)
-        version = hex(0xFF * msb + lsb)
-        print("version : {}".format(version))
+        version = 0xFF * msb + lsb
+        return version
 
     async def get_percentage(self) -> float:
         msb = await self.device.read_byte_data(SOC_REG)
