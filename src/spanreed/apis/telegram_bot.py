@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import datetime
 import os
-from enum import Enum, auto
+from enum import auto, IntEnum
 import logging
 import typing
 import uuid
@@ -377,7 +377,7 @@ class UserInteractionPreempted(Exception):
     pass
 
 
-class UserInteractionPriority(Enum):
+class UserInteractionPriority(IntEnum):
     HIGH = auto()
     NORMAL = auto()
     LOW = auto()
@@ -558,7 +558,7 @@ class TelegramBotApi:
 
     async def _get_user_interaction_queues(self) -> UserInteractionQueues:
         app = await self.get_application()
-        return app.bot_data.setdefault(
+        return app.bot_data.setdefault(  # type: ignore
             USER_INTERACTION_QUEUES, self._get_default_priority_queue()
         ).setdefault(
             self._telegram_user_id,
@@ -568,7 +568,7 @@ class TelegramBotApi:
         self,
     ) -> tuple[UserInteractionPriority, Callable[[], None]] | None:
         app = await self.get_application()
-        return app.bot_data.setdefault(
+        return app.bot_data.setdefault(  # type: ignore
             CURRENT_USER_INTERACTION, {}
         ).setdefault(self._telegram_user_id, None)
 
@@ -632,8 +632,10 @@ class TelegramBotApi:
         event = asyncio.Event()
         (await self._get_user_interaction_queues())[priority].append(event)
         task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("No current task")
 
-        def preempt_callback():
+        def preempt_callback() -> None:
             self._preempted = True
             task.cancel()
 
