@@ -623,7 +623,9 @@ class TelegramBotApi:
         ] = user_interaction
 
     async def _clear_current_user_interaction(self) -> None:
-        self._logger.info(f"Clearing current user interaction {await self._get_current_user_interaction()=}")
+        self._logger.info(
+            f"Clearing current user interaction {await self._get_current_user_interaction()=}"
+        )
         app = await self.get_application()
         app.bot_data[CURRENT_USER_INTERACTION][self._telegram_user_id] = None
 
