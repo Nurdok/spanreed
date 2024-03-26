@@ -404,7 +404,7 @@ class UserInteraction:
         return self.__str__()
 
     def __str__(self) -> str:
-        return f"UserInteraction<{self.task.get_coro().cr_code.co_qualname} @ {self.priority.name}>"
+        return f"UserInteraction<{self.task.get_coro().cr_code.co_qualname} @ {self.priority.name}>"  # type: ignore
 
     def allow_to_run(self) -> None:
         self.event.set()
