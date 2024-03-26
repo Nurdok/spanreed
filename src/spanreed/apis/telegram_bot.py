@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import datetime
 import os
+from enum import auto, IntEnum
 import logging
 import typing
 import uuid
@@ -33,6 +34,8 @@ CALLBACK_EVENTS = "callback-events"
 CALLBACK_EVENT_RESULTS = "callback-event-results"
 PLUGIN_COMMANDS = "plugin-commands"
 USER_INTERACTION_LOCKS = "user-interaction-locks"
+USER_INTERACTION_QUEUES = "user-interaction-queue"
+CURRENT_USER_INTERACTION = "current-user-interaction"
 USER_MESSAGE_CALLBACK_ID = "user-message-callback-id"
 
 
@@ -320,15 +323,18 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                         self._logger.info(f"Adding command {command=}")
                         shown_commands.append(command)
 
-                choice = await bot.request_user_choice(
-                    "Please choose a command to run:",
-                    [command.text for command in shown_commands],
-                )
-                chosen_command = shown_commands[choice]
-                self._logger.info(
-                    f"Running {chosen_command=}: {chosen_command.callback=}"
-                )
-                await chosen_command.callback(user)
+                async with bot.user_interaction(
+                    priority=UserInteractionPriority.HIGH
+                ):
+                    choice = await bot.request_user_choice(
+                        "Please choose a command to run:",
+                        [command.text for command in shown_commands],
+                    )
+                    chosen_command = shown_commands[choice]
+                    self._logger.info(
+                        f"Running {chosen_command=}: {chosen_command.callback=}"
+                    )
+                    await chosen_command.callback(user)
 
         self.create_task(show_command_menu_task())
 
@@ -374,6 +380,47 @@ class UserInteractionPreempted(Exception):
     pass
 
 
+class UserInteractionPriority(IntEnum):
+    HIGH = auto()
+    NORMAL = auto()
+    LOW = auto()
+
+
+class UserInteraction:
+    def __init__(
+        self, user_id: int, priority: UserInteractionPriority
+    ) -> None:
+        self.user_id = user_id
+        self.priority = priority
+        self.event = asyncio.Event()
+        task: asyncio.Task | None = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("No current task")
+        self.task: asyncio.Task = task
+        self.preempted = False
+        self.running = False
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def __str__(self) -> str:
+        return f"UserInteraction<{self.task.get_coro().cr_code.co_qualname} @ {self.priority.name}>"  # type: ignore
+
+    def allow_to_run(self) -> None:
+        self.event.set()
+
+    async def wait_to_run(self) -> None:
+        await self.event.wait()
+        self.running = True
+
+    def preempt(self) -> None:
+        self.preempted = True
+        self.task.cancel()
+
+
+UserInteractionQueues = dict[UserInteractionPriority, list[UserInteraction]]
+
+
 class TelegramBotApi:
     _application: Application
     _application_initialized = asyncio.Event()
@@ -382,6 +429,7 @@ class TelegramBotApi:
         self._logger = logging.getLogger(TelegramBotApi.__name__)
         self._telegram_user_id = telegram_user_id
         self._have_interaction_lock = False
+        self._preempted = False
 
     @classmethod
     async def register_command(
@@ -541,19 +589,137 @@ class TelegramBotApi:
             self._telegram_user_id, asyncio.Lock()
         )
 
+    def _get_default_priority_queue(self) -> UserInteractionQueues:
+        return {prio: [] for prio in UserInteractionPriority}
+
+    async def _get_user_interaction_queues(self) -> UserInteractionQueues:
+        app = await self.get_application()
+        return app.bot_data.setdefault(  # type: ignore
+            USER_INTERACTION_QUEUES, {}
+        ).setdefault(
+            self._telegram_user_id, self._get_default_priority_queue()
+        )
+
+    async def _get_current_user_interaction(self) -> UserInteraction | None:
+        app = await self.get_application()
+        return app.bot_data.setdefault(  # type: ignore
+            CURRENT_USER_INTERACTION, {}
+        ).setdefault(self._telegram_user_id, None)
+
+    async def _set_current_user_interaction(
+        self,
+        user_interaction: UserInteraction,
+    ) -> None:
+        app = await self.get_application()
+        if (
+            app.bot_data.setdefault(CURRENT_USER_INTERACTION, {}).setdefault(
+                self._telegram_user_id, None
+            )
+        ) is not None:
+            raise RuntimeError("User interaction already set")
+
+        app.bot_data[CURRENT_USER_INTERACTION][
+            self._telegram_user_id
+        ] = user_interaction
+
+    async def _clear_current_user_interaction(self) -> None:
+        self._logger.info(
+            f"Clearing current user interaction {await self._get_current_user_interaction()=}"
+        )
+        app = await self.get_application()
+        app.bot_data[CURRENT_USER_INTERACTION][self._telegram_user_id] = None
+
+    async def _try_to_allow_next_user_interaction(self) -> None:
+        self._logger.info("Trying to allow next user interaction")
+        await self._preempt_user_interaction_if_needed()
+        if (await self._get_current_user_interaction()) is not None:
+            return
+
+        interaction_queue: UserInteractionQueues = (
+            await self._get_user_interaction_queues()
+        )
+
+        for priority in UserInteractionPriority:  # high to low
+            if interaction_queue[priority]:
+                user_interaction: UserInteraction = interaction_queue[
+                    priority
+                ].pop(0)
+                self._logger.info(f"Allowing {user_interaction=}")
+                user_interaction.allow_to_run()
+                await self._set_current_user_interaction(user_interaction)
+                return
+
+        self._logger.info("No user interaction to allow")
+
+    async def _preempt_user_interaction_if_needed(self) -> None:
+        self._logger.info("Checking if we need to preempt user interaction")
+        current_interaction: UserInteraction | None = (
+            await self._get_current_user_interaction()
+        )
+        if current_interaction is None:
+            self._logger.info("No current user interaction, so not preempting")
+            return
+
+        user_interaction_queues = await self._get_user_interaction_queues()
+        # TODO: correct order
+        for possible_priority in UserInteractionPriority:  # high to low
+            if (
+                possible_priority >= current_interaction.priority
+                or not user_interaction_queues[possible_priority]
+            ):
+                return
+            self._logger.info(f"Preempting {current_interaction=}")
+            if current_interaction.running:
+                current_interaction.preempt()
+            else:
+                # If this task was preempted before starting to run, re-add it
+                # to the queue instead of cancelling it.
+                await self._add_to_user_interaction_queue(current_interaction)
+            await self._clear_current_user_interaction()
+            return
+
+        self._logger.info(
+            "There are awaiting user interactions, but the current one is higher priority"
+        )
+
+    async def _add_to_user_interaction_queue(
+        self, user_interaction: UserInteraction
+    ) -> None:
+        user_interaction_queues = await self._get_user_interaction_queues()
+        user_interaction_queues[user_interaction.priority].append(
+            user_interaction
+        )
+
     @contextlib.asynccontextmanager
     async def user_interaction(
-        self, propagate_preemption: bool = True
+        self,
+        *,
+        propagate_preemption: bool = True,
+        priority: UserInteractionPriority = UserInteractionPriority.NORMAL,
     ) -> AsyncGenerator[None, None]:
+        user_interaction = UserInteraction(self._telegram_user_id, priority)
+        await self._add_to_user_interaction_queue(user_interaction)
+
+        def log(msg: str) -> None:
+            self._logger.info(msg + f" {user_interaction=}")
+
         # TODO: Need to mark somehow where to return any user input.
-        self._logger.info("Acquiring user interaction lock")
-        async with await self.get_user_interaction_lock():
-            self._logger.info("Acquired user interaction lock")
-            self._have_interaction_lock = True
-            if propagate_preemption:
+        log("Waiting in queue for user interaction")
+        lock: asyncio.Lock = await self.get_user_interaction_lock()
+        await self._try_to_allow_next_user_interaction()
+        # Wait for our turn in the queue.
+        await user_interaction.wait_to_run()
+        log("Got user interaction permission")
+        async with lock:
+            try:
                 yield
-            else:
-                with contextlib.suppress(UserInteractionPreempted):
-                    yield
-        self._have_interaction_lock = False
-        self._logger.info("Released user interaction lock")
+                await self._clear_current_user_interaction()
+            except asyncio.CancelledError:
+                if user_interaction.preempted:
+                    log("User interaction was preempted")
+                    if propagate_preemption:
+                        raise UserInteractionPreempted()
+            finally:
+                log("Yielded user interaction")
+                self._have_interaction_lock = False
+                await self._try_to_allow_next_user_interaction()

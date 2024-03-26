@@ -55,24 +55,23 @@ class TimekillerPlugin(Plugin):
                         != 0
                     ):
                         continue
-                await self._kill_time(user)
+                    await self._kill_time(user)
 
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         choices: list[str] = ["Mood", "Journaling Prompt", "Books", "Cancel"]
-        async with bot.user_interaction():
-            choice: int = await bot.request_user_choice(
-                "What's your poison?", choices
+        choice: int = await bot.request_user_choice(
+            "What's your poison?", choices
+        )
+        if choices[choice] == "Mood":
+            await self._poll_for_metrics(user, bot, obsidian)
+        elif choices[choice] == "Journaling Prompt":
+            await self._journal_prompt(user, bot)
+        elif choices[choice] == "Books":
+            await self.prompt_for_currently_reading_books(
+                user, bot, obsidian
             )
-            if choices[choice] == "Mood":
-                await self._poll_for_metrics(user, bot, obsidian)
-            elif choices[choice] == "Journaling Prompt":
-                await self._journal_prompt(user, bot)
-            elif choices[choice] == "Books":
-                await self.prompt_for_currently_reading_books(
-                    user, bot, obsidian
-                )
 
     async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
         prompts: list[str] = [

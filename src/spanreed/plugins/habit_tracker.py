@@ -5,7 +5,7 @@ from typing import Any
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.apis.telegram_bot import TelegramBotApi, UserInteractionPriority
 from spanreed.apis.obsidian import ObsidianApi
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
@@ -137,27 +137,30 @@ class HabitTrackerPlugin(Plugin):
                         self._logger.info(f"{habit.name} is already done")
                         continue
 
-                    if await self.poll_user(habit, bot):
-                        await obsidian.add_value_to_list_property(
-                            await obsidian.get_daily_note(
-                                config.daily_note_path
-                            ),
-                            config.habit_tracker_property_name,
-                            habit.name,
-                        )
-                        await bot.send_message(f"Awesome! Keep it up!")
-                    else:
-                        await bot.send_message("I'll ask again later")
+                    async with bot.user_interaction(
+                        priority=UserInteractionPriority.LOW,
+                        propagate_preemption=False,
+                    ):
+                        if await self.poll_user(habit, bot):
+                            await obsidian.add_value_to_list_property(
+                                await obsidian.get_daily_note(
+                                    config.daily_note_path
+                                ),
+                                config.habit_tracker_property_name,
+                                habit.name,
+                            )
+                            await bot.send_message(f"Awesome! Keep it up!")
+                        else:
+                            await bot.send_message("I'll ask again later")
 
             self._logger.info("Sleeping for 4 hours")
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
 
     async def poll_user(self, habit: Habit, bot: TelegramBotApi) -> bool:
-        async with bot.user_interaction():
-            self._logger.info(f"Polling user for {habit.name}")
-            prompt = f"Did you {habit.description} today?"
-            if await bot.request_user_choice(prompt, ["Yes", "No"]) == 0:
-                self._logger.info(f"User said yes to {habit.name}")
-                return True
-            self._logger.info(f"User said no to {habit.name}")
-            return False
+        self._logger.info(f"Polling user for {habit.name}")
+        prompt = f"Did you {habit.description} today?"
+        if await bot.request_user_choice(prompt, ["Yes", "No"]) == 0:
+            self._logger.info(f"User said yes to {habit.name}")
+            return True
+        self._logger.info(f"User said no to {habit.name}")
+        return False
