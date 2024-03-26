@@ -328,8 +328,10 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 ):
                     choice = await bot.request_user_choice(
                         "Please choose a command to run:",
-                        [command.text for command in shown_commands],
+                        [command.text for command in shown_commands] + ["Cancel"],
                     )
+                    if choice == len(shown_commands):
+                        return
                     chosen_command = shown_commands[choice]
                     self._logger.info(
                         f"Running {chosen_command=}: {chosen_command.callback=}"
@@ -675,7 +677,6 @@ class TelegramBotApi:
                 # If this task was preempted before starting to run, re-add it
                 # to the queue instead of cancelling it.
                 await self._add_to_user_interaction_queue(current_interaction)
-            await self._clear_current_user_interaction()
             return
 
         self._logger.info(
@@ -713,13 +714,14 @@ class TelegramBotApi:
         async with lock:
             try:
                 yield
-                await self._clear_current_user_interaction()
             except asyncio.CancelledError:
+                user_interaction.task.uncancel()
                 if user_interaction.preempted:
                     log("User interaction was preempted")
                     if propagate_preemption:
                         raise UserInteractionPreempted()
             finally:
+                await self._clear_current_user_interaction()
                 log("Yielded user interaction")
                 self._have_interaction_lock = False
                 await self._try_to_allow_next_user_interaction()
