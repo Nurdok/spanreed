@@ -69,9 +69,7 @@ class TimekillerPlugin(Plugin):
         elif choices[choice] == "Journaling Prompt":
             await self._journal_prompt(user, bot)
         elif choices[choice] == "Books":
-            await self.prompt_for_currently_reading_books(
-                user, bot, obsidian
-            )
+            await self.prompt_for_currently_reading_books(user, bot, obsidian)
 
     async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
         prompts: list[str] = [

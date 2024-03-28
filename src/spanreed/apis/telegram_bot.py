@@ -328,7 +328,8 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 ):
                     choice = await bot.request_user_choice(
                         "Please choose a command to run:",
-                        [command.text for command in shown_commands] + ["Cancel"],
+                        [command.text for command in shown_commands]
+                        + ["Cancel"],
                     )
                     if choice == len(shown_commands):
                         return
@@ -513,9 +514,6 @@ class TelegramBotApi:
         app.bot_data.setdefault(CALLBACK_EVENTS, {})[callback_id] = event
         return callback_id, event
 
-    def get_interaction_timeout(self) -> datetime.timedelta:
-        return datetime.timedelta(minutes=10)
-
     async def request_user_choice(
         self, prompt: str, choices: list[str], *, columns: int = 1
     ) -> int:
@@ -546,17 +544,7 @@ class TelegramBotApi:
 
         # Wait for the user to select a choice.
         self._logger.info(f"Waiting for callback {callback_id} to be done")
-        try:
-            async with asyncio.timeout(
-                self.get_interaction_timeout().total_seconds()
-            ):
-                await callback_event.wait()
-        except asyncio.TimeoutError as e:
-            self._logger.warning("User choice timed out")
-            await app.bot.delete_message(
-                chat_id=self._telegram_user_id, message_id=message.message_id
-            )
-            raise UserInteractionPreempted() from e
+        await callback_event.wait()
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
@@ -572,17 +560,7 @@ class TelegramBotApi:
 
         message: Message = await self.send_message(prompt)
         self._logger.info(f"Waiting for user input")
-        try:
-            async with asyncio.timeout(
-                self.get_interaction_timeout().total_seconds()
-            ):
-                await callback_event.wait()
-        except asyncio.TimeoutError as e:
-            self._logger.warning("User choice timed out")
-            await app.bot.delete_message(
-                chat_id=self._telegram_user_id, message_id=message.message_id
-            )
-            raise UserInteractionPreempted() from e
+        await callback_event.wait()
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
     async def get_user_interaction_lock(self) -> asyncio.Lock:
