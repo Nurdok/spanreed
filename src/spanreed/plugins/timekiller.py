@@ -273,10 +273,10 @@ class TimekillerPlugin(Plugin):
                 )
                 == 0
             ):
-                obsidian_webook: ObsidianWebhookApi = (
+                obsidian_webhook: ObsidianWebhookApi = (
                     await ObsidianWebhookApi.for_user(user)
                 )
-                await obsidian_webook.append_to_note(
+                await obsidian_webhook.append_to_note(
                     book.file["path"],
                     "\n\n### Thoughts\n"
                     + await bot.request_user_input("Go ahead then:"),
