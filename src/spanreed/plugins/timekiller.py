@@ -132,7 +132,11 @@ class TimekillerPlugin(Plugin):
     async def _poll_for_metrics(
         self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
     ) -> None:
-        # TODO: Use ObsidianApi to check if we've already done this today.
+        daily_note: str = await obsidian.get_daily_note("Daily")
+        if await obsidian.get_property(daily_note, "mood") is not None:
+            await bot.send_message("You've already recorded your mood today.")
+            return
+
         mood: int = (
             await bot.request_user_choice(
                 "How would you rate your mood right now?\n"
@@ -192,7 +196,6 @@ class TimekillerPlugin(Plugin):
 
         await obsidian.safe_generate_today_note()
         # TODO: Use ObsidianApi to get the daily note path.
-        daily_note: str = await obsidian.get_daily_note("Daily")
         await obsidian.set_value_of_property(daily_note, "mood", str(mood))
         await obsidian.set_value_of_property(daily_note, "feelings", feelings)
         await bot.send_message("Noted!")
