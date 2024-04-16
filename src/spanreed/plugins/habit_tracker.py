@@ -2,6 +2,7 @@ import asyncio
 import datetime
 from dataclasses import dataclass
 from typing import Any
+from contextlib import suppress
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -129,29 +130,39 @@ class HabitTrackerPlugin(Plugin):
                             f"; expected a list of strings."
                         )
 
-                for habit in config.habits:
-                    self._logger.info(
-                        f"Checking if we need to ask for {habit.name}"
-                    )
-                    if habit.name in done_habits:
-                        self._logger.info(f"{habit.name} is already done")
-                        continue
-
-                    async with bot.user_interaction(
-                        priority=UserInteractionPriority.LOW,
-                        propagate_preemption=False,
+                with suppress(asyncio.TimeoutError):
+                    async with asyncio.timeout(
+                        datetime.timedelta(minutes=60).total_seconds()
                     ):
-                        if await self.poll_user(habit, bot):
-                            await obsidian.add_value_to_list_property(
-                                await obsidian.get_daily_note(
-                                    config.daily_note_path
-                                ),
-                                config.habit_tracker_property_name,
-                                habit.name,
+                        for habit in config.habits:
+                            self._logger.info(
+                                f"Checking if we need to ask for {habit.name}"
                             )
-                            await bot.send_message(f"Awesome! Keep it up!")
-                        else:
-                            await bot.send_message("I'll ask again later")
+                            if habit.name in done_habits:
+                                self._logger.info(
+                                    f"{habit.name} is already done"
+                                )
+                                continue
+
+                            async with bot.user_interaction(
+                                priority=UserInteractionPriority.LOW,
+                                propagate_preemption=False,
+                            ):
+                                if await self.poll_user(habit, bot):
+                                    await obsidian.add_value_to_list_property(
+                                        await obsidian.get_daily_note(
+                                            config.daily_note_path
+                                        ),
+                                        config.habit_tracker_property_name,
+                                        habit.name,
+                                    )
+                                    await bot.send_message(
+                                        f"Awesome! Keep it up!"
+                                    )
+                                else:
+                                    await bot.send_message(
+                                        "I'll ask again later"
+                                    )
 
             self._logger.info("Sleeping for 4 hours")
             await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
