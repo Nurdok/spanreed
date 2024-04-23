@@ -29,32 +29,31 @@ class PluginManagerPlugin(Plugin):
         self._logger.info(f"Managing plugins for user {user.id}")
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
-        async with bot.user_interaction():
-            while True:
-                plugins = await Plugin.get_plugins_for_user(user)
-                if not plugins:
-                    await bot.send_message("You are not using any plugins.")
-                else:
-                    await bot.send_message(
-                        f"You are currently using these plugins,"
-                        f" {user.name}: \n"
-                        + "\n".join(f"- {p.name()}" for p in plugins)
-                    )
-
-                choice = await bot.request_user_choice(
-                    "What would you like to do?",
-                    [
-                        "Register to new plugin",
-                        "Unregister from an existing plugin",
-                        "Cancel",
-                    ],
+        while True:
+            plugins = await Plugin.get_plugins_for_user(user)
+            if not plugins:
+                await bot.send_message("You are not using any plugins.")
+            else:
+                await bot.send_message(
+                    f"You are currently using these plugins,"
+                    f" {user.name}: \n"
+                    + "\n".join(f"- {p.name()}" for p in plugins)
                 )
-                if choice == 0:  # Register to new plugin
-                    await self._register_to_new_plugin(bot, user)
-                elif choice == 1:  # Unregister from an existing plugin
-                    await self._unregister_from_an_existing_plugin(bot, user)
-                elif choice == 2:  # Cancel
-                    break
+
+            choice = await bot.request_user_choice(
+                "What would you like to do?",
+                [
+                    "Register to new plugin",
+                    "Unregister from an existing plugin",
+                    "Cancel",
+                ],
+            )
+            if choice == 0:  # Register to new plugin
+                await self._register_to_new_plugin(bot, user)
+            elif choice == 1:  # Unregister from an existing plugin
+                await self._unregister_from_an_existing_plugin(bot, user)
+            elif choice == 2:  # Cancel
+                break
 
     async def _register_to_new_plugin(
         self, bot: TelegramBotApi, user: User
