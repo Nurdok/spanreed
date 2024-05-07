@@ -87,7 +87,7 @@ class SpanreedMonitorPlugin(Plugin):
                         queue_name,
                     )
                     event = json.loads(event_json)
-                    if event.kind == "error":
+                    if event['kind'] == "error":
                         self._logger.info(
                             f"Obsidian plugin error: {event.error}"
                         )
@@ -95,7 +95,7 @@ class SpanreedMonitorPlugin(Plugin):
                             self.EXCEPTION_QUEUE_NAME,
                             f"Obsidian plugin error: {event.error}",
                         )
-                    elif event.kind == "watchdog":
+                    elif event['kind'] == "watchdog":
                         self._logger.info(
                             "Obsidian plugin watchdog event received."
                         )
