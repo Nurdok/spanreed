@@ -544,7 +544,12 @@ class TelegramBotApi:
 
         # Wait for the user to select a choice.
         self._logger.info(f"Waiting for callback {callback_id} to be done")
-        await callback_event.wait()
+        try:
+            await callback_event.wait()
+        except asyncio.CancelledError:
+            self._logger.info(f"Callback {callback_id} was cancelled")
+            await message.delete()
+            raise
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
@@ -560,7 +565,12 @@ class TelegramBotApi:
 
         message: Message = await self.send_message(prompt)
         self._logger.info(f"Waiting for user input")
-        await callback_event.wait()
+        try:
+            await callback_event.wait()
+        except asyncio.CancelledError:
+            self._logger.info(f"User input was cancelled")
+            await message.delete()
+            raise
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
     async def get_user_interaction_lock(self) -> asyncio.Lock:
