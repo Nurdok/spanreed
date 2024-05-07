@@ -113,7 +113,7 @@ async def suppress_and_log_exception(
         if not any(isinstance(e, exception) for exception in exceptions):
             raise
         exception_str = "".join(
-            traceback.format_exception(type(e), e, None, limit=1)
+            traceback.format_exception(type(e), e, None, limit=3)
         )
         logger.error(f"Suppressed exception: {exception_str}")
         await redis_api.lpush(
