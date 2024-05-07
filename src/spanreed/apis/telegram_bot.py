@@ -548,7 +548,9 @@ class TelegramBotApi:
             await callback_event.wait()
         except asyncio.CancelledError:
             self._logger.info(f"Callback {callback_id} was cancelled")
-            await message.delete()
+            success: bool = await message.delete()
+            if not success:
+                self._logger.error("Failed to delete message")
             raise
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
@@ -569,7 +571,9 @@ class TelegramBotApi:
             await callback_event.wait()
         except asyncio.CancelledError:
             self._logger.info(f"User input was cancelled")
-            await message.delete()
+            success: bool = await message.delete()
+            if not success:
+                self._logger.error("Failed to delete message")
             raise
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
