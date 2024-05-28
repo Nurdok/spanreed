@@ -163,11 +163,13 @@ class HabitTrackerPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         while True:
+            self._logger.info(f"Polling user {user}")
             try:
                 async with bot.user_interaction(
                     priority=UserInteractionPriority.LOW,
                     propagate_preemption=True,
                 ):
+                    self._logger.info("Got user interaction lock")
                     await self.poll_user_for_all_habits(user)
             except UserInteractionPreempted:
                 self._logger.info("User interaction preempted, trying again")

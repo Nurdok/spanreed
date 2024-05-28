@@ -4,8 +4,9 @@ import textwrap
 
 from spanreed import BASE_LOGGER
 from spanreed.plugin import Plugin
-from quart import Quart, websocket
+from quart import Quart, websocket, request
 from spanreed.storage import redis_api
+from spanreed.apis.withings import WithingsApi
 
 
 class WebUiPlugin(Plugin[None]):
@@ -76,6 +77,23 @@ class WebUiPlugin(Plugin[None]):
                 )
                 if message is not None:
                     await websocket.send(message["data"].decode("utf-8"))
+
+        @app.get("/withings-oauth")
+        async def withings_oauth_redirect() -> str:
+            # Extract the code from the query string.
+            code: str | None = request.args.get("code")
+            if code is None:
+                return "No code provided."
+
+            state: str | None = request.args.get("state")
+            if state is None or (spanreed_user_id := int(state)) is None:
+                return "No state provided."
+
+            # Pass the code to the Withings API without blocking the Quart app.
+            await asyncio.create_task(
+                WithingsApi.handle_oauth_redirect(code, state)
+            )
+            return "Authenticated successfully. You can close this tab."
 
         # Start the Quart app.
         await app.run_task(debug=True, host="0.0.0.0", port=5000)
