@@ -59,7 +59,7 @@ class AuthenticationFlow:
             "client_secret": await AuthenticationFlow.get_client_secret(),
             "grant_type": "authorization_code",
             "code": code,
-            "uri": self.get_url(),
+            "redirect_uri": self.REDIRECT_URI,
         }
         logging.info(f"Sending request: {data}")
         response = requests.post(request_token_url, data=data)
