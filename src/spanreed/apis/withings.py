@@ -65,14 +65,15 @@ class AuthenticationFlow:
         response = requests.post(request_token_url, data=data)
         response.raise_for_status()
         self._logger.info(f"Got response: {response.json()}")
+        body = response.json()["b"]
         self._user_config = UserConfig(
-            userid=response.json()["userid"],
-            access_token=response.json()["access_token"],
-            refresh_token=response.json()["refresh_token"],
-            expires_in=response.json()["expires_in"],
-            scope=response.json()["scope"],
-            csrf_token=response.json()["csrf_token"],
-            token_type=response.json()["token_type"],
+            userid=body["userid"],
+            access_token=body["access_token"],
+            refresh_token=body["refresh_token"],
+            expires_in=body["expires_in"],
+            scope=body["scope"],
+            csrf_token=body["csrf_token"],
+            token_type=body["token_type"],
         )
         self._done_event.set()
 
