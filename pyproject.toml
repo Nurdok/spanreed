@@ -16,6 +16,7 @@ aiohttp = "^3.8.4"
 Jinja2 = "*"
 quart = "*"
 pigpio = "^1.78"
+requests = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"

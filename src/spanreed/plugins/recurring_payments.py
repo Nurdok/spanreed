@@ -291,7 +291,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
         self._logger.info("Setting config")
 
         await self.set_config(user, UserConfig(recurring_payments))
-        asyncio.create_task(self.run_for_user(user))
+        await asyncio.create_task(self.run_for_user(user))
 
     @classmethod
     def get_prerequisites(cls) -> list[type[Plugin]]:
@@ -475,8 +475,10 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
         user_config: UserConfig = await self.get_config(user)
         self._logger.info(f"{user_config=}")
 
+        self._logger.info(f"Starting recurring payments for user {user}")
         async with asyncio.TaskGroup() as tg:
             for recurring_payment in user_config.recurring_payments:
                 tg.create_task(
                     self.run_for_single_recurrence(user, recurring_payment)
                 )
+        self._logger.info(f"Unexpected end of recurring payments for user {user}")

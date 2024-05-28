@@ -89,11 +89,11 @@ class SpanreedMonitorPlugin(Plugin):
                     event = json.loads(event_json)
                     if event['kind'] == "error":
                         self._logger.info(
-                            f"Obsidian plugin error: {event.error}"
+                            f"Obsidian plugin error: {event}"
                         )
                         await redis_api.lpush(
                             self.EXCEPTION_QUEUE_NAME,
-                            f"Obsidian plugin error: {event.error}",
+                            f"Obsidian plugin error: {event}",
                         )
                     elif event['kind'] == "watchdog":
                         self._logger.info(
@@ -115,7 +115,7 @@ async def suppress_and_log_exception(
         exception_str = "".join(
             traceback.format_exception(type(e), e, None, limit=3)
         )
-        logger.error(f"Suppressed exception: {exception_str}")
+        logger.exception(f"Suppressed exception")
         await redis_api.lpush(
             SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME, exception_str
         )

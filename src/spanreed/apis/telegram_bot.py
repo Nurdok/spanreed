@@ -94,7 +94,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                         datetime.timedelta(hours=1).total_seconds()
                     )
             except asyncio.CancelledError:
-                self._logger.info("Cancellation received. Stopping updater...")
+                self._logger.exception("Cancellation received. Stopping updater...")
                 await application.updater.stop()
                 self._logger.info("Stopping application...")
                 await application.stop()
@@ -712,6 +712,7 @@ class TelegramBotApi:
                     log("User interaction was preempted")
                     if propagate_preemption:
                         raise UserInteractionPreempted()
+                raise
             finally:
                 await self._clear_current_user_interaction()
                 log("Yielded user interaction")
