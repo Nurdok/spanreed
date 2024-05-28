@@ -22,7 +22,7 @@ class UserConfig:
 
 class AuthenticationFlow:
     CLIENT_ID = "ed9577e2d6a8eb2ddd3223c5d251d210f1a9e3b16975c8f7ab4a9f5a32f6f22b"
-    REDIRECT_URI = "http://spanreed.ink/withings-oauth"
+    REDIRECT_URI = "http://spanreed.ink:5000/withings-oauth"
 
     def __init__(self, user: User):
         self._user = user
@@ -61,9 +61,10 @@ class AuthenticationFlow:
             "code": code,
             "uri": self.get_url(),
         }
+        logging.info(f"Sending request: {data}")
         response = requests.post(request_token_url, data=data)
         response.raise_for_status()
-        self._logger.info(response.json())
+        self._logger.info(f"Got response: {response.json()}")
         self._user_config = UserConfig(
             userid=response.json()["userid"],
             access_token=response.json()["access_token"],
