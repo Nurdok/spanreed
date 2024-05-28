@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 
 from spanreed.storage import redis_api
 from spanreed.user import User
@@ -7,6 +8,7 @@ import contextlib
 import requests
 import logging
 from dataclasses import dataclass
+from enum import IntEnum
 
 
 @dataclass
@@ -20,7 +22,9 @@ class UserConfig:
 
 
 class AuthenticationFlow:
-    CLIENT_ID = "ed9577e2d6a8eb2ddd3223c5d251d210f1a9e3b16975c8f7ab4a9f5a32f6f22b"
+    CLIENT_ID = (
+        "ed9577e2d6a8eb2ddd3223c5d251d210f1a9e3b16975c8f7ab4a9f5a32f6f22b"
+    )
     REDIRECT_URI = "http://spanreed.ink:5000/withings-oauth"
 
     def __init__(self, user: User):
@@ -80,12 +84,48 @@ class AuthenticationFlow:
             raise ValueError("User config not set.")
         return self._user_config
 
+    @staticmethod
+    async def refresh_token(user: User, user_config: UserConfig) -> UserConfig:
+        request_token_url = "https://wbsapi.withings.net/v2/oauth2"
+        data = {
+            "action": "requesttoken",
+            "client_id": AuthenticationFlow.CLIENT_ID,
+            "client_secret": await AuthenticationFlow.get_client_secret(),
+            "grant_type": "refresh_token",
+            "refresh_token": user_config.refresh_token,
+        }
+        logging.info(f"Sending request: {data}")
+        response = requests.post(request_token_url, data=data)
+        response.raise_for_status()
+        logging.info(f"Got response: {response.json()}")
+        body = response.json()["body"]
+
+        user_config = UserConfig(
+            userid=body["userid"],
+            access_token=body["access_token"],
+            refresh_token=body["refresh_token"],
+            expires_in=body["expires_in"],
+            scope=body["scope"],
+            token_type=body["token_type"],
+        )
+
+        from spanreed.plugins.withings import WithingsPlugin
+
+        await WithingsPlugin.set_config(user, user_config)
+        return user_config
+
+
+class MeasurementType(IntEnum):
+    WEIGHT = 1
+    FAT_PERCENTAGE = 6
+    FAT_MASS = 8
+    HEART_PULSE = 11
 
 class WithingsApi:
     authentication_flows: dict[int, AuthenticationFlow] = {}
 
     def __init__(self, user_config: UserConfig):
-        self._api_token = user_config.api_token
+        self._user_config = user_config
         self._logger = logging.getLogger(__name__)
 
     @classmethod
@@ -109,3 +149,45 @@ class WithingsApi:
         user_id: int = int(state)
         flow: AuthenticationFlow = cls.authentication_flows[user_id]
         await flow.authenticate(code)
+
+    async def get_measurements(self) -> dict | None:
+        url = "https://wbsapi.withings.net/measure"
+        headers = {
+            "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
+        }
+        today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        measurement_types = [
+            MeasurementType.WEIGHT,
+            MeasurementType.FAT_PERCENTAGE,
+            MeasurementType.FAT_MASS,
+            MeasurementType.HEART_PULSE,
+        ]
+        data = {
+            "action": "getmeas",
+            "meastypes": ",".join([str(t) for t in measurement_types]),
+            "category": 1,  # 1 = real measurement, 2 = user goal
+            "lastupdate": today.timestamp()
+        }
+        self._logger.info(f"Sending request: {url=} {headers=} {data=}")
+        response = requests.post(url, headers=headers, data=data)
+        response.raise_for_status()
+        self._logger.info(f"Got response: {response.json()}")
+        if response.json()['status'] == 401:
+            self._logger.info("Refreshing token.")
+            self._user_config = await AuthenticationFlow.refresh_token(self._user_config)
+            headers = {
+                "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
+            }
+            response = requests.post(url, headers=headers, data=data)
+        self._logger.info(f"Got response: {response.json()}")
+
+        # TODO: handle multiple measurements
+        result: dict[MeasurementType, float] = {}
+        for measure_group in response.json()["body"]["measuregrps"]:
+            for measure in measure_group["measures"]:
+                result[MeasurementType(int(measure["type"]))] = int(measure["value"]) * 10 ** int(measure["unit"])
+
+        if not result.keys():
+            return None
+        return result
+
