@@ -3,7 +3,6 @@ import datetime
 
 from spanreed.storage import redis_api
 from spanreed.user import User
-import logging
 import contextlib
 import requests
 import logging
@@ -121,10 +120,12 @@ class MeasurementType(IntEnum):
     FAT_MASS = 8
     HEART_PULSE = 11
 
+
 class WithingsApi:
     authentication_flows: dict[int, AuthenticationFlow] = {}
 
-    def __init__(self, user_config: UserConfig):
+    def __init__(self, user: User, user_config: UserConfig):
+        self._user = user
         self._user_config = user_config
         self._logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ class WithingsApi:
     async def for_user(cls, user: User) -> "WithingsApi":
         from spanreed.plugins.withings import WithingsPlugin
 
-        return WithingsApi(await WithingsPlugin.get_config(user))
+        return WithingsApi(user, await WithingsPlugin.get_config(user))
 
     @classmethod
     @contextlib.asynccontextmanager
@@ -155,7 +156,9 @@ class WithingsApi:
         headers = {
             "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
         }
-        today = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = datetime.datetime.now().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         measurement_types = [
             MeasurementType.WEIGHT,
             MeasurementType.FAT_PERCENTAGE,
@@ -166,15 +169,17 @@ class WithingsApi:
             "action": "getmeas",
             "meastypes": ",".join([str(t) for t in measurement_types]),
             "category": 1,  # 1 = real measurement, 2 = user goal
-            "lastupdate": today.timestamp()
+            "lastupdate": today.timestamp(),
         }
         self._logger.info(f"Sending request: {url=} {headers=} {data=}")
         response = requests.post(url, headers=headers, data=data)
         response.raise_for_status()
         self._logger.info(f"Got response: {response.json()}")
-        if response.json()['status'] == 401:
+        if response.json()["status"] == 401:
             self._logger.info("Refreshing token.")
-            self._user_config = await AuthenticationFlow.refresh_token(self._user_config)
+            self._user_config = await AuthenticationFlow.refresh_token(
+                self._user, self._user_config
+            )
             headers = {
                 "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
             }
@@ -185,9 +190,10 @@ class WithingsApi:
         result: dict[MeasurementType, float] = {}
         for measure_group in response.json()["body"]["measuregrps"]:
             for measure in measure_group["measures"]:
-                result[MeasurementType(int(measure["type"]))] = int(measure["value"]) * 10 ** int(measure["unit"])
+                result[MeasurementType(int(measure["type"]))] = int(
+                    measure["value"]
+                ) * 10 ** int(measure["unit"])
 
         if not result.keys():
             return None
         return result
-

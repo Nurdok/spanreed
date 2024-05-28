@@ -28,6 +28,7 @@ mypy = "*"
 types-PyYAML = "*"
 types-redis = "*"
 types-python-dateutil = "*"
+types-requests = "*"
 
 [tool.poetry.group.rpi.dependencies]
 smbus2 = "*"
