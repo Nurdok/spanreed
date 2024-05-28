@@ -65,7 +65,7 @@ class AuthenticationFlow:
         response = requests.post(request_token_url, data=data)
         response.raise_for_status()
         self._logger.info(f"Got response: {response.json()}")
-        body = response.json()["b"]
+        body = response.json()["body"]
         self._user_config = UserConfig(
             userid=body["userid"],
             access_token=body["access_token"],
