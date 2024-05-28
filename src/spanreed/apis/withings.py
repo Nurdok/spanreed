@@ -16,7 +16,6 @@ class UserConfig:
     refresh_token: str
     expires_in: str
     scope: str
-    csrf_token: str
     token_type: str
 
 
@@ -72,7 +71,6 @@ class AuthenticationFlow:
             refresh_token=body["refresh_token"],
             expires_in=body["expires_in"],
             scope=body["scope"],
-            csrf_token=body["csrf_token"],
             token_type=body["token_type"],
         )
         self._done_event.set()
