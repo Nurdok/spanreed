@@ -7,7 +7,12 @@ import yaml
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.telegram_bot import TelegramBotApi
-from spanreed.apis.withings import WithingsApi, UserConfig, MeasurementType
+from spanreed.apis.withings import (
+    WithingsApi,
+    UserConfig,
+    MeasurementType,
+    AuthenticationFlow,
+)
 from spanreed.apis.obsidian import ObsidianApi
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 from dataclasses import dataclass
@@ -32,6 +37,7 @@ class WithingsPlugin(Plugin):
         logging.info("Asking for Withings user config.")
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
+        auth: AuthenticationFlow
         async with WithingsApi.start_authentication(user) as auth:
             auth_done: asyncio.Event = await auth.get_done_event()
 

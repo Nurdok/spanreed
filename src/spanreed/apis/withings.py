@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from typing import AsyncGenerator
 
 from spanreed.storage import redis_api
 from spanreed.user import User
@@ -50,9 +51,15 @@ class AuthenticationFlow:
 
     @staticmethod
     async def get_client_secret() -> str:
-        return await redis_api.get("withings_client_secret")
+        secret: str | None = await redis_api.get("withings_client_secret")
+        if secret is None:
+            raise RuntimeError("Client secret not set.")
+        return secret
 
     async def authenticate(self, code: str) -> None:
+        if self._done_event is None:
+            raise RuntimeError("Done event not set.")
+
         # request token
         request_token_url = "https://wbsapi.withings.net/v2/oauth2"
         data = {
@@ -137,7 +144,7 @@ class WithingsApi:
 
     @classmethod
     @contextlib.asynccontextmanager
-    async def start_authentication(cls, user: User) -> AuthenticationFlow:
+    async def start_authentication(cls, user: User) -> AsyncGenerator[AuthenticationFlow, None]:
         if user.id in cls.authentication_flows:
             raise ValueError("Authentication flow already started.")
         flow = AuthenticationFlow(user)

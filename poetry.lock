@@ -1469,6 +1469,20 @@ cryptography = ">=35.0.0"
 types-pyOpenSSL = "*"
 
 [[package]]
+name = "types-requests"
+version = "2.32.0.20240602"
+description = "Typing stubs for requests"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "types-requests-2.32.0.20240602.tar.gz", hash = "sha256:3f98d7bbd0dd94ebd10ff43a7fbe20c3b8528acace6d8efafef0b6a184793f06"},
+    {file = "types_requests-2.32.0.20240602-py3-none-any.whl", hash = "sha256:ed3946063ea9fbc6b5fc0c44fa279188bae42d582cb63760be6cb4b9d06c3de8"},
+]
+
+[package.dependencies]
+urllib3 = ">=2"
+
+[[package]]
 name = "types-setuptools"
 version = "70.0.0.20240524"
 description = "Typing stubs for setuptools"
@@ -1672,4 +1686,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "03a09cff79ef33cc6080bd51da8c697fda9a0c49eadc3d02921530362002255c"
+content-hash = "9388748686c98147ad3f27b3e1b44aa951738b6e9f6f6be7e5f9bd100cf96533"
