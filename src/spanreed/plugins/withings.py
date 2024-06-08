@@ -52,9 +52,6 @@ class WithingsPlugin(Plugin):
             await bot.send_message("Getting measurements.")
             measurements = await withings.get_measurements()
             if measurements:
-                await bot.send_message(
-                    f"Got measurements: {measurements}", parse_html=False
-                )
                 measurement_type_to_str = {
                     MeasurementType.WEIGHT: "weight",
                     MeasurementType.FAT_PERCENTAGE: "fat-percentage",
@@ -68,5 +65,11 @@ class WithingsPlugin(Plugin):
                         measurement_type_to_str[measurement_type],
                         value,
                     )
+
+                msg = "Measurements: " + "".join(
+                    f"\n\t{measurement_type_to_str[measurement_type]}: {value}"
+                    for measurement_type, value in measurements.items()
+                )
+                await bot.send_message(msg)
 
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
