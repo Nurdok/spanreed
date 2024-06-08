@@ -65,7 +65,7 @@ class WithingsPlugin(Plugin):
                     existing_value: str = await obsidian.get_property(
                         daily_note, measurement_type_to_str[measurement_type]
                     )
-                    if existing_value is None:
+                    if existing_value is not None:
                         continue
 
                     await obsidian.set_value_of_property(
