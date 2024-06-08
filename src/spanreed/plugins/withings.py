@@ -48,28 +48,31 @@ class WithingsPlugin(Plugin):
         withings = await WithingsApi.for_user(user)
         obsidian = await ObsidianApi.for_user(user)
 
+        measurement_type_to_str = {
+            MeasurementType.WEIGHT: "weight",
+            MeasurementType.FAT_PERCENTAGE: "fat-percentage",
+            MeasurementType.FAT_MASS: "fat-mass",
+            MeasurementType.HEART_PULSE: "heart-pulse",
+        }
+
         while True:
-            await bot.send_message("Getting measurements.")
             measurements = await withings.get_measurements()
             if measurements:
-                measurement_type_to_str = {
-                    MeasurementType.WEIGHT: "weight",
-                    MeasurementType.FAT_PERCENTAGE: "fat-percentage",
-                    MeasurementType.FAT_MASS: "fat-mass",
-                    MeasurementType.HEART_PULSE: "heart-pulse",
-                }
+                daily_note: str = await obsidian.get_daily_note("Daily")
 
                 for measurement_type, value in measurements.items():
+                    existing_value: str = await obsidian.get_property(
+                        daily_note, measurement_type_to_str[measurement_type]
+                    )
+                    if existing_value is None:
+                        continue
+
                     await obsidian.set_value_of_property(
-                        await obsidian.get_daily_note("Daily"),
+                        daily_note,
                         measurement_type_to_str[measurement_type],
                         value,
                     )
 
-                msg = "Measurements: " + "".join(
-                    f"\n\t{measurement_type_to_str[measurement_type]}: {value}"
-                    for measurement_type, value in measurements.items()
-                )
-                await bot.send_message(msg)
+                    await bot.send_message(f"Logged {measurement_type_to_str[measurement_type]}: {value}.")
 
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
