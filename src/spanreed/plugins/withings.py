@@ -58,6 +58,7 @@ class WithingsPlugin(Plugin):
         while True:
             measurements = await withings.get_measurements()
             if measurements:
+                await obsidian.safe_generate_today_note()
                 daily_note: str = await obsidian.get_daily_note("Daily")
 
                 for measurement_type, value in measurements.items():
@@ -73,6 +74,8 @@ class WithingsPlugin(Plugin):
                         value,
                     )
 
-                    await bot.send_message(f"Logged {measurement_type_to_str[measurement_type]}: {value}.")
+                    await bot.send_message(
+                        f"Logged {measurement_type_to_str[measurement_type]}: {value}."
+                    )
 
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
