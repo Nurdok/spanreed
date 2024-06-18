@@ -42,7 +42,8 @@ class WithingsPlugin(Plugin):
             auth_done: asyncio.Event = await auth.get_done_event()
 
             await bot.send_message(
-                f"Click [here]({auth.get_url()}) to authenticate with Withings."
+                f"Click [here]({auth.get_url()}) to authenticate with Withings.",
+                parse_markdown=True,
             )
 
             await auth_done.wait()
