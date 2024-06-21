@@ -51,7 +51,8 @@ def load_plugins() -> List[Plugin]:
         WebUiPlugin(),
         SpanreedMonitorPlugin(),
         TimekillerPlugin(),
-        WithingsPlugin(),
+
+        #WithingsPlugin(),
     ]
 
     return core_plugins + optional_plugins

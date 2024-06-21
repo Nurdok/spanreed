@@ -57,21 +57,55 @@ class TimekillerPlugin(Plugin):
                         continue
                     await self._kill_time(user)
 
+    async def get_available_time_killers(
+        self, user: User, obsidian: ObsidianApi
+    ) -> dict:
+        timekillers: dict = {
+            "Journaling Prompt": self._journal_prompt,
+            "Books": self.prompt_for_currently_reading_books,
+        }
+
+        daily_note: str = await obsidian.get_daily_note("Daily")
+        if await obsidian.get_property(daily_note, "mood") is None:
+            timekillers["Mood"] = self._poll_for_metrics
+
+        return timekillers
+
+    async def _kill_time_push(self, user: User) -> None:
+        """Ask the user to kill time without provocation.
+
+        Skips questions about what killtime activity to do to reduce friction.
+        """
+        obsidian: ObsidianApi = await ObsidianApi.for_user(user)
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        while True:
+            timekillers: dict = await self.get_available_time_killers(
+                user, obsidian
+            )
+            if (
+                await bot.request_user_choice(
+                    "Another?", ["Yes", "No"], columns=2
+                )
+            ) == 1:
+                break
+            choice: str = random.choice(list(timekillers.keys()))
+            await timekillers[choice](user, bot, obsidian)
+
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-        choices: list[str] = ["Mood", "Journaling Prompt", "Books", "Cancel"]
+        timekillers: dict = await self.get_available_time_killers(
+            user, obsidian
+        )
+        choices: list[str] = [name for name in timekillers.keys()]
         choice: int = await bot.request_user_choice(
             "What's your poison?", choices
         )
-        if choices[choice] == "Mood":
-            await self._poll_for_metrics(user, bot, obsidian)
-        elif choices[choice] == "Journaling Prompt":
-            await self._journal_prompt(user, bot)
-        elif choices[choice] == "Books":
-            await self.prompt_for_currently_reading_books(user, bot, obsidian)
+        await timekillers[choices[choice]](user, bot, obsidian)
 
-    async def _journal_prompt(self, user: User, bot: TelegramBotApi) -> None:
+    async def _journal_prompt(
+        self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+    ) -> None:
         prompts: list[str] = [
             "What are you doing right now?",
             "What are you grateful for today?",
@@ -137,15 +171,18 @@ class TimekillerPlugin(Plugin):
             await bot.send_message("You've already recorded your mood today.")
             return
 
-        mood: int = (
-            await bot.request_user_choice(
-                "How would you rate your mood right now?\n"
-                " (1 - negative, 5 - positive)",
-                ["1", "2", "3", "4", "5"],
-                columns=5,
-            )
-            + 1
+        mood_choices = ["1", "2", "3", "4", "5", "Cancel"]
+        mood_choice: int = await bot.request_user_choice(
+            "How would you rate your mood right now?\n"
+            " (1 - negative, 5 - positive)",
+            mood_choices,
+            columns=5,
         )
+
+        if mood_choice == len(mood_choices) - 1:
+            return
+
+        mood: int = mood_choice + 1
 
         possible_feelings: list[str] = [
             "happy",
@@ -185,14 +222,14 @@ class TimekillerPlugin(Plugin):
         feelings: list[str] = []
 
         while True:
-            choice: int = await bot.request_user_choice(
+            feeling_choice: int = await bot.request_user_choice(
                 "What are you feeling right now?",
                 possible_feelings + ["Done"],
                 columns=3,
             )
-            if choice == len(possible_feelings):
+            if feeling_choice == len(possible_feelings):
                 break
-            feelings.append(possible_feelings[choice])
+            feelings.append(possible_feelings[feeling_choice])
 
         await obsidian.safe_generate_today_note()
         # TODO: Use ObsidianApi to get the daily note path.
@@ -214,13 +251,13 @@ class TimekillerPlugin(Plugin):
             return
 
         for book in books:
-            if (
-                await bot.request_user_choice(
-                    f'Are you still reading "{book.title}"?',
-                    ["Yes", "No"],
-                )
-                == 1
-            ):
+            choice = await bot.request_user_choice(
+                f'Are you still reading "{book.title}"?',
+                ["Yes", "No", "Cancel"],
+            )
+            if choice == 2:
+                return
+            if choice == 1:
                 mark_as_finished: bool = False
                 finished_choice = await bot.request_user_choice(
                     "Why?",
