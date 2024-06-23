@@ -47,15 +47,7 @@ class TimekillerPlugin(Plugin):
                 TimeoutError, UserInteractionPreempted
             ):
                 async with bot.user_interaction():
-                    if (
-                        await bot.request_user_choice(
-                            "Got some time to kill?",
-                            ["Yes", "No"],
-                        )
-                        != 0
-                    ):
-                        continue
-                    await self._kill_time(user)
+                    await self._kill_time_push(user)
 
     async def get_available_time_killers(
         self, user: User, obsidian: ObsidianApi
