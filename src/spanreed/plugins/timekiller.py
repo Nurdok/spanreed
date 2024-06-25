@@ -36,11 +36,11 @@ class TimekillerPlugin(Plugin):
         while True:
             await asyncio.sleep(
                 datetime.timedelta(
-                    hours=random.randrange(3, 7)
+                    hours=random.randrange(1, 3)
                 ).total_seconds()
             )
             now: datetime.datetime = datetime.datetime.now()
-            if now.hour < 9 or now.hour > 22:
+            if now.hour < 7 or now.hour > 22:
                 continue
 
             async with suppress_and_log_exception(
@@ -74,14 +74,14 @@ class TimekillerPlugin(Plugin):
             timekillers: dict = await self.get_available_time_killers(
                 user, obsidian
             )
-            if (
-                await bot.request_user_choice(
-                    "Another?", ["Yes", "No"], columns=2
-                )
-            ) == 1:
-                break
             choice: str = random.choice(list(timekillers.keys()))
             await timekillers[choice](user, bot, obsidian)
+            if (
+                    await bot.request_user_choice(
+                        "Another?", ["Yes", "No"], columns=2
+                    )
+            ) == 1:
+                break
 
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
