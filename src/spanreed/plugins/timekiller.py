@@ -34,20 +34,18 @@ class TimekillerPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         while True:
+            now: datetime.datetime = datetime.datetime.now()
+            if now.hour > 7 or now.hour < 22:
+                async with suppress_and_log_exception(
+                    TimeoutError, UserInteractionPreempted
+                ):
+                    async with bot.user_interaction():
+                        await self._kill_time_push(user)
             await asyncio.sleep(
                 datetime.timedelta(
                     hours=random.randrange(1, 3)
                 ).total_seconds()
             )
-            now: datetime.datetime = datetime.datetime.now()
-            if now.hour < 7 or now.hour > 22:
-                continue
-
-            async with suppress_and_log_exception(
-                TimeoutError, UserInteractionPreempted
-            ):
-                async with bot.user_interaction():
-                    await self._kill_time_push(user)
 
     async def get_available_time_killers(
         self, user: User, obsidian: ObsidianApi
