@@ -94,7 +94,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                         datetime.timedelta(hours=1).total_seconds()
                     )
             except asyncio.CancelledError:
-                self._logger.exception("Cancellation received. Stopping updater...")
+                self._logger.exception(
+                    "Cancellation received. Stopping updater..."
+                )
                 await application.updater.stop()
                 self._logger.info("Stopping application...")
                 await application.stop()
@@ -407,7 +409,7 @@ class UserInteraction:
         return self.__str__()
 
     def __str__(self) -> str:
-        return f"UserInteraction<{self.task.get_coro().cr_code.co_qualname} @ {self.priority.name}>"  # type: ignore
+        return f"UserInteraction<{self.task.get_coro().cr_code.co_qualname} @ {self.priority.name}>"
 
     def allow_to_run(self) -> None:
         self.event.set()
@@ -543,17 +545,12 @@ class TelegramBotApi:
         )
 
         # Wait for the user to select a choice.
-        self._logger.info(f"Waiting for callback {callback_id} to be done")
-        try:
-            await callback_event.wait()
-        except asyncio.CancelledError:
-            self._logger.info(f"Callback {callback_id} was cancelled")
-            success: bool = await message.delete()
-            if not success:
-                self._logger.error("Failed to delete message")
-            raise
-        self._logger.info(f"Callback {callback_id} done")
-        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
+        interaction_result: int | str = await self.wait_for_user_interaction(
+            callback_id, callback_event, message
+        )
+        if not isinstance(interaction_result, int):
+            raise ValueError("Expected integer from user")
+        return interaction_result
 
     async def request_user_input(self, prompt: str) -> str:
         app: Application = await self.get_application()
@@ -566,15 +563,44 @@ class TelegramBotApi:
         ] = callback_id
 
         message: Message = await self.send_message(prompt)
-        self._logger.info(f"Waiting for user input")
+        interaction_result: int | str = await self.wait_for_user_interaction(
+            callback_id, callback_event, message
+        )
+        if not isinstance(interaction_result, str):
+            raise ValueError("Expected string from user")
+        return interaction_result
+
+    async def wait_for_user_interaction(
+        self, callback_id: int, callback_event: asyncio.Event, message: Message
+    ) -> int | str:
+        app: Application = await self.get_application()
+
+        # Wait for the user to select a choice.
+        self._logger.info(f"Waiting for callback {callback_id} to be done")
         try:
-            await callback_event.wait()
+            while True:
+                try:
+                    async with asyncio.timeout(
+                        datetime.timedelta(minutes=30).total_seconds()
+                    ):
+                        await callback_event.wait()
+                        break
+                except asyncio.TimeoutError:
+                    queues = await self._get_user_interaction_queues()
+                    pending_interactions: int = sum(
+                        len(queue) for queue in queues.values()
+                    )
+                    await self.send_message(
+                        f"You have ${pending_interactions} pending interactions."
+                    )
+
         except asyncio.CancelledError:
-            self._logger.info(f"User input was cancelled")
+            self._logger.info(f"Callback {callback_id} was cancelled")
             success: bool = await message.delete()
             if not success:
                 self._logger.error("Failed to delete message")
             raise
+        self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
     async def get_user_interaction_lock(self) -> asyncio.Lock:
