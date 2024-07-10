@@ -591,7 +591,7 @@ class TelegramBotApi:
                         len(queue) for queue in queues.values()
                     )
                     await self.send_message(
-                        f"You have ${pending_interactions} pending interactions."
+                        f"You have {pending_interactions + 1} pending interactions."
                     )
 
         except asyncio.CancelledError:
