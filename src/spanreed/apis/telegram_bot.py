@@ -577,6 +577,7 @@ class TelegramBotApi:
 
         # Wait for the user to select a choice.
         self._logger.info(f"Waiting for callback {callback_id} to be done")
+        pending_message: Message | None = None
         try:
             while True:
                 try:
@@ -590,7 +591,9 @@ class TelegramBotApi:
                     pending_interactions: int = sum(
                         len(queue) for queue in queues.values()
                     )
-                    await self.send_message(
+                    if pending_message is not None:
+                        await pending_message.delete()
+                    pending_message = await self.send_message(
                         f"You have {pending_interactions + 1} pending interactions."
                     )
 
@@ -600,6 +603,8 @@ class TelegramBotApi:
             if not success:
                 self._logger.error("Failed to delete message")
             raise
+        if pending_message is not None:
+            await pending_message.delete()
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
