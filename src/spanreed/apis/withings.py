@@ -10,6 +10,8 @@ import logging
 from dataclasses import dataclass
 from enum import IntEnum
 
+from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
+
 
 @dataclass
 class UserConfig:
@@ -102,8 +104,11 @@ class AuthenticationFlow:
         }
         logging.info(f"Sending request: {data}")
         response = requests.post(request_token_url, data=data)
-        response.raise_for_status()
         logging.info(f"Got response: {response.json()}")
+        response.raise_for_status()
+        status = response.json()["status"]
+        if status < 200 or status >= 300:
+            raise requests.exceptions.HTTPError("Token refresh failed.")
         body = response.json()["body"]
 
         user_config = UserConfig(
@@ -184,9 +189,13 @@ class WithingsApi:
         self._logger.info(f"Got response: {response.json()}")
         if response.json()["status"] == 401:
             self._logger.info("Refreshing token.")
-            self._user_config = await AuthenticationFlow.refresh_token(
-                self._user, self._user_config
-            )
+            async with suppress_and_log_exception(requests.exceptions.HTTPError) as did_suppress:
+                self._user_config = await AuthenticationFlow.refresh_token(
+                    self._user, self._user_config
+                )
+            if did_suppress:
+                self._logger.info("Token refresh failed.")
+                return None
             headers = {
                 "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
             }

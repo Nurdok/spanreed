@@ -64,7 +64,7 @@ class SpanreedMonitorPlugin(Plugin):
                 "Obsidian plugin not enabled for user, skipping monitoring. "
                 f"User: {user.id}, users: {user_ids}"
             )
-            
+
             return
 
         queue_name = f"{self.OBSIDIAN_PLUGIN_MONITOR_QUEUE_NAME}:{user.id}"
@@ -87,31 +87,47 @@ class SpanreedMonitorPlugin(Plugin):
                         queue_name,
                     )
                     event = json.loads(event_json)
-                    if event['kind'] == "error":
-                        self._logger.info(
-                            f"Obsidian plugin error: {event}"
-                        )
+                    if event["kind"] == "error":
+                        self._logger.info(f"Obsidian plugin error: {event}")
                         await redis_api.lpush(
                             self.EXCEPTION_QUEUE_NAME,
                             f"Obsidian plugin error: {event}",
                         )
-                    elif event['kind'] == "watchdog":
+                    elif event["kind"] == "watchdog":
                         self._logger.info(
                             "Obsidian plugin watchdog event received."
                         )
                         last_watchdog = datetime.datetime.now()
 
 
+class BoolValue:
+    def __init__(self) -> None:
+        self.value: bool | None = None
+
+    def set(self, value: bool) -> None:
+        if self.value is not None:
+            raise RuntimeError("Value already set.")
+        self.value = value
+
+    def __bool__(self) -> bool:
+        if self.value is None:
+            raise RuntimeError("Value not set.")
+        return self.value
+
+
 @asynccontextmanager
 async def suppress_and_log_exception(
     *exceptions: type[BaseException],
-) -> AsyncGenerator[None, None]:
+) -> AsyncGenerator[BoolValue, None]:
     logger = logging.getLogger(__name__)
+    did_suppress = BoolValue()
     try:
-        yield
+        yield did_suppress
     except Exception as e:
         if not any(isinstance(e, exception) for exception in exceptions):
+            did_suppress.set(False)
             raise
+        did_suppress.set(True)
         exception_str = "".join(
             traceback.format_exception(type(e), e, None, limit=3)
         )
@@ -119,3 +135,5 @@ async def suppress_and_log_exception(
         await redis_api.lpush(
             SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME, exception_str
         )
+    else:
+        did_suppress.set(False)

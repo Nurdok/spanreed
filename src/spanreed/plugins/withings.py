@@ -15,7 +15,6 @@ from spanreed.apis.withings import (
 )
 from spanreed.apis.obsidian import ObsidianApi
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
-from dataclasses import dataclass
 import logging
 
 
