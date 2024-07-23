@@ -52,8 +52,19 @@ class TimekillerPlugin(Plugin):
     ) -> dict:
         timekillers: dict = {
             "Journaling Prompt": self._journal_prompt,
-            "Books": self.prompt_for_currently_reading_books,
         }
+
+        last_asked_str: str | None = await self.get_user_data(
+            user, "currently-reading-books-last-asked"
+        )
+        if last_asked_str is not None:
+            last_asked: datetime.datetime = datetime.datetime.fromisoformat(
+                last_asked_str
+            )
+            if datetime.datetime.now() - last_asked > datetime.timedelta(
+                days=3
+            ):
+                timekillers["Books"] = self.prompt_for_currently_reading_books
 
         daily_note: str = await obsidian.get_daily_note("Daily")
         if await obsidian.get_property(daily_note, "mood") is None:
@@ -75,9 +86,9 @@ class TimekillerPlugin(Plugin):
             choice: str = random.choice(list(timekillers.keys()))
             await timekillers[choice](user, bot, obsidian)
             if (
-                    await bot.request_user_choice(
-                        "Another?", ["Yes", "No"], columns=2
-                    )
+                await bot.request_user_choice(
+                    "Another?", ["Yes", "No"], columns=2
+                )
             ) == 1:
                 break
 
@@ -116,7 +127,6 @@ class TimekillerPlugin(Plugin):
             "What did you do for physical health today?",
             "What did you do for mental health today?",
             "What did you do today for fun?",
-            "What book are you currently reading?",
             "What are you currently watching?",
             "What are you currently listening to?",
             "What is your favorite song right now?",

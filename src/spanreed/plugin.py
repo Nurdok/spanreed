@@ -84,6 +84,18 @@ class Plugin(abc.ABC, Generic[UC]):
             json.dumps(asdict(config)),  # type: ignore
         )
 
+    @classmethod
+    def _get_user_data_key(cls, user: User, key: str) -> str:
+        return f"plugin-data:plugin:name={cls.canonical_name()}:user_id={user.id}:{key}"
+
+    @classmethod
+    async def set_user_data(cls, user: User, key: str, data: str) -> None:
+        await redis_api.set(cls._get_user_data_key(user, key), data)
+
+    @classmethod
+    async def get_user_data(cls, user: User, key: str) -> Optional[str]:
+        return await redis_api.get(cls._get_user_data_key(user, key))
+
     async def get_users(self) -> list[User]:
         self._logger.info(f"Getting users for plugin {self.canonical_name()}")
         self._logger.info(f"Getting user list key {self._get_user_list_key()}")
