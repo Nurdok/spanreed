@@ -475,6 +475,15 @@ class TelegramBotApi:
         cls._application = application
         cls._application_initialized.set()
 
+    async def send_document(self, file_name: str, data: bytes) -> Message:
+        app: Application = await self.get_application()
+        return cast(
+            Message,
+            await app.bot.send_document(
+                chat_id=self._telegram_user_id, document=data, filename=file_name
+            ),
+        )
+
     async def send_message(
         self,
         text: str,

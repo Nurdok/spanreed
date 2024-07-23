@@ -1,6 +1,9 @@
+import re
 import asyncio
+import pathlib
 import random
 import datetime
+import textwrap
 
 from spanreed.apis.telegram_bot import (
     TelegramBotApi,
@@ -52,6 +55,7 @@ class TimekillerPlugin(Plugin):
     ) -> dict:
         timekillers: dict = {
             "Journaling Prompt": self._journal_prompt,
+            "Scan Processing": self.prompt_for_scan_processing,
         }
 
         last_asked_str: str | None = await self.get_user_data(
@@ -321,3 +325,25 @@ class TimekillerPlugin(Plugin):
                     "\n\n### Thoughts\n"
                     + await bot.request_user_input("Go ahead then:"),
                 )
+
+    async def prompt_for_scan_processing(
+        self, _user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+    ) -> None:
+        pattern = re.compile(r"\d{4}-\d{2}-\d{2} Scan")
+        scans = [pathlib.PurePosixPath(path) for path in await obsidian.list_dir("Assets/scans")]
+        unprocessed_scans = [
+            scan for scan in scans
+            if pattern.search(scan.name) is not None
+        ]
+        unprocessed_pdfs = [
+            scan for scan in unprocessed_scans
+            if scan.suffix == ".pdf"
+        ]
+        if not unprocessed_pdfs:
+            return
+        pdf_file = unprocessed_pdfs[0]
+        pdf_bytes: bytes = await obsidian.read_binary_file(str(pdf_file))
+        await bot.send_document(pdf_file.name, pdf_bytes)
+        
+        
+

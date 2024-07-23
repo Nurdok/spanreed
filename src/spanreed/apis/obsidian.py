@@ -4,6 +4,7 @@ import json
 import asyncio
 import datetime
 import dataclasses
+import base64
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -185,3 +186,13 @@ class ObsidianApi:
                 for values in query_result["values"]
             ]
         return query_result
+
+    async def list_dir(self, dirpath: str) -> list[str]:
+        return await self._send_request("list-dir", {"dirpath": dirpath})
+
+    async def read_file(self, filepath: str) -> str:
+        return await self._send_request("read-file", {"filepath": filepath, "format": "text"})
+
+    async def read_binary_file(self, filepath: str) -> bytes:
+        content_base64: str = (await self._send_request("read-file", {"filepath": filepath, "format": "binary"}))["content"]
+        return base64.b64decode(content_base64)
