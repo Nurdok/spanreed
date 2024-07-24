@@ -107,7 +107,7 @@ class AuthenticationFlow:
         logging.info(f"Got response: {response.json()}")
         response.raise_for_status()
         status = response.json()["status"]
-        if status != 0 and *status < 200 or status >= 300):
+        if status != 0 and (status < 200 or status >= 300):
             raise requests.exceptions.HTTPError("Token refresh failed.")
         body = response.json()["body"]
 
