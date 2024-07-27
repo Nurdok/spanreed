@@ -1,4 +1,5 @@
 import logging
+import typing
 import uuid
 import json
 import asyncio
@@ -166,14 +167,14 @@ class ObsidianApi:
             return filename
         return f"{daily_note_path}/{filename}"
 
-    async def query_dataview(self, query: str) -> list[Any]:
+    async def query_dataview(self, query: str) -> list[Any] | Any:
         query_result = await self._send_request(
             "query-dataview", {"query": query}
         )
         self._logger.info(f"Got query result: {query_result=}")
         result_type = query_result.get("type", None)
         if result_type == "list":
-            return query_result["values"]
+            return typing.cast(list[Any], query_result["values"])
         if result_type == "table":
             return [
                 dataclasses.make_dataclass(
@@ -188,11 +189,28 @@ class ObsidianApi:
         return query_result
 
     async def list_dir(self, dirpath: str) -> list[str]:
-        return await self._send_request("list-dir", {"dirpath": dirpath})
+        return typing.cast(
+            list[str],
+            await self._send_request("list-dir", {"dirpath": dirpath}),
+        )
 
     async def read_file(self, filepath: str) -> str:
-        return await self._send_request("read-file", {"filepath": filepath, "format": "text"})
+        return typing.cast(
+            str,
+            await self._send_request(
+                "read-file", {"filepath": filepath, "format": "text"}
+            ),
+        )
 
     async def read_binary_file(self, filepath: str) -> bytes:
-        content_base64: str = (await self._send_request("read-file", {"filepath": filepath, "format": "binary"}))["content"]
+        content_base64: str = (
+            await self._send_request(
+                "read-file", {"filepath": filepath, "format": "binary"}
+            )
+        )["content"]
         return base64.b64decode(content_base64)
+
+    async def move_file(self, from_path: str, to_path: str) -> None:
+        await self._send_request(
+            "move-file", {"from": from_path, "to": to_path}
+        )
