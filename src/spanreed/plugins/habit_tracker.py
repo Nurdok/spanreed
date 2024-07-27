@@ -151,12 +151,22 @@ class HabitTrackerPlugin(Plugin):
         self._logger.info(f"Running periodic check for user {user}")
         async with suppress_and_log_exception(TimeoutError):
             habits: list[Habit] = await self.get_habits_to_poll(user)
-            for habit in habits:
-                if await self.poll_user_for_habit(habit, bot):
-                    await self.mark_habit_as_done(user, habit.name)
-                    await bot.send_message(f"Awesome! Keep it up!")
-                else:
-                    await bot.send_message("I'll ask again later")
+            if not habits:
+                return
+
+            while habits:
+                choices: list[str] = [habit.name.capitalize() for habit in habits] + [
+                    "Cancel"
+                ]
+                choice: int = await bot.request_user_choice(
+                    "Did you do any of these habits today?", choices, columns=min(5, len(habits))
+
+                )
+                if choice == len(habits):
+                    return
+                habit: Habit = habits[choice]
+                await self.mark_habit_as_done(user, habit.name)
+                habits.remove(habit)
 
     async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Running for user {user}")
@@ -175,15 +185,6 @@ class HabitTrackerPlugin(Plugin):
                 self._logger.info("User interaction preempted, trying again")
             else:
                 self._logger.info("Sleeping for 4 hours")
-                await asyncio.sleep(datetime.timedelta(hours=4).total_seconds())
-
-    async def poll_user_for_habit(
-        self, habit: Habit, bot: TelegramBotApi
-    ) -> bool:
-        self._logger.info(f"Polling user for {habit.name}")
-        prompt = f"Did you {habit.description} today?"
-        if await bot.request_user_choice(prompt, ["Yes", "No"]) == 0:
-            self._logger.info(f"User said yes to {habit.name}")
-            return True
-        self._logger.info(f"User said no to {habit.name}")
-        return False
+                await asyncio.sleep(
+                    datetime.timedelta(hours=4).total_seconds()
+                )
