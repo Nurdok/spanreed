@@ -7,6 +7,7 @@ from contextlib import suppress
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.telegram_bot import (
+    PluginCommand,
     TelegramBotApi,
     UserInteractionPriority,
     UserInteractionPreempted,
@@ -35,6 +36,18 @@ class UserConfig:
 
 
 class HabitTrackerPlugin(Plugin):
+
+    async def run(self) -> None:
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Track Habits",
+                callback=self.poll_user_for_all_habits,
+            ),
+        )
+
+        await super().run()
+
     @classmethod
     def name(cls) -> str:
         return "Habit Tracker"
