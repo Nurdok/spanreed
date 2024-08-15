@@ -32,7 +32,7 @@ class SpanreedMonitorPlugin(Plugin):
     async def _monitor_exceptions(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         await bot.send_message("Spanreed is starting up.")
-
+        
         interval: datetime.timedelta = datetime.timedelta(days=1, hours=6)
 
         try:
@@ -50,6 +50,7 @@ class SpanreedMonitorPlugin(Plugin):
                                 parse_markdown=True,
                             )
                         await bot.send_message("Spanreed is still running.")
+                        await redis_api.del(self.EXCEPTION_QUEUE_NAME)
         except asyncio.CancelledError:
             self._logger.info("Spanreed Monitor cancelled.")
             await bot.send_message("Spanreed is shutting down.")
