@@ -50,7 +50,7 @@ class SpanreedMonitorPlugin(Plugin):
                                 parse_markdown=True,
                             )
                         await bot.send_message("Spanreed is still running.")
-                        await redis_api.del(self.EXCEPTION_QUEUE_NAME)
+                        await redis_api.delete(self.EXCEPTION_QUEUE_NAME)
         except asyncio.CancelledError:
             self._logger.info("Spanreed Monitor cancelled.")
             await bot.send_message("Spanreed is shutting down.")
