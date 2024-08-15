@@ -71,13 +71,19 @@ class SpanreedMonitorPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         base_timeout = datetime.timedelta(minutes=1)
         last_watchdog = datetime.datetime.now()
+        last_watchdog_message = datetime.datetime.now()
+        last_obsidian_error_message = datetime.datetime.now()
 
         while True:
             self._logger.info("Waiting for Obsidian plugin events.")
             timeout: datetime.timedelta = base_timeout
             time_since_last_watchdog = datetime.datetime.now() - last_watchdog
-            if time_since_last_watchdog > base_timeout:
+            time_since_last_watchdog_message = (
+                datetime.datetime.now() - last_watchdog_message
+            )
+            if time_since_last_watchdog > base_timeout and time_since_last_watchdog_message > datetime.timedelta(minutes=30):
                 await bot.send_message("Obsidian plugin watchdog timeout.")
+                last_watchdog_message = datetime.datetime.now()
             else:
                 timeout -= time_since_last_watchdog
 
@@ -89,10 +95,15 @@ class SpanreedMonitorPlugin(Plugin):
                     event = json.loads(event_json)
                     if event["kind"] == "error":
                         self._logger.info(f"Obsidian plugin error: {event}")
-                        await redis_api.lpush(
-                            self.EXCEPTION_QUEUE_NAME,
-                            f"Obsidian plugin error: {event}",
+                        time_since_last_obsidian_error_message = (
+                            datetime.datetime.now() - last_obsidian_error_message
                         )
+                        if time_since_last_obsidian_error_message > datetime.timedelta(minutes=30):
+                            await redis_api.lpush(
+                                self.EXCEPTION_QUEUE_NAME,
+                                f"Obsidian plugin error: {event}",
+                            )
+                            last_obsidian_error_message = datetime.datetime.now()
                     elif event["kind"] == "watchdog":
                         self._logger.info(
                             "Obsidian plugin watchdog event received."
