@@ -380,8 +380,14 @@ class TimekillerPlugin(Plugin):
                 try:
                     await obsidian.move_file(str(pdf_file), str(new_path))
                 except FileExistsError:
-                    await bot.send_message(f"File {new_path.name} already exists.")
-                    if (await bot.request_user_choice("Do you want to enter a new name?", ["Yes", "No"])) == 1:
+                    await bot.send_message(
+                        f'File "{new_path.name}" already exists.'
+                    )
+                    if (
+                        await bot.request_user_choice(
+                            "Do you want to enter a new name?", ["Yes", "No"]
+                        )
+                    ) == 1:
                         return
                 else:
                     await bot.send_message("Moved!")
