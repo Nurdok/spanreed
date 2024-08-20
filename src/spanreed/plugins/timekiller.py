@@ -350,30 +350,39 @@ class TimekillerPlugin(Plugin):
         await bot.send_document(pdf_file.name, pdf_bytes)
         existing_date = pdf_file.stem[:10]
         new_date: str = ""
-        date_choice = await bot.request_user_choice(
-            f"Is the existing date ({existing_date}) okay?",
-            ["Yes (keep)", "No (change)", "Cancel"],
-            columns=2,
-        )
-        if date_choice == 2:
-            return
-        if date_choice == 1:
-            while iso8601_date_pattern.match(new_date) is None:
-                new_date = await bot.request_user_input(
-                    "Enter a date (in ISO-8601 format, YYYY-MM-DD) for the scan:"
-                )
-        new_name: str = await bot.request_user_input(
-            "Enter a new name for the scan:"
-        )
-        new_path = pathlib.PurePosixPath(
-            f"Assets/scans/{new_date or existing_date} {new_name}.pdf"
-        )
-        if (
-            await bot.request_user_choice(
-                f"Rename {pdf_file.name} to {new_path.name}?",
-                ["Yes", "No"],
+        # Some errors will require doing the whole interaction again
+        while True:
+            date_choice = await bot.request_user_choice(
+                f"Is the existing date ({existing_date}) okay?",
+                ["Yes (keep)", "No (change)", "Cancel"],
+                columns=2,
             )
-            == 0
-        ):
-            await obsidian.move_file(str(pdf_file), str(new_path))
-            await bot.send_message("Moved!")
+            if date_choice == 2:
+                return
+            if date_choice == 1:
+                while iso8601_date_pattern.match(new_date) is None:
+                    new_date = await bot.request_user_input(
+                        "Enter a date (in ISO-8601 format, YYYY-MM-DD) for the scan:"
+                    )
+            new_name: str = await bot.request_user_input(
+                "Enter a new name for the scan:"
+            )
+            new_path = pathlib.PurePosixPath(
+                f"Assets/scans/{new_date or existing_date} {new_name}.pdf"
+            )
+            if (
+                await bot.request_user_choice(
+                    f"Rename {pdf_file.name} to {new_path.name}?",
+                    ["Yes", "No"],
+                )
+                == 0
+            ):
+                try:
+                    await obsidian.move_file(str(pdf_file), str(new_path))
+                except FileExistsError:
+                    await bot.send_message(f"File {new_path.name} already exists.")
+                    if (await bot.request_user_choice("Do you want to enter a new name?", ["Yes", "No"])) == 1:
+                        return
+                else:
+                    await bot.send_message("Moved!")
+                    return

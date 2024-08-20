@@ -88,6 +88,8 @@ class ObsidianApi:
             await bot.send_message(str(response))
             if response["result"] == "file not found":
                 raise FileNotFoundError(msg)
+            if "Destination file already exists" in response["result"]:
+                raise FileExistsError(msg)
             raise RuntimeError(msg)
 
         return response.get("result", None)
