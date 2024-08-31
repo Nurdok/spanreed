@@ -85,6 +85,7 @@ class SpanreedMonitorPlugin(Plugin):
             if time_since_last_watchdog > base_timeout and time_since_last_watchdog_message > datetime.timedelta(minutes=30):
                 await bot.send_message("Obsidian plugin watchdog timeout.")
                 last_watchdog_message = datetime.datetime.now()
+                timeout = base_timeout
             else:
                 timeout -= time_since_last_watchdog
 
