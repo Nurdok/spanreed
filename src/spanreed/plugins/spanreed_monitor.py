@@ -19,6 +19,9 @@ from spanreed.storage import redis_api
 class SpanreedMonitorPlugin(Plugin):
     EXCEPTION_QUEUE_NAME = "spanreed-monitor-exceptions"
     OBSIDIAN_PLUGIN_MONITOR_QUEUE_NAME = "obsidian-plugin-monitor"
+    OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST = [
+        "read ECONNRESET",
+    ]
 
     @classmethod
     def name(cls) -> str:
@@ -101,6 +104,8 @@ class SpanreedMonitorPlugin(Plugin):
                     event = json.loads(event_json)
                     if event["kind"] == "error":
                         self._logger.info(f"Obsidian plugin error: {event}")
+                        if event["message"] in OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST:
+                            continue
                         time_since_last_obsidian_error_message = (
                             datetime.datetime.now()
                             - last_obsidian_error_message
