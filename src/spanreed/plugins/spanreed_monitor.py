@@ -104,7 +104,7 @@ class SpanreedMonitorPlugin(Plugin):
                     event = json.loads(event_json)
                     if event["kind"] == "error":
                         self._logger.info(f"Obsidian plugin error: {event}")
-                        if event["message"] in OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST:
+                        if event["message"] in self.OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST:
                             continue
                         time_since_last_obsidian_error_message = (
                             datetime.datetime.now()
