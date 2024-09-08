@@ -21,6 +21,7 @@ class SpanreedMonitorPlugin(Plugin):
     OBSIDIAN_PLUGIN_MONITOR_QUEUE_NAME = "obsidian-plugin-monitor"
     OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST = [
         "read ECONNRESET",
+        "read ETIMEDOUT",
     ]
 
     @classmethod
