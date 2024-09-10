@@ -98,15 +98,21 @@ class SpanreedMonitorPlugin(Plugin):
                 timeout -= time_since_last_watchdog
 
             with suppress(asyncio.TimeoutError):
+                self._logger.info(f"Waiting for event on {queue_name} with timeout {timeout}")
                 async with asyncio.timeout(timeout.total_seconds()):
                     _, event_json = await redis_api.blpop(
                         queue_name,
                     )
                     event = json.loads(event_json)
-                    self._logger.info(f"Obsidian plugin event received: {event}")
+                    self._logger.info(
+                        f"Obsidian plugin event received: {event}"
+                    )
                     if event["kind"] == "error":
                         self._logger.info(f"Obsidian plugin error: {event}")
-                        if event["message"] in self.OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST:
+                        if (
+                            event["message"]
+                            in self.OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST
+                        ):
                             continue
                         time_since_last_obsidian_error_message = (
                             datetime.datetime.now()
