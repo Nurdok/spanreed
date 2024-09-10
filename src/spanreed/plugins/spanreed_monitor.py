@@ -75,14 +75,13 @@ class SpanreedMonitorPlugin(Plugin):
         queue_name = f"{self.OBSIDIAN_PLUGIN_MONITOR_QUEUE_NAME}:{user.id}"
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         base_timeout = datetime.timedelta(minutes=1)
-        last_watchdog = datetime.datetime.now()
+        time_since_last_watchdog = datetime.timedelta()
         last_watchdog_message = datetime.datetime.now()
         last_obsidian_error_message = datetime.datetime.now()
 
         while True:
             self._logger.info("Waiting for Obsidian plugin events.")
             timeout: datetime.timedelta = base_timeout
-            time_since_last_watchdog = datetime.datetime.now() - last_watchdog
             time_since_last_watchdog_message = (
                 datetime.datetime.now() - last_watchdog_message
             )
@@ -133,7 +132,8 @@ class SpanreedMonitorPlugin(Plugin):
                         self._logger.info(
                             "Obsidian plugin watchdog event received."
                         )
-                        last_watchdog = datetime.datetime.now()
+                        time_since_last_watchdog = datetime.timedelta()
+                        last_watchdog_message = datetime.datetime.now()
 
 
 class BoolValue:
