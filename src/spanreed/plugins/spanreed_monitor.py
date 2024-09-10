@@ -103,6 +103,7 @@ class SpanreedMonitorPlugin(Plugin):
                         queue_name,
                     )
                     event = json.loads(event_json)
+                    self._logger.info(f"Obsidian plugin event received: {event}")
                     if event["kind"] == "error":
                         self._logger.info(f"Obsidian plugin error: {event}")
                         if event["message"] in self.OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST:
