@@ -600,7 +600,7 @@ class TelegramBotApi:
                 message = await send_message_fn()
                 try:
                     async with asyncio.timeout(
-                        datetime.timedelta(minutes=1).total_seconds()
+                        datetime.timedelta(minutes=60).total_seconds()
                     ):
                         await callback_event.wait()
                         break
