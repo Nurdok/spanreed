@@ -618,7 +618,6 @@ class TelegramBotApi:
                         f"You have {pending_interactions + 1} pending interactions, this is the first one:"
                     )
 
-                    message = await send_message_fn()
         except asyncio.CancelledError:
             self._logger.info(f"Callback {callback_id} was cancelled")
             if message is not None:
