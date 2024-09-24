@@ -4,9 +4,8 @@ import datetime
 import os
 from enum import auto, IntEnum
 import logging
-import typing
 import uuid
-from typing import NamedTuple, Optional, Callable, cast
+from typing import NamedTuple, Optional, Callable, cast, Awaitable, Coroutine
 from dataclasses import dataclass
 from collections.abc import AsyncGenerator
 
@@ -140,7 +139,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             return
 
         self._logger.info(f"query.data={query.data}")
-        callback_data: CallbackData = typing.cast(CallbackData, query.data)
+        callback_data: CallbackData = cast(CallbackData, query.data)
         cid = callback_data.callback_id
 
         # Mark the index of the selected button.
@@ -271,7 +270,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
         self.create_task(start_task())
 
-    def create_task(self, coro: typing.Coroutine) -> None:
+    def create_task(self, coro: Coroutine) -> None:
         task = asyncio.create_task(coro)
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
@@ -480,7 +479,9 @@ class TelegramBotApi:
         return cast(
             Message,
             await app.bot.send_document(
-                chat_id=self._telegram_user_id, document=data, filename=file_name
+                chat_id=self._telegram_user_id,
+                document=data,
+                filename=file_name,
             ),
         )
 
@@ -547,15 +548,16 @@ class TelegramBotApi:
                 keyboard.append([])
             keyboard[-1].append(button_to_append)
 
-        message: Message = await app.bot.send_message(
-            chat_id=self._telegram_user_id,
-            text=prompt,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
+        async def send_message() -> Message:
+            return cast(Message, await app.bot.send_message(
+                chat_id=self._telegram_user_id,
+                text=prompt,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            ))
 
         # Wait for the user to select a choice.
         interaction_result: int | str = await self.wait_for_user_interaction(
-            callback_id, callback_event, message
+            callback_id, callback_event, send_message
         )
         if not isinstance(interaction_result, int):
             raise ValueError("Expected integer from user")
@@ -571,24 +573,31 @@ class TelegramBotApi:
             self._telegram_user_id
         ] = callback_id
 
-        message: Message = await self.send_message(prompt)
+        async def send_message() -> Message:
+            return await self.send_message(prompt)
+        
         interaction_result: int | str = await self.wait_for_user_interaction(
-            callback_id, callback_event, message
+            callback_id, callback_event, send_message
         )
         if not isinstance(interaction_result, str):
             raise ValueError("Expected string from user")
         return interaction_result
 
     async def wait_for_user_interaction(
-        self, callback_id: int, callback_event: asyncio.Event, message: Message
+        self,
+        callback_id: int,
+        callback_event: asyncio.Event,
+        send_message_fn: Callable[[], Awaitable[Message]],
     ) -> int | str:
         app: Application = await self.get_application()
 
         # Wait for the user to select a choice.
         self._logger.info(f"Waiting for callback {callback_id} to be done")
+        message: Message | None = None
         pending_message: Message | None = None
         try:
             while True:
+                message = await send_message_fn()
                 try:
                     async with asyncio.timeout(
                         datetime.timedelta(minutes=60).total_seconds()
@@ -596,6 +605,9 @@ class TelegramBotApi:
                         await callback_event.wait()
                         break
                 except asyncio.TimeoutError:
+                    if not await message.delete():
+                        raise RuntimeError("Failed to delete message")
+
                     queues = await self._get_user_interaction_queues()
                     pending_interactions: int = sum(
                         len(queue) for queue in queues.values()
@@ -603,14 +615,15 @@ class TelegramBotApi:
                     if pending_message is not None:
                         await pending_message.delete()
                     pending_message = await self.send_message(
-                        f"You have {pending_interactions + 1} pending interactions."
+                        f"You have {pending_interactions + 1} pending interactions, this is the first one:"
                     )
 
+                    message = await send_message_fn()
         except asyncio.CancelledError:
             self._logger.info(f"Callback {callback_id} was cancelled")
-            success: bool = await message.delete()
-            if not success:
-                self._logger.error("Failed to delete message")
+            if message is not None:
+                if not await message.delete():
+                    self._logger.error("Failed to delete message")
             raise
         if pending_message is not None:
             await pending_message.delete()
