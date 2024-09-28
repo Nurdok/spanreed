@@ -63,7 +63,7 @@ class TimekillerPlugin(Plugin):
         )
         last_asked: datetime.datetime = datetime.datetime.now()
         if last_asked_str is not None:
-            last_asked: = datetime.datetime.fromisoformat(
+            last_asked = datetime.datetime.fromisoformat(
                 last_asked_str
             )
         if datetime.datetime.now() - last_asked > datetime.timedelta(days=3):
