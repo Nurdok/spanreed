@@ -18,6 +18,8 @@ from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 
 class TimekillerPlugin(Plugin):
+    LAST_ASKED_BOOKS_KEY = "currently-reading-books-last-asked"
+
     @classmethod
     def name(cls) -> str:
         return "Timekiller"
@@ -58,10 +60,12 @@ class TimekillerPlugin(Plugin):
             "Scan Processing": self.prompt_for_scan_processing,
         }
 
-        last_asked_str: str | None = await self.get_user_data(
-            user, "currently-reading-books-last-asked"
+        last_asked: datetime.datetime = datetime.datetime.now() - datetime.timedelta(
+            days=4
         )
-        last_asked: datetime.datetime = datetime.datetime.now()
+        last_asked_str: str | None = await self.get_user_data(
+            user, self.LAST_ASKED_BOOKS_KEY
+        )
         if last_asked_str is not None:
             last_asked = datetime.datetime.fromisoformat(
                 last_asked_str
@@ -324,6 +328,7 @@ class TimekillerPlugin(Plugin):
                     "\n\n### Thoughts\n"
                     + await bot.request_user_input("Go ahead then:"),
                 )
+        await self.set_user_data(user, self.LAST_ASKED_BOOKS_KEY, str(datetime.datetime.now()))
 
     async def prompt_for_scan_processing(
         self, _user: User, bot: TelegramBotApi, obsidian: ObsidianApi
