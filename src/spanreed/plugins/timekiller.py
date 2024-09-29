@@ -328,7 +328,7 @@ class TimekillerPlugin(Plugin):
                     "\n\n### Thoughts\n"
                     + await bot.request_user_input("Go ahead then:"),
                 )
-        await self.set_user_data(user, self.LAST_ASKED_BOOKS_KEY, str(datetime.datetime.now()))
+        await self.set_user_data(user, self.LAST_ASKED_BOOKS_KEY, datetime.datetime.now().isoformat())
 
     async def prompt_for_scan_processing(
         self, _user: User, bot: TelegramBotApi, obsidian: ObsidianApi
