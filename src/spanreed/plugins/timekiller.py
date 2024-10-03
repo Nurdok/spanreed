@@ -63,9 +63,9 @@ class TimekillerPlugin(Plugin):
         last_asked: datetime.datetime = datetime.datetime.now() - datetime.timedelta(
             days=4
         )
-        last_asked_str: str | None = await self.get_user_data(
+        last_asked_str: str | None = str(await self.get_user_data(
             user, self.LAST_ASKED_BOOKS_KEY
-        )
+        ))
         if last_asked_str is not None:
             try:
                 last_asked = datetime.datetime.fromisoformat(
