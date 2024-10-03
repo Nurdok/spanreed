@@ -67,9 +67,12 @@ class TimekillerPlugin(Plugin):
             user, self.LAST_ASKED_BOOKS_KEY
         )
         if last_asked_str is not None:
-            last_asked = datetime.datetime.fromisoformat(
-                last_asked_str
-            )
+            try:
+                last_asked = datetime.datetime.fromisoformat(
+                    last_asked_str
+                )
+            except TypeError:
+                raise last_asked_str
         if datetime.datetime.now() - last_asked > datetime.timedelta(days=3):
             timekillers["Books"] = self.prompt_for_currently_reading_books
 
