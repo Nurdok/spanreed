@@ -72,7 +72,7 @@ class TimekillerPlugin(Plugin):
                     last_asked_str
                 )
             except TypeError:
-                raise ValueError(f"{last_asked_str}, {typeof(last_asked_str)}")
+                raise ValueError(f"{last_asked_str}, {type(last_asked_str)}")
         if datetime.datetime.now() - last_asked > datetime.timedelta(days=3):
             timekillers["Books"] = self.prompt_for_currently_reading_books
 
