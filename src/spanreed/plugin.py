@@ -94,7 +94,10 @@ class Plugin(abc.ABC, Generic[UC]):
 
     @classmethod
     async def get_user_data(cls, user: User, key: str) -> Optional[str]:
-        return await redis_api.get(cls._get_user_data_key(user, key))
+        data: str | bytes = await redis_api.get(cls._get_user_data_key(user, key))
+        if isinstance(data, bytes):
+            return data.decode("utf-8")
+        return data
 
     async def get_users(self) -> list[User]:
         self._logger.info(f"Getting users for plugin {self.canonical_name()}")
