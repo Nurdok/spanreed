@@ -124,6 +124,7 @@ class PluginManagerPlugin(Plugin):
         ) == len(plugins):
             return
 
+        self._logger.info(f"Available plugins: {plugins}")
         plugin = plugins[choice]
-        self._logger.info(f"Reconfiguring user {user} for plugin {plugin}")
+        self._logger.info(f"Reconfiguring user {user} for plugin #{choice} {plugin}")
         await plugin.ask_for_user_config(user)
