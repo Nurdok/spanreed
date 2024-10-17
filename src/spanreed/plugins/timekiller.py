@@ -76,6 +76,7 @@ class TimekillerPlugin(Plugin):
         if datetime.datetime.now() - last_asked > datetime.timedelta(days=3):
             timekillers["Books"] = self.prompt_for_currently_reading_books
 
+        await obsidian.safe_generate_today_note()
         daily_note: str = await obsidian.get_daily_note("Daily")
         if await obsidian.get_property(daily_note, "mood") is None:
             timekillers["Mood"] = self._poll_for_metrics
