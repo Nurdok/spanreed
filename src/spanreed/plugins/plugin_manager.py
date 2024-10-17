@@ -104,12 +104,15 @@ class PluginManagerPlugin(Plugin):
         plugin = plugins[choice]
         self._logger.info(f"Unregistering user {user} from plugin {plugin}")
         await plugin.unregister_user(user)
-        
+
     async def _reconfigure_existing_plugin(
         self, bot: TelegramBotApi, user: User
     ) -> None:
-        plugins = [plugin for plugin in await Plugin.get_plugins_for_user(user)
-                     if plugin.has_user_config()]
+        plugins = [
+            plugin
+            for plugin in await Plugin.get_plugins_for_user(user)
+            if plugin.has_user_config()
+        ]
 
         if not plugins:
             await bot.send_message("There are no plugins to reconfigure.")
@@ -124,4 +127,3 @@ class PluginManagerPlugin(Plugin):
         plugin = plugins[choice]
         self._logger.info(f"Reconfiguring user {user} for plugin {plugin}")
         await plugin.ask_for_user_config(user)
-        
