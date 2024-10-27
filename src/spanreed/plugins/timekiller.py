@@ -90,18 +90,11 @@ class TimekillerPlugin(Plugin):
         """
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-        while True:
-            timekillers: dict = await self.get_available_time_killers(
-                user, obsidian
-            )
-            choice: str = random.choice(list(timekillers.keys()))
-            await timekillers[choice](user, bot, obsidian)
-            if (
-                await bot.request_user_choice(
-                    "Another?", ["Yes", "No"], columns=2
-                )
-            ) == 1:
-                break
+        timekillers: dict = await self.get_available_time_killers(
+            user, obsidian
+        )
+        choice: str = random.choice(list(timekillers.keys()))
+        await timekillers[choice](user, bot, obsidian)
 
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
