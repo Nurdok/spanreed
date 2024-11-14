@@ -8,6 +8,7 @@ from contextlib import suppress, asynccontextmanager
 
 from typing import AsyncGenerator
 
+import redis
 import telegram.error
 
 from spanreed.apis.telegram_bot import TelegramBotApi
@@ -41,7 +42,7 @@ class SpanreedMonitorPlugin(Plugin):
 
         try:
             while True:
-                with suppress(asyncio.TimeoutError):
+                with suppress(asyncio.TimeoutError, redis.ConnectionError):
                     async with asyncio.timeout(interval.total_seconds()):
                         _, exception = await redis_api.blpop(
                             self.EXCEPTION_QUEUE_NAME
