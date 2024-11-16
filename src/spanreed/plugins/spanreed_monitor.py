@@ -23,6 +23,7 @@ class SpanreedMonitorPlugin(Plugin):
     OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST = [
         "read ECONNRESET",
         "read ETIMEDOUT",
+        "Socket closed unexpectedly",
     ]
 
     @classmethod
