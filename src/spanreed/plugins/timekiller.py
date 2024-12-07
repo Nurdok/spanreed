@@ -53,7 +53,7 @@ class TimekillerPlugin(Plugin):
             )
 
     async def get_available_time_killers(
-        self, user: User, obsidian: ObsidianApi
+        self, user: User, obsidian: ObsidianApi, push: boolean,
     ) -> dict:
         timekillers: dict = {
             "Journaling Prompt": self._journal_prompt,
@@ -73,7 +73,7 @@ class TimekillerPlugin(Plugin):
                 )
             except TypeError:
                 raise ValueError(f"{last_asked_str}, {type(last_asked_str)}")
-        if datetime.datetime.now() - last_asked > datetime.timedelta(days=3):
+        if not push or datetime.datetime.now() - last_asked > datetime.timedelta(days=3):
             timekillers["Books"] = self.prompt_for_currently_reading_books
 
         await obsidian.safe_generate_today_note()
@@ -91,7 +91,7 @@ class TimekillerPlugin(Plugin):
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         timekillers: dict = await self.get_available_time_killers(
-            user, obsidian
+            user, obsidian, True,
         )
         choice: str = random.choice(list(timekillers.keys()))
         await timekillers[choice](user, bot, obsidian)
@@ -100,7 +100,7 @@ class TimekillerPlugin(Plugin):
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         timekillers: dict = await self.get_available_time_killers(
-            user, obsidian
+            user, obsidian, False,
         )
         choices: list[str] = [name for name in timekillers.keys()]
         choice: int = await bot.request_user_choice(
