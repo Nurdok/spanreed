@@ -39,12 +39,124 @@ class RecurrenceInfo:
             raise ValueError(f"Invalid timezone: {self.timezone}")
         return tz
 
+    @staticmethod
+    async def ask_for_timezone(bot: TelegramBotApi) -> str:
+        timezones = [
+            "Africa/Abidjan",
+            "America/New_York",
+            "Asia/Jerusalem",
+        ]
+
+        # TODO: This is horrible - improve.
+        # TODO: use this maybe:
+        # import pytz
+        # pytz.all_timezones
+
+        return timezones[
+            await bot.request_user_choice(
+                "Please choose your timezone:", timezones
+            )
+        ]
+
+    @staticmethod
+    async def ask_for_frequency(bot: TelegramBotApi) -> int:
+        frequencies: dict[str, int] = {
+            "Weekly": dateutil.rrule.WEEKLY,
+        }
+        frequency_choices = sorted(
+            frequencies.keys(), key=lambda x: frequencies[x]
+        )
+
+        return frequencies[
+            frequency_choices[
+                await bot.request_user_choice(
+                    "Please choose the frequency of the recurrence:",
+                    [freq.capitalize() for freq in frequencies],
+                )
+            ]
+        ]
+
+    @staticmethod
+    def get_weekdays() -> dict[str, dateutil.rrule.weekday]:
+        return {
+            "Monday": dateutil.rrule.MO,
+            "Tuesday": dateutil.rrule.TU,
+            "Wednesday": dateutil.rrule.WE,
+            "Thursday": dateutil.rrule.TH,
+            "Friday": dateutil.rrule.FR,
+            "Saturday": dateutil.rrule.SA,
+            "Sunday": dateutil.rrule.SU,
+        }
+
+    @staticmethod
+    def get_weekday_choices() -> list[str]:
+        weekdays = RecurrenceInfo.get_weekdays()
+        return sorted(weekdays.keys(), key=lambda x: weekdays[x].weekday)
+
+    @staticmethod
+    async def ask_for_week_start_day(bot: TelegramBotApi) -> int:
+        return RecurrenceInfo.get_weekdays()[
+            RecurrenceInfo.get_weekday_choices()[
+                await bot.request_user_choice(
+                    "Please choose the week start day:",
+                    RecurrenceInfo.get_weekday_choices(),
+                )
+            ]
+        ].weekday
+
+    @staticmethod
+    async def ask_for_week_day(bot: TelegramBotApi) -> int:
+        return RecurrenceInfo.get_weekdays()[
+            RecurrenceInfo.get_weekday_choices()[
+                await bot.request_user_choice(
+                    "Please choose the week day:",
+                    RecurrenceInfo.get_weekday_choices(),
+                )
+            ]
+        ].weekday
+
+    @staticmethod
+    async def ask_for_hour(bot: TelegramBotApi) -> int:
+        return int(
+            await bot.request_user_input(
+                "Please enter the hour of the day (0-23):"
+            )
+        )
+
+    @staticmethod
+    async def ask_for_minute(bot: TelegramBotApi) -> int:
+        return int(
+            await bot.request_user_input(
+                "Please enter the minute of the day (0-59):"
+            )
+        )
+
 
 @dataclass
 class ObsidianLog:
     file_location: str
     note_title: str
     note_content_template: str
+
+    @staticmethod
+    async def ask_for_note_title(bot: TelegramBotApi) -> str:
+        return await bot.request_user_input(
+            "Please enter the name of the note you'd like to log to:"
+        )
+
+    @staticmethod
+    async def ask_for_file_location(bot: TelegramBotApi) -> str:
+        return await bot.request_user_input(
+            "Please enter the directory path of the note you'd like to log to:"
+        )
+
+    @staticmethod
+    async def ask_for_note_content_template(bot: TelegramBotApi) -> str:
+        return await bot.request_user_input(
+            "Please enter the template of the note content.\n"
+            "You can use the following optional placeholders:\n"
+            "  <b>{{date}}</b>: The event's date.\n"
+        )
 
 
 @dataclass
@@ -63,6 +175,138 @@ class RecurringPayment:
             self.recurrence_info = RecurrenceInfo(**self.recurrence_info)
         if isinstance(self.obsidian_log, dict):
             self.obsidian_log = ObsidianLog(**self.obsidian_log)
+
+    @staticmethod
+    async def ask_for_todoist_label(bot: TelegramBotApi) -> str:
+        return await bot.request_user_input(
+            "Please enter a unique label of the Todoist task where you'd"
+            " like to keep track of payments:"
+        )
+
+    @staticmethod
+    async def ask_for_date_format(bot: TelegramBotApi) -> str:
+        date_format = "%Y-%m-%d"
+        if (
+            await bot.request_user_choice(
+                f"The default date format is {date_format}."
+                "Would you like to change it?",
+                ["Keep as-is", "Change it"],
+            )
+        ) == 1:
+            date_format = await bot.request_user_input(
+                "Please enter the date format:"
+            )
+        return date_format
+
+    @staticmethod
+    async def ask_for_todoist_task_template(bot: TelegramBotApi) -> str:
+        return await bot.request_user_input(
+            "Please enter a template for the Todoist task name.\n"
+            "You can use the following optional placeholders:\n"
+            "  <b>{{dates}}</b>: A list of all unpaid dates.\n"
+            "  <b>{{total_cost}}</b>: The total cost of unpaid dates.\n"
+            "\n"
+            "Examples: \n"
+            '  "Pay therapist ${{total_cost}} (for {{dates}})"\n'
+            '  "Give my daughter her allowance ({{total_cost}}₪)"\n'
+        )
+
+    @staticmethod
+    async def ask_for_todoist_project_id(
+        bot: TelegramBotApi, todoist: Todoist
+    ) -> str:
+        projects: list[Project] = await todoist.get_projects()
+        todoist_project = await bot.request_user_choice(
+            "Please choose the project where you'd like to create the task:",
+            [p.name for p in projects],
+        )
+        return projects[todoist_project].id
+
+    @staticmethod
+    async def ask_for_recurrence_cost(bot: TelegramBotApi) -> float:
+        return float(
+            await bot.request_user_input(
+                "Please enter the cost of a single recurrence (you"
+                " can enter 0 if you only want to accumulate the dates):"
+            )
+        )
+
+    @staticmethod
+    async def ask_for_verify_recurrence(bot: TelegramBotApi) -> bool:
+        return (
+            True
+            if await bot.request_user_choice(
+                "Would you like me to verify with you every time the recurrence is supposed to happen?",
+                ["Yes", "No"],
+            )
+            == 0
+            else False
+        )
+
+    @staticmethod
+    async def ask_for_new_recurrence(
+        user: User, bot: TelegramBotApi, todoist: Todoist
+    ) -> "RecurringPayment":
+        todoist_label = await RecurringPayment.ask_for_todoist_label(bot)
+        date_format = await RecurringPayment.ask_for_date_format(bot)
+        todoist_task_template = (
+            await RecurringPayment.ask_for_todoist_task_template(bot)
+        )
+        todoist_project_id = await RecurringPayment.ask_for_todoist_project_id(
+            bot, todoist
+        )
+        recurrence_cost = await RecurringPayment.ask_for_recurrence_cost(bot)
+
+        timezone = await RecurrenceInfo.ask_for_timezone(bot)
+        frequency = await RecurrenceInfo.ask_for_frequency(bot)
+        week_start_day = await RecurrenceInfo.ask_for_week_start_day(bot)
+        week_day = await RecurrenceInfo.ask_for_week_day(bot)
+        hour = await RecurrenceInfo.ask_for_hour(bot)
+        minute = await RecurrenceInfo.ask_for_minute(bot)
+
+        verify_recurrence = await RecurringPayment.ask_for_verify_recurrence(
+            bot
+        )
+
+        obsidian_log: Optional[ObsidianLog] = None
+        if (
+            await bot.request_user_choice(
+                "Would you like to setup automatic logging of each event"
+                " to an Obsidian note?\n"
+                "Note: This requires you to have the Obsidian Webhook plugin."
+                " I'll help you configure it if you haven't already.",
+                ["Yes", "No"],
+            )
+            == 0
+        ):
+            if not (await ObsidianWebhookPlugin.is_registered(user)):
+                await ObsidianWebhookPlugin.ask_for_user_config(user)
+
+            obsidian_log = ObsidianLog(
+                note_title=await ObsidianLog.ask_for_note_title(bot),
+                file_location=await ObsidianLog.ask_for_file_location(bot),
+                note_content_template=await ObsidianLog.ask_for_note_content_template(
+                    bot
+                ),
+            )
+        return RecurringPayment(
+            todoist_label=todoist_label,
+            todoist_task_template=todoist_task_template,
+            todoist_project_id=todoist_project_id,
+            date_format=date_format,
+            recurrence_cost=recurrence_cost,
+            recurrence_info=RecurrenceInfo(
+                timezone=timezone,
+                frequency=frequency,
+                week_start_day=week_start_day,
+                week_day=week_day,
+                hour=hour,
+                minute=minute,
+                second=0,
+            ),
+            verify_recurrence=verify_recurrence,
+            obsidian_log=obsidian_log,
+        )
 
 
 @dataclass
@@ -108,185 +352,9 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 if choice == 1:
                     break
 
-            todoist_label = await bot.request_user_input(
-                "Please enter a unique label of the Todoist task where you'd"
-                " like to keep track of payments:"
-            )
-            choice = await bot.request_user_choice(
-                "The default date format is %Y-%m-%d. Would you like to "
-                "change it?",
-                ["Keep as-is", "Change it"],
-            )
-            if choice == 1:
-                date_format = await bot.request_user_input(
-                    "Please enter the date format:"
-                )
-            else:
-                date_format = "%Y-%m-%d"
-
-            todoist_task_template = await bot.request_user_input(
-                "Please enter a template for the Todoist task name.\n"
-                "You can use the following optional placeholders:\n"
-                "  <b>{{dates}}</b>: A list of all unpaid dates.\n"
-                "  <b>{{total_cost}}</b>: The total cost of unpaid dates.\n"
-                "\n"
-                "Examples: \n"
-                '  "Pay therapist ${{total_cost}} (for {{dates}})"\n'
-                '  "Give my daughter her allowance ({{total_cost}}₪)"\n'
-            )
-
             todoist: Todoist = await Todoist.for_user(user)
-            projects: list[Project] = await todoist.get_projects()
-            todoist_project = await bot.request_user_choice(
-                "Please choose the project where you'd like to create the task:",
-                [p.name for p in projects],
-            )
-            todoist_project_id: str = projects[todoist_project].id
+            recurring_payments.append(await RecurringPayment.ask_for_new_recurrence(user, bot, todoist))
 
-            recurrence_cost = float(
-                await bot.request_user_input(
-                    "Please enter the cost of a single recurrence (you"
-                    " can enter 0 if you only want to accumulate the dates):"
-                )
-            )
-
-            timezones = [
-                "Africa/Abidjan",
-                "America/New_York",
-                "Asia/Jerusalem",
-            ]
-
-            # TODO: This is horrible - improve.
-            # TODO: use this maybe:
-            # import pytz
-            # pytz.all_timezones
-
-            timezone: str = timezones[
-                await bot.request_user_choice(
-                    "Please choose your timezone:", timezones
-                )
-            ]
-
-            frequencies: dict[str, int] = {
-                "Weekly": dateutil.rrule.WEEKLY,
-            }
-            frequency_choices = sorted(
-                frequencies.keys(), key=lambda x: frequencies[x]
-            )
-
-            frequency: int = frequencies[
-                frequency_choices[
-                    await bot.request_user_choice(
-                        "Please choose the frequency of the recurrence:",
-                        [freq.capitalize() for freq in frequencies],
-                    )
-                ]
-            ]
-
-            weekdays: dict[str, dateutil.rrule.weekday] = {
-                "Monday": dateutil.rrule.MO,
-                "Tuesday": dateutil.rrule.TU,
-                "Wednesday": dateutil.rrule.WE,
-                "Thursday": dateutil.rrule.TH,
-                "Friday": dateutil.rrule.FR,
-                "Saturday": dateutil.rrule.SA,
-                "Sunday": dateutil.rrule.SU,
-            }
-
-            weekday_choices = sorted(
-                weekdays.keys(), key=lambda x: weekdays[x].weekday
-            )
-
-            week_start_day = weekdays[
-                weekday_choices[
-                    await bot.request_user_choice(
-                        "Please choose the week start day:", weekday_choices
-                    )
-                ]
-            ]
-
-            week_day = weekdays[
-                weekday_choices[
-                    await bot.request_user_choice(
-                        "Please choose the week day:", weekday_choices
-                    )
-                ]
-            ]
-
-            hour = int(
-                await bot.request_user_input(
-                    "Please enter the hour of the day (0-23):"
-                )
-            )
-
-            minute = int(
-                await bot.request_user_input(
-                    "Please enter the minute of the day (0-59):"
-                )
-            )
-
-            verify_recurrence = (
-                True
-                if await bot.request_user_choice(
-                    "Would you like me to verify with you every time the recurrence is supposed to happen?",
-                    ["Yes", "No"],
-                )
-                == 0
-                else False
-            )
-
-            obsidian_log: Optional[ObsidianLog] = None
-            if (
-                await bot.request_user_choice(
-                    "Would you like to setup automatic logging of each event"
-                    " to an Obsidian note?\n"
-                    "Note: This requires you to have the Obsidian Webhook plugin."
-                    " I'll help you configure it if you haven't already.",
-                    ["Yes", "No"],
-                )
-                == 0
-            ):
-                if not (await ObsidianWebhookPlugin.is_registered(user)):
-                    await ObsidianWebhookPlugin.ask_for_user_config(user)
-
-                note_title = await bot.request_user_input(
-                    "Please enter the name of the note you'd like to log to:"
-                )
-                file_location = await bot.request_user_input(
-                    "Please enter the directory path of the note you'd like to log to:"
-                )
-                note_content_template = await bot.request_user_input(
-                    "Please enter the template of the note content.\n"
-                    "You can use the following optional placeholders:\n"
-                    "  <b>{{date}}</b>: The event's date.\n"
-                )
-
-                obsidian_log = ObsidianLog(
-                    note_title=note_title,
-                    file_location=file_location,
-                    note_content_template=note_content_template,
-                )
-
-            recurring_payments.append(
-                RecurringPayment(
-                    todoist_label=todoist_label,
-                    todoist_task_template=todoist_task_template,
-                    todoist_project_id=todoist_project_id,
-                    date_format=date_format,
-                    recurrence_cost=recurrence_cost,
-                    recurrence_info=RecurrenceInfo(
-                        timezone=timezone,
-                        frequency=frequency,
-                        week_start_day=week_start_day.weekday,
-                        week_day=week_day.weekday,
-                        hour=hour,
-                        minute=minute,
-                        second=0,
-                    ),
-                    verify_recurrence=verify_recurrence,
-                    obsidian_log=obsidian_log,
-                )
-            )
         self = await cls.get_plugin_by_class(cls)
         self._logger.info("Setting config")
 
@@ -481,4 +549,6 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                 tg.create_task(
                     self.run_for_single_recurrence(user, recurring_payment)
                 )
-        self._logger.info(f"Unexpected end of recurring payments for user {user}")
+        self._logger.info(
+            f"Unexpected end of recurring payments for user {user}"
+        )
