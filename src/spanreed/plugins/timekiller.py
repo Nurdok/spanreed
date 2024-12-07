@@ -53,7 +53,7 @@ class TimekillerPlugin(Plugin):
             )
 
     async def get_available_time_killers(
-        self, user: User, obsidian: ObsidianApi, push: boolean,
+        self, user: User, obsidian: ObsidianApi, push: bool,
     ) -> dict:
         timekillers: dict = {
             "Journaling Prompt": self._journal_prompt,
