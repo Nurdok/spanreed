@@ -255,68 +255,56 @@ class TimekillerPlugin(Plugin):
             return
 
         for book in books:
+            mark_as_finished: bool = False
             choice = await bot.request_user_choice(
-                f'Are you still reading "{book.title}"?',
-                ["Yes", "No", "Cancel"],
+                f'How\'s it going with reading "{book.title}"?',
+                ["No notes", "I have notes", "Finished!", "Giving up"],
             )
-            if choice == 2:
+            if choice == 0:
                 return
-            if choice == 1:
-                mark_as_finished: bool = False
-                finished_choice = await bot.request_user_choice(
-                    "Why?",
-                    ["Finished", "Stopped reading"],
+            if choice == 2:
+                mark_as_finished = True
+            if choice == 3:
+                mark_as_finished = (
+                    await bot.request_user_choice(
+                        "Do you want to mark it as finished?",
+                        ["Yes", "No"],
+                    ) == 0)
+            if mark_as_finished:
+                await obsidian.set_value_of_property(
+                    book.file["path"], "status", "read"
                 )
-                if finished_choice == 0:
-                    mark_as_finished = True
-                if finished_choice == 1:
-                    mark_as_finished = (
-                        await bot.request_user_choice(
-                            "Do you want to mark it as finished?",
-                            ["Yes", "No"],
-                        )
-                        == 0
+                finish_date_choice: int = await bot.request_user_choice(
+                    "When did you finish it?",
+                    [
+                        "Today",
+                        "Yesterday",
+                        "Other (specify)",
+                        "Other (skip)",
+                    ],
+                )
+                finish_date: datetime.date | None = None
+                if finish_date_choice == 0:
+                    finish_date = datetime.date.today()
+                elif finish_date_choice == 1:
+                    finish_date = (
+                        datetime.date.today() - datetime.timedelta(days=1)
                     )
-                if mark_as_finished:
+                elif finish_date_choice == 2:
+                    finish_date = datetime.datetime.strptime(
+                        await bot.request_user_input(
+                            "When did you finish it?\n"
+                            "Use the format YYYY-MM-DD."
+                        ),
+                        "%Y-%m-%d",
+                    ).date()
+                if finish_date is not None:
                     await obsidian.set_value_of_property(
-                        book.file["path"], "status", "read"
+                        book.file["path"],
+                        "finish-date",
+                        finish_date.strftime("%Y-%m-%d"),
                     )
-                    finish_date_choice: int = await bot.request_user_choice(
-                        "When did you finish it?",
-                        [
-                            "Today",
-                            "Yesterday",
-                            "Other (specify)",
-                            "Other (skip)",
-                        ],
-                    )
-                    finish_date: datetime.date | None = None
-                    if finish_date_choice == 0:
-                        finish_date = datetime.date.today()
-                    elif finish_date_choice == 1:
-                        finish_date = (
-                            datetime.date.today() - datetime.timedelta(days=1)
-                        )
-                    elif finish_date_choice == 2:
-                        finish_date = datetime.datetime.strptime(
-                            await bot.request_user_input(
-                                "When did you finish it?\n"
-                                "Use the format YYYY-MM-DD."
-                            ),
-                            "%Y-%m-%d",
-                        ).date()
-                    if finish_date is not None:
-                        await obsidian.set_value_of_property(
-                            book.file["path"],
-                            "finish-date",
-                            finish_date.strftime("%Y-%m-%d"),
-                        )
-            if (
-                await bot.request_user_choice(
-                    "Any thoughts you want to record?", ["Yes", "No"]
-                )
-                == 0
-            ):
+            if choice == 1:
                 obsidian_webhook: ObsidianWebhookApi = (
                     await ObsidianWebhookApi.for_user(user)
                 )
