@@ -15,6 +15,10 @@ from spanreed.apis.telegram_bot import TelegramBotApi
 from typing import Any
 
 
+class ObsidianApiTimeoutError(TimeoutError):
+    pass
+
+
 class ObsidianPlugin(Plugin):
     @classmethod
     def name(cls) -> str:
@@ -74,7 +78,7 @@ class ObsidianApi:
         except TimeoutError:
             # Delete the request from the queue
             await redis_api.lrem(request_queue_name, 0, json.dumps(request))
-            raise TimeoutError(
+            raise ObsidianApiTimeoutError(
                 f"Obsidian API request timed out ({request_id=})."
             )
         self._logger.info(f"Got response: {response=}")

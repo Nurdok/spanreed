@@ -12,7 +12,7 @@ from spanreed.apis.telegram_bot import (
     UserInteractionPriority,
     UserInteractionPreempted,
 )
-from spanreed.apis.obsidian import ObsidianApi
+from spanreed.apis.obsidian import ObsidianApi, ObsidianApiTimeoutError
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 
@@ -33,6 +33,16 @@ class UserConfig:
         for index, habit in enumerate(self.habits):
             if isinstance(habit, dict):
                 self.habits[index] = Habit(**habit)
+
+
+def time_until_end_of_day() -> datetime.timedelta:
+    """
+    Get timedelta until end of day on the datetime passed, or current time.
+    """
+    now = datetime.datetime.now()
+    tomorrow = now + datetime.timedelta(days=1)
+    return datetime.datetime.combine(tomorrow, datetime.time.min) - now
+
 
 
 class HabitTrackerPlugin(Plugin):
@@ -143,10 +153,11 @@ class HabitTrackerPlugin(Plugin):
 
     async def get_habits_to_poll(self, user: User) -> list[Habit]:
         config: UserConfig = await self.get_config(user)
+        done_habits: list[str] = await self.get_done_habits(user)
         return [
             habit
             for habit in config.habits
-            if habit.name not in await self.get_done_habits(user)
+            if habit.name not in done_habits
         ]
 
     async def mark_habit_as_done(self, user: User, habit_name: str) -> None:
@@ -162,7 +173,7 @@ class HabitTrackerPlugin(Plugin):
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
         self._logger.info(f"Running periodic check for user {user}")
-        async with suppress_and_log_exception(TimeoutError):
+        async with suppress_and_log_exception(ObsidianApiTimeoutError):
             habits: list[Habit] = await self.get_habits_to_poll(user)
             if not habits:
                 return
@@ -187,17 +198,19 @@ class HabitTrackerPlugin(Plugin):
 
         while True:
             self._logger.info(f"Polling user {user}")
-            try:
-                async with bot.user_interaction(
-                    priority=UserInteractionPriority.LOW,
-                    propagate_preemption=True,
-                ):
-                    self._logger.info("Got user interaction lock")
-                    await self.poll_user_for_all_habits(user)
-            except UserInteractionPreempted:
-                self._logger.info("User interaction preempted, trying again")
-            else:
-                self._logger.info("Sleeping for 4 hours")
-                await asyncio.sleep(
-                    datetime.timedelta(hours=4).total_seconds()
-                )
+            with suppress(TimeoutError):
+                async with asyncio.timeout(time_until_end_of_day().total_seconds()):
+                    try:
+                        async with bot.user_interaction(
+                            priority=UserInteractionPriority.LOW,
+                            propagate_preemption=True,
+                        ):
+                            self._logger.info("Got user interaction lock")
+                            await self.poll_user_for_all_habits(user)
+                    except UserInteractionPreempted:
+                        self._logger.info("User interaction preempted, trying again")
+                    else:
+                        self._logger.info("Sleeping for 4 hours")
+                        await asyncio.sleep(
+                            datetime.timedelta(hours=4).total_seconds()
+                        )
