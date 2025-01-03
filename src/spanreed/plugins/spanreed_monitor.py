@@ -82,7 +82,7 @@ class SpanreedMonitorPlugin(Plugin):
         last_obsidian_error_message = datetime.datetime.now()
 
         while True:
-            self._logger.info("Waiting for Obsidian plugin events.")
+            self._logger.debug("Waiting for Obsidian plugin events.")
             timeout: datetime.timedelta = base_timeout
             time_since_last_watchdog_message = (
                 datetime.datetime.now() - last_watchdog_message
@@ -99,7 +99,7 @@ class SpanreedMonitorPlugin(Plugin):
                 timeout -= time_since_last_watchdog
 
             with suppress(asyncio.TimeoutError):
-                self._logger.info(f"Waiting for event on {queue_name} with timeout {timeout}")
+                self._logger.debug(f"Waiting for event on {queue_name} with timeout {timeout}")
                 async with asyncio.timeout(timeout.total_seconds()):
                     _, event_json = await redis_api.blpop(
                         queue_name,
@@ -131,7 +131,7 @@ class SpanreedMonitorPlugin(Plugin):
                                 datetime.datetime.now()
                             )
                     elif event["kind"] == "watchdog":
-                        self._logger.info(
+                        self._logger.debug(
                             "Obsidian plugin watchdog event received."
                         )
                         time_since_last_watchdog = datetime.timedelta()
