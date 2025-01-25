@@ -44,7 +44,6 @@ def time_until_end_of_day() -> datetime.timedelta:
     return datetime.datetime.combine(tomorrow, datetime.time.min) - now
 
 
-
 class HabitTrackerPlugin(Plugin):
 
     async def run(self) -> None:
@@ -155,18 +154,16 @@ class HabitTrackerPlugin(Plugin):
         config: UserConfig = await self.get_config(user)
         done_habits: list[str] = await self.get_done_habits(user)
         return [
-            habit
-            for habit in config.habits
-            if habit.name not in done_habits
+            habit for habit in config.habits if habit.name not in done_habits
         ]
 
     async def mark_habit_as_done(self, user: User, habit_name: str) -> None:
         config: UserConfig = await self.get_config(user)
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         await obsidian.add_value_to_list_property(
-            await obsidian.get_daily_note(config.daily_note_path),
-            config.habit_tracker_property_name,
-            habit_name,
+            filepath=await obsidian.get_daily_note(config.daily_note_path),
+            property_name=config.habit_tracker_property_name,
+            value=habit_name,
         )
 
     async def poll_user_for_all_habits(self, user: User) -> None:
@@ -175,16 +172,18 @@ class HabitTrackerPlugin(Plugin):
         self._logger.info(f"Running periodic check for user {user}")
         async with suppress_and_log_exception(ObsidianApiTimeoutError):
             habits: list[Habit] = await self.get_habits_to_poll(user)
+            self._logger.info(f"Found {len(habits)} habits: {habits}")
             if not habits:
                 return
 
             while habits:
-                choices: list[str] = [habit.name.capitalize() for habit in habits] + [
-                    "Cancel"
-                ]
+                choices: list[str] = [
+                    habit.name.capitalize() for habit in habits
+                ] + ["Cancel"]
                 choice: int = await bot.request_user_choice(
-                    "Did you do any of these habits today?", choices, columns=min(5, len(habits))
-
+                    "Did you do any of these habits today?",
+                    choices,
+                    columns=min(5, len(habits)),
                 )
                 if choice == len(habits):
                     return
@@ -199,7 +198,9 @@ class HabitTrackerPlugin(Plugin):
         while True:
             self._logger.info(f"Polling user {user}")
             with suppress(TimeoutError):
-                async with asyncio.timeout(time_until_end_of_day().total_seconds()):
+                async with asyncio.timeout(
+                    time_until_end_of_day().total_seconds()
+                ):
                     try:
                         async with bot.user_interaction(
                             priority=UserInteractionPriority.LOW,
@@ -208,7 +209,9 @@ class HabitTrackerPlugin(Plugin):
                             self._logger.info("Got user interaction lock")
                             await self.poll_user_for_all_habits(user)
                     except UserInteractionPreempted:
-                        self._logger.info("User interaction preempted, trying again")
+                        self._logger.info(
+                            "User interaction preempted, trying again"
+                        )
                     else:
                         self._logger.info("Sleeping for 4 hours")
                         await asyncio.sleep(

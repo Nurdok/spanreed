@@ -4,7 +4,7 @@ from spanreed.storage import redis_api
 import asyncio
 import logging
 import json
-from typing import Generic, TypeVar, Optional
+from typing import Generic, TypeVar, Optional, cast
 from spanreed.user import User
 import abc
 from dataclasses import asdict
@@ -94,7 +94,9 @@ class Plugin(abc.ABC, Generic[UC]):
 
     @classmethod
     async def get_user_data(cls, user: User, key: str) -> Optional[str]:
-        data: str | bytes = await redis_api.get(cls._get_user_data_key(user, key))
+        data: str | bytes = cast(
+            str | bytes, await redis_api.get(cls._get_user_data_key(user, key))
+        )
         if isinstance(data, bytes):
             return data.decode("utf-8")
         return data

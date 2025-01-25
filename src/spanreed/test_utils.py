@@ -72,6 +72,39 @@ def patch_telegram_bot(
     return patch_telegram_bot_in_target_package
 
 
+def patch_obsidian(
+    target_package: str,
+) -> Callable[[Callable[..., None]], Callable[..., None]]:
+    def patch_obsidian_in_target_package(
+        f: Callable[..., None],
+    ) -> Callable[..., None]:
+        def f_with_patched_obsidian(*args: list, **kwargs: dict) -> Any:
+            with patch(
+                f"{target_package}.ObsidianApi", autospec=True
+            ) as mock_obsidian:
+                mock_obsidian.for_user = AsyncMock(return_value=mock_obsidian)
+
+                mock_obsidian.safe_generate_today_note = AsyncMock()
+                mock_obsidian.add_value_to_list_property = AsyncMock()
+                mock_obsidian.remove_value_from_list_property = AsyncMock()
+                mock_obsidian.set_value_of_property = AsyncMock()
+                mock_obsidian.delete_property = AsyncMock()
+                mock_obsidian.get_property = AsyncMock()
+                mock_obsidian.get_daily_note = AsyncMock()
+                mock_obsidian.query_dataview = AsyncMock()
+                mock_obsidian.list_dir = AsyncMock()
+                mock_obsidian.read_file = AsyncMock()
+                mock_obsidian.read_binary_file = AsyncMock()
+                mock_obsidian.move_file = AsyncMock()
+
+                args = (mock_obsidian,) + args
+                return f(*args, **kwargs)
+
+        return f_with_patched_obsidian
+
+    return patch_obsidian_in_target_package
+
+
 async def async_return_false(*_args: Any, **_kwargs: Any) -> bool:
     logging.getLogger(__name__).info("Returning False")
     return False
