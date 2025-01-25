@@ -217,3 +217,4 @@ class HabitTrackerPlugin(Plugin):
                         await asyncio.sleep(
                             datetime.timedelta(hours=4).total_seconds()
                         )
+            self._logger.info("Passed midnight, re-asking")
