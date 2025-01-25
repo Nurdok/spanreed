@@ -53,27 +53,32 @@ class TimekillerPlugin(Plugin):
             )
 
     async def get_available_time_killers(
-        self, user: User, obsidian: ObsidianApi, push: bool,
+        self,
+        user: User,
+        obsidian: ObsidianApi,
+        push: bool,
     ) -> dict:
         timekillers: dict = {
             "Journaling Prompt": self._journal_prompt,
             "Scan Processing": self.prompt_for_scan_processing,
         }
 
-        last_asked: datetime.datetime = datetime.datetime.now() - datetime.timedelta(
-            days=4
+        last_asked: datetime.datetime = (
+            datetime.datetime.now() - datetime.timedelta(days=4)
         )
         last_asked_str: str | None = await self.get_user_data(
             user, self.LAST_ASKED_BOOKS_KEY
         )
         if last_asked_str is not None:
             try:
-                last_asked = datetime.datetime.fromisoformat(
-                    last_asked_str
-                )
+                last_asked = datetime.datetime.fromisoformat(last_asked_str)
             except TypeError:
                 raise ValueError(f"{last_asked_str}, {type(last_asked_str)}")
-        if not push or datetime.datetime.now() - last_asked > datetime.timedelta(days=3):
+        if (
+            not push
+            or datetime.datetime.now() - last_asked
+            > datetime.timedelta(days=3)
+        ):
             timekillers["Books"] = self.prompt_for_currently_reading_books
 
         await obsidian.safe_generate_today_note()
@@ -91,7 +96,9 @@ class TimekillerPlugin(Plugin):
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         timekillers: dict = await self.get_available_time_killers(
-            user, obsidian, True,
+            user,
+            obsidian,
+            True,
         )
         choice: str = random.choice(list(timekillers.keys()))
         await timekillers[choice](user, bot, obsidian)
@@ -100,7 +107,9 @@ class TimekillerPlugin(Plugin):
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         timekillers: dict = await self.get_available_time_killers(
-            user, obsidian, False,
+            user,
+            obsidian,
+            False,
         )
         choices: list[str] = [name for name in timekillers.keys()]
         choice: int = await bot.request_user_choice(
@@ -258,10 +267,19 @@ class TimekillerPlugin(Plugin):
             mark_as_finished: bool = False
             choice = await bot.request_user_choice(
                 f'How\'s it going with reading "{book.title}"?',
-                ["No notes", "I have notes", "Finished!", "Giving up"],
+                [
+                    "No notes (next)",
+                    "I have notes",
+                    "Finished!",
+                    "Giving up",
+                    "Cancel",
+                ],
+                columns=2,
             )
             if choice == 0:
-                return
+                continue
+            if choice == 4:
+                break
             if choice == 2:
                 mark_as_finished = True
             if choice == 3:
@@ -269,7 +287,9 @@ class TimekillerPlugin(Plugin):
                     await bot.request_user_choice(
                         "Do you want to mark it as finished?",
                         ["Yes", "No"],
-                    ) == 0)
+                    )
+                    == 0
+                )
             if mark_as_finished:
                 await obsidian.set_value_of_property(
                     book.file["path"], "status", "read"
@@ -287,8 +307,8 @@ class TimekillerPlugin(Plugin):
                 if finish_date_choice == 0:
                     finish_date = datetime.date.today()
                 elif finish_date_choice == 1:
-                    finish_date = (
-                        datetime.date.today() - datetime.timedelta(days=1)
+                    finish_date = datetime.date.today() - datetime.timedelta(
+                        days=1
                     )
                 elif finish_date_choice == 2:
                     finish_date = datetime.datetime.strptime(
@@ -313,7 +333,11 @@ class TimekillerPlugin(Plugin):
                     "\n\n### Thoughts\n"
                     + await bot.request_user_input("Go ahead then:"),
                 )
-        await self.set_user_data(user, self.LAST_ASKED_BOOKS_KEY, datetime.datetime.now().isoformat())
+        await self.set_user_data(
+            user,
+            self.LAST_ASKED_BOOKS_KEY,
+            datetime.datetime.now().isoformat(),
+        )
 
     async def prompt_for_scan_processing(
         self, _user: User, bot: TelegramBotApi, obsidian: ObsidianApi
