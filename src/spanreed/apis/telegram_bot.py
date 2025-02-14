@@ -759,10 +759,10 @@ class TelegramBotApi:
             try:
                 yield
             except asyncio.CancelledError:
-                user_interaction.task.uncancel()
                 if user_interaction.preempted:
                     log("User interaction was preempted")
                     if propagate_preemption:
+                        user_interaction.task.uncancel()
                         raise UserInteractionPreempted()
                 raise
             finally:
