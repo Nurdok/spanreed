@@ -408,7 +408,9 @@ class UserInteraction:
         return self.__str__()
 
     def __str__(self) -> str:
-        return f"UserInteraction<{self.task.get_coro().cr_code.co_qualname} @ {self.priority.name}>"
+        coro = self.task.get_coro()
+        task_name = coro.cr_code.co_qualname if coro is not None else "unknown"
+        return f"UserInteraction<{task_name} @ {self.priority.name}>"
 
     def allow_to_run(self) -> None:
         self.event.set()
@@ -549,11 +551,14 @@ class TelegramBotApi:
             keyboard[-1].append(button_to_append)
 
         async def send_message() -> Message:
-            return cast(Message, await app.bot.send_message(
-                chat_id=self._telegram_user_id,
-                text=prompt,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            ))
+            return cast(
+                Message,
+                await app.bot.send_message(
+                    chat_id=self._telegram_user_id,
+                    text=prompt,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                ),
+            )
 
         # Wait for the user to select a choice.
         interaction_result: int | str = await self.wait_for_user_interaction(
@@ -575,7 +580,7 @@ class TelegramBotApi:
 
         async def send_message() -> Message:
             return await self.send_message(prompt)
-        
+
         interaction_result: int | str = await self.wait_for_user_interaction(
             callback_id, callback_event, send_message
         )

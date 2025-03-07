@@ -195,26 +195,32 @@ class HabitTrackerPlugin(Plugin):
         self._logger.info(f"Running for user {user}")
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
-        while True:
-            self._logger.info(f"Polling user {user}")
-            with suppress(TimeoutError):
-                async with asyncio.timeout(
-                    time_until_end_of_day().total_seconds()
-                ):
-                    try:
-                        async with bot.user_interaction(
-                            priority=UserInteractionPriority.LOW,
-                            propagate_preemption=True,
-                        ):
-                            self._logger.info("Got user interaction lock")
-                            await self.poll_user_for_all_habits(user)
-                    except UserInteractionPreempted:
-                        self._logger.info(
-                            "User interaction preempted, trying again"
-                        )
-                    else:
-                        self._logger.info("Sleeping for 4 hours")
-                        await asyncio.sleep(
-                            datetime.timedelta(hours=4).total_seconds()
-                        )
-            self._logger.info("Passed midnight, re-asking")
+        try:
+            while True:
+                self._logger.info(f"Polling user {user}")
+                with suppress(TimeoutError):
+                    async with asyncio.timeout(
+                        time_until_end_of_day().total_seconds()
+                    ):
+                        try:
+                            async with bot.user_interaction(
+                                priority=UserInteractionPriority.LOW,
+                                propagate_preemption=True,
+                            ):
+                                self._logger.info("Got user interaction lock")
+                                await self.poll_user_for_all_habits(user)
+                        except UserInteractionPreempted:
+                            self._logger.info(
+                                "User interaction preempted, trying again"
+                            )
+                        else:
+                            self._logger.info("Sleeping for 4 hours")
+                            await asyncio.sleep(
+                                datetime.timedelta(hours=4).total_seconds()
+                            )
+                self._logger.info("Passed midnight, re-asking")
+        except Exception:
+            self._logger.exception("Error in run_for_user")
+            raise
+        finally:
+            self._logger.info("Exiting run_for_user")
