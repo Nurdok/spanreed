@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 import logging
-from todoist_api_python.api_async import (
-    TodoistAPIAsync,
+from typing import Any
+
+from todoist_api_python.api_async import TodoistAPIAsync
+from todoist_api_python.models import (
     Task,
     Comment,
     Project,
 )
-from typing import Any
 
 from spanreed.user import User
 
