@@ -714,11 +714,11 @@ class TelegramBotApi:
         user_interaction_queues = await self._get_user_interaction_queues()
         # TODO: correct order
         for possible_priority in UserInteractionPriority:  # high to low
-            if (
-                possible_priority >= current_interaction.priority
-                or not user_interaction_queues[possible_priority]
-            ):
-                return
+            if possible_priority >= current_interaction.priority:  # >= means lower or equal priority, since higher priority is lower number
+                return 
+            if not user_interaction_queues[possible_priority]:
+                continue
+
             self._logger.info(f"Preempting {current_interaction=}")
             if current_interaction.running:
                 current_interaction.preempt()
