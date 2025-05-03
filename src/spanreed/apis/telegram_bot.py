@@ -554,6 +554,7 @@ class TelegramBotApi:
                         choice_str, callback_data=make_callback_data(i)
                     )
                     keyboard[-1].append(button_to_append)
+                keyboard.append([])
             elif isinstance(choice, str):
                 button_to_append = InlineKeyboardButton(
                     choice, callback_data=make_callback_data(i)
