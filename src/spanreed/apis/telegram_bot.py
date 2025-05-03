@@ -529,7 +529,11 @@ class TelegramBotApi:
         return callback_id, event
 
     async def request_user_choice(
-        self, prompt: str, choices: list[str], *, columns: int = 1
+        self,
+        prompt: str,
+        choices: list[str],
+        *,
+        columns: int = 1,
     ) -> int:
         app = await self.get_application()
 
