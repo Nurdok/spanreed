@@ -183,7 +183,7 @@ class HabitTrackerPlugin(Plugin):
                 choice: int = await bot.request_user_choice(
                     "Did you do any of these habits today?",
                     choices,
-                    columns=max(5, len(habits)),
+                    columns=max(4, len(habits)),
                 )
                 if choice == len(habits):
                     return
