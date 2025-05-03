@@ -531,7 +531,7 @@ class TelegramBotApi:
     async def request_user_choice(
         self,
         prompt: str,
-        choices: list[str],
+        choices: list[str] | list[str | list[str]],
         *,
         columns: int = 1,
     ) -> int:
@@ -547,12 +547,20 @@ class TelegramBotApi:
         keyboard: list[list[InlineKeyboardButton]] = [[]]
 
         for i, choice in enumerate(choices):
-            button_to_append = InlineKeyboardButton(
-                choice, callback_data=make_callback_data(i)
-            )
-            if len(keyboard[-1]) == columns:
+            if isinstance(choice, list):
                 keyboard.append([])
-            keyboard[-1].append(button_to_append)
+                for j, choice_str in enumerate(choice):
+                    button_to_append = InlineKeyboardButton(
+                        choice_str, callback_data=make_callback_data(i)
+                    )
+                    keyboard[-1].append(button_to_append)
+            elif isinstance(choice, str):
+                button_to_append = InlineKeyboardButton(
+                    choice, callback_data=make_callback_data(i)
+                )
+                if len(keyboard[-1]) == columns:
+                    keyboard.append([])
+                keyboard[-1].append(button_to_append)
 
         async def send_message() -> Message:
             return cast(
@@ -776,7 +784,7 @@ class TelegramBotApi:
             await user_interaction.wait_to_run()
         except asyncio.CancelledError:
             self._logger.info("User interaction was cancelled")
-            self._remove_from_user_interaction_queue(user_interaction)
+            await self._remove_from_user_interaction_queue(user_interaction)
             return
         log("Got user interaction permission")
         async with lock:

@@ -179,11 +179,11 @@ class HabitTrackerPlugin(Plugin):
             while habits:
                 choices: list[str] = [
                     habit.name.capitalize() for habit in habits
-                ] + ["Cancel"]
+                ] + [["Cancel"]]
                 choice: int = await bot.request_user_choice(
                     "Did you do any of these habits today?",
                     choices,
-                    columns=min(5, len(habits)),
+                    columns=max(5, len(habits)),
                 )
                 if choice == len(habits):
                     return
