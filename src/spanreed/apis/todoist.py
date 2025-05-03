@@ -14,30 +14,38 @@ from todoist_api_python.models import (
 from spanreed.user import User
 
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
-def with_retries(max_retries: int = 3, initial_delay: float = 1.0) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
-    def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
+def with_retries(
+    max_retries: int = 3, initial_delay: float = 1.0
+) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
+    def decorator(
+        func: Callable[..., Awaitable[T]],
+    ) -> Callable[..., Awaitable[T]]:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
             delay = initial_delay
-            
+
             for attempt in range(max_retries):
                 try:
                     return await func(*args, **kwargs)
                 except Exception as e:
-                    if isinstance(e, (TodoistAPIAsync.HttpError)) and e.status_code == 503:
+                    if (
+                        isinstance(e, (TodoistAPIAsync.HttpError))
+                        and e.status_code == 503
+                    ):
                         if attempt < max_retries - 1:
                             await asyncio.sleep(delay)
                             delay *= 2  # Exponential backoff
                             continue
                     raise
-            
+
             # This line should never be reached since we either return or raise
             raise RuntimeError("Unexpected end of retry loop")
-            
+
         return wrapper
+
     return decorator
 
 
@@ -66,20 +74,28 @@ class Todoist:
         return await self._wrapped_api_call(self._api.add_task, **kwargs)
 
     async def update_task(self, task: Task, **kwargs: Any) -> bool:
-        return await self._wrapped_api_call(self._api.update_task, task.id, **kwargs)
+        return await self._wrapped_api_call(
+            self._api.update_task, task.id, **kwargs
+        )
 
     async def add_comment(self, task: Task, **kwargs: Any) -> Comment:
-        return await self._wrapped_api_call(self._api.add_comment, task.id, **kwargs)
+        return await self._wrapped_api_call(
+            self._api.add_comment, task.id, **kwargs
+        )
 
     async def update_comment(self, comment: Comment, **kwargs: Any) -> bool:
-        return await self._wrapped_api_call(self._api.update_comment, comment.id, **kwargs)
+        return await self._wrapped_api_call(
+            self._api.update_comment, comment.id, **kwargs
+        )
 
     async def get_first_comment_with_yaml(
         self,
         task: Task,
         create: bool = False,
     ) -> Comment:
-        comments: list[Comment] = await self._wrapped_api_call(self._api.get_comments, task_id=task.id)
+        comments: list[Comment] = await self._wrapped_api_call(
+            self._api.get_comments, task_id=task.id
+        )
         for comment in comments:
             if len(parts := comment.content.split("---")) == 3:
                 return comment
@@ -87,9 +103,7 @@ class Todoist:
         if create:
             # No yaml comment was found, create one and return it.
             comment = await self._wrapped_api_call(
-                self._api.add_comment,
-                task_id=task.id,
-                content="---\n---"
+                self._api.add_comment, task_id=task.id, content="---\n---"
             )
             return comment
 
@@ -108,7 +122,7 @@ class Todoist:
     async def get_inbox_tasks(self) -> list[Task]:
         return await self._wrapped_api_call(
             self._api.get_tasks,
-            project_id=(await self._get_inbox_project()).id
+            project_id=(await self._get_inbox_project()).id,
         )
 
     async def get_due_tasks(self) -> list[Task]:
@@ -139,14 +153,23 @@ class Todoist:
             # If we have an overdue task with due string of "every week"
             # and we re-enter this same due string, it'll make the current
             # occurrence with a due date of today.
-            await self._wrapped_api_call(self._api.update_task, task.id, due_string=task.due.string)
+            await self._wrapped_api_call(
+                self._api.update_task, task.id, due_string=task.due.string
+            )
         else:
-            await self._wrapped_api_call(self._api.update_task, task.id, due_string="today")
+            await self._wrapped_api_call(
+                self._api.update_task, task.id, due_string="today"
+            )
 
     async def get_projects(self) -> list[Project]:
         return await self._wrapped_api_call(self._api.get_projects)
 
     @with_retries()
-    async def _wrapped_api_call(self, api_method: Callable[..., Awaitable[T]], *args: Any, **kwargs: Any) -> T:
+    async def _wrapped_api_call(
+        self,
+        api_method: Callable[..., Awaitable[T]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> T:
         """Wrapper for Todoist API calls that adds retry logic."""
         return await api_method(*args, **kwargs)

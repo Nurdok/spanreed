@@ -89,9 +89,13 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 # Wait for cancellation so we can perform the cleanup.
                 self._logger.info("Waiting for cancellation...")
                 while True:
-                    await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
+                    await asyncio.sleep(
+                        datetime.timedelta(hours=1).total_seconds()
+                    )
             except asyncio.CancelledError:
-                self._logger.exception("Cancellation received. Stopping updater...")
+                self._logger.exception(
+                    "Cancellation received. Stopping updater..."
+                )
                 await application.updater.stop()
                 self._logger.info("Stopping application...")
                 await application.stop()
@@ -114,7 +118,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             .build()
         )
 
-        application.add_handler(CallbackQueryHandler(self.handle_callback_query))
+        application.add_handler(
+            CallbackQueryHandler(self.handle_callback_query)
+        )
         application.add_handler(CommandHandler("do", self.show_command_menu))
         application.add_handler(CommandHandler("start", self.start))
         application.add_handler(
@@ -175,13 +181,17 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             )
         raise KeyError(f"User not found for {telegram_user_id=}")
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def start(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if update.effective_user is None:
             self._logger.error("No user found in update")
             return
 
         telegram_user_id: int = update.effective_user.id
-        self._logger.info(f"Got a /start command from user {telegram_user_id=}")
+        self._logger.info(
+            f"Got a /start command from user {telegram_user_id=}"
+        )
         existing_user: Optional[User] = None
         with contextlib.suppress(KeyError):
             existing_user = await self.get_user_by_telegram_user_id(
@@ -290,7 +300,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             )
 
             self._logger.info(f"Inside internal task for /do for {user}")
-            self._logger.info(f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}")
+            self._logger.info(
+                f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}"
+            )
             async with suppress_and_log_exception(BaseException):
                 bot = await TelegramBotApi.for_user(user)
 
@@ -299,19 +311,26 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     PLUGIN_COMMANDS, {}
                 ).items():
                     if plugin_canonical_name not in user.plugins:
-                        self._logger.debug(f"Skipping {plugin_canonical_name=}")
+                        self._logger.debug(
+                            f"Skipping {plugin_canonical_name=}"
+                        )
                         continue
 
-                    self._logger.info(f"Adding commands for {plugin_canonical_name=}")
+                    self._logger.info(
+                        f"Adding commands for {plugin_canonical_name=}"
+                    )
 
                     for command in commands:
                         self._logger.info(f"Adding command {command=}")
                         shown_commands.append(command)
 
-                async with bot.user_interaction(priority=UserInteractionPriority.HIGH):
+                async with bot.user_interaction(
+                    priority=UserInteractionPriority.HIGH
+                ):
                     choice = await bot.request_user_choice(
                         "Please choose a command to run:",
-                        [command.text for command in shown_commands] + ["Cancel"],
+                        [command.text for command in shown_commands]
+                        + ["Cancel"],
                     )
                     if choice == len(shown_commands):
                         return
@@ -372,7 +391,9 @@ class UserInteractionPriority(IntEnum):
 
 
 class UserInteraction:
-    def __init__(self, user_id: int, priority: UserInteractionPriority) -> None:
+    def __init__(
+        self, user_id: int, priority: UserInteractionPriority
+    ) -> None:
         self.user_id = user_id
         self.priority = priority
         self.event = asyncio.Event()
@@ -417,7 +438,9 @@ class TelegramBotApi:
         self._preempted = False
 
     @classmethod
-    async def register_command(cls, plugin: Plugin, command: PluginCommand) -> None:
+    async def register_command(
+        cls, plugin: Plugin, command: PluginCommand
+    ) -> None:
         _logger = logging.getLogger(cls.__name__)
         _logger.info(f"Registering command '{command.text}'")
         app = await cls.get_application()
@@ -442,7 +465,9 @@ class TelegramBotApi:
         _logger.info("Application initialized")
         user_config: UserConfig = await TelegramBotPlugin.get_config(user)
         _logger.info(f"Getting TelegramBotApi for {user=} with {user_config=}")
-        return TelegramBotApi((await TelegramBotPlugin.get_config(user)).user_id)
+        return TelegramBotApi(
+            (await TelegramBotPlugin.get_config(user)).user_id
+        )
 
     @classmethod
     def set_application(cls, application: Application) -> None:
@@ -622,7 +647,9 @@ class TelegramBotApi:
         app = await self.get_application()
         return app.bot_data.setdefault(  # type: ignore
             USER_INTERACTION_QUEUES, {}
-        ).setdefault(self._telegram_user_id, self._get_default_priority_queue())
+        ).setdefault(
+            self._telegram_user_id, self._get_default_priority_queue()
+        )
 
     async def _get_current_user_interaction(self) -> UserInteraction | None:
         app = await self.get_application()
@@ -665,7 +692,9 @@ class TelegramBotApi:
 
         for priority in UserInteractionPriority:  # high to low
             if interaction_queue[priority]:
-                user_interaction: UserInteraction = interaction_queue[priority].pop(0)
+                user_interaction: UserInteraction = interaction_queue[
+                    priority
+                ].pop(0)
                 self._logger.info(f"Allowing {user_interaction=}")
                 user_interaction.allow_to_run()
                 await self._set_current_user_interaction(user_interaction)
@@ -709,13 +738,17 @@ class TelegramBotApi:
         self, user_interaction: UserInteraction
     ) -> None:
         user_interaction_queues = await self._get_user_interaction_queues()
-        user_interaction_queues[user_interaction.priority].append(user_interaction)
+        user_interaction_queues[user_interaction.priority].append(
+            user_interaction
+        )
 
     async def _remove_from_user_interaction_queue(
         self, user_interaction: UserInteraction
     ) -> None:
         user_interaction_queues = await self._get_user_interaction_queues()
-        user_interaction_queues[user_interaction.priority].remove(user_interaction)
+        user_interaction_queues[user_interaction.priority].remove(
+            user_interaction
+        )
 
     @contextlib.asynccontextmanager
     async def user_interaction(
