@@ -198,10 +198,11 @@ class HabitTrackerPlugin(Plugin):
         try:
             while True:
                 self._logger.info(f"Polling user {user}")
+                eod_timeout = time_until_end_of_day().total_seconds()
+                one_hour = 60 * 60
+                min_timeout = min (eod_timeout, one_hour)
                 with suppress(TimeoutError):
-                    async with asyncio.timeout(
-                        time_until_end_of_day().total_seconds()
-                    ):
+                    async with asyncio.timeout(min_timeout):
                         try:
                             async with bot.user_interaction(
                                 priority=UserInteractionPriority.LOW,
