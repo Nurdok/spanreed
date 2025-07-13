@@ -54,6 +54,22 @@ class HabitTrackerPlugin(Plugin):
                 callback=self.poll_user_for_all_habits,
             ),
         )
+        
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Add Habit",
+                callback=self.add_habit,
+            ),
+        )
+        
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Remove Habit",
+                callback=self.remove_habit,
+            ),
+        )
 
         await super().run()
 
@@ -190,6 +206,51 @@ class HabitTrackerPlugin(Plugin):
                 habit: Habit = habits[choice]
                 await self.mark_habit_as_done(user, habit.name)
                 habits.remove(habit)
+
+    async def add_habit(self, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        
+        habit_name: str = await bot.request_user_input(
+            "What is the name of the habit you want to add?"
+        )
+        
+        if any(habit.name.lower() == habit_name.lower() for habit in config.habits):
+            await bot.send_message(f"Habit '{habit_name}' already exists!")
+            return
+        
+        habit_description: str = await bot.request_user_input(
+            "How would you describe this habit?"
+        )
+        
+        new_habit = Habit(habit_name, habit_description)
+        config.habits.append(new_habit)
+        
+        await self.set_config(user, config)
+        await bot.send_message(f"Added habit: {habit_name}")
+
+    async def remove_habit(self, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        
+        if not config.habits:
+            await bot.send_message("You don't have any habits to remove!")
+            return
+        
+        habit_choices: list[str] = [habit.name for habit in config.habits] + ["Cancel"]
+        choice: int = await bot.request_user_choice(
+            "Which habit would you like to remove?",
+            habit_choices,
+            columns=max(2, len(config.habits)),
+        )
+        
+        if choice == len(config.habits):
+            await bot.send_message("Cancelled.")
+            return
+        
+        removed_habit = config.habits.pop(choice)
+        await self.set_config(user, config)
+        await bot.send_message(f"Removed habit: {removed_habit.name}")
 
     async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Running for user {user}")
