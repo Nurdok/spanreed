@@ -786,7 +786,7 @@ class TelegramBotApi:
         except asyncio.CancelledError:
             self._logger.info("User interaction was cancelled")
             await self._remove_from_user_interaction_queue(user_interaction)
-            return
+            raise
         log("Got user interaction permission")
         async with lock:
             try:
