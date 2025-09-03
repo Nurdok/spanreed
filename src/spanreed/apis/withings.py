@@ -2,6 +2,8 @@ import asyncio
 import datetime
 from typing import AsyncGenerator
 
+from yaml import YAMLError
+
 from spanreed.storage import redis_api
 from spanreed.user import User
 import contextlib
@@ -149,7 +151,9 @@ class WithingsApi:
 
     @classmethod
     @contextlib.asynccontextmanager
-    async def start_authentication(cls, user: User) -> AsyncGenerator[AuthenticationFlow, None]:
+    async def start_authentication(
+        cls, user: User
+    ) -> AsyncGenerator[AuthenticationFlow, None]:
         if user.id in cls.authentication_flows:
             raise ValueError("Authentication flow already started.")
         flow = AuthenticationFlow(user)
@@ -189,7 +193,9 @@ class WithingsApi:
         self._logger.info(f"Got response: {response.json()}")
         if response.json()["status"] == 401:
             self._logger.info("Refreshing token.")
-            async with suppress_and_log_exception(requests.exceptions.HTTPError) as did_suppress:
+            async with suppress_and_log_exception(
+                requests.exceptions.HTTPError
+            ) as did_suppress:
                 self._user_config = await AuthenticationFlow.refresh_token(
                     self._user, self._user_config
                 )
@@ -203,13 +209,25 @@ class WithingsApi:
         self._logger.info(f"Got response: {response.json()}")
 
         # TODO: handle multiple measurements
+        try:
+            result = self.extract_measurements_from_json(response.json())
+        except YAMLError:
+            self._logger.exception(
+                f"Failed to parse response: {response.text}"
+            )
+            return None
+
+        if not result.keys():
+            return None
+        return result
+
+    def extract_measurements_from_json(
+        self, data: dict
+    ) -> dict[MeasurementType, float]:
         result: dict[MeasurementType, float] = {}
-        for measure_group in response.json()["body"]["measuregrps"]:
+        for measure_group in data["body"]["measuregrps"]:
             for measure in measure_group["measures"]:
                 result[MeasurementType(int(measure["type"]))] = int(
                     measure["value"]
                 ) * 10 ** int(measure["unit"])
-
-        if not result.keys():
-            return None
         return result
