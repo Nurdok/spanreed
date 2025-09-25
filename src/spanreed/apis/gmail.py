@@ -199,15 +199,45 @@ class GmailApi:
     def _parse_email_body(self, payload: Dict[str, Any]) -> str:
         body = ""
 
+        def decode_body_data(body_part):
+            """Helper to safely decode body data"""
+            try:
+                if 'data' in body_part['body'] and body_part['body']['data']:
+                    return base64.urlsafe_b64decode(body_part['body']['data']).decode('utf-8')
+            except Exception as e:
+                # Log error but don't fail completely
+                print(f"Error decoding body data: {e}")
+            return ""
+
         if 'parts' in payload:
+            # Look for text/plain first (preferred)
             for part in payload['parts']:
                 if part['mimeType'] == 'text/plain':
-                    data = part['body']['data']
-                    body = base64.urlsafe_b64decode(data).decode('utf-8')
-                    break
-        elif payload['mimeType'] == 'text/plain' and 'data' in payload['body']:
-            data = payload['body']['data']
-            body = base64.urlsafe_b64decode(data).decode('utf-8')
+                    body = decode_body_data(part)
+                    if body:
+                        break
+
+            # If no plain text found, look for text/html
+            if not body:
+                for part in payload['parts']:
+                    if part['mimeType'] == 'text/html':
+                        body = decode_body_data(part)
+                        if body:
+                            break
+
+            # If still no body, try recursing into nested parts
+            if not body:
+                for part in payload['parts']:
+                    if 'parts' in part:
+                        nested_body = self._parse_email_body(part)
+                        if nested_body:
+                            body = nested_body
+                            break
+
+        elif payload['mimeType'] == 'text/plain' and 'body' in payload:
+            body = decode_body_data(payload)
+        elif payload['mimeType'] == 'text/html' and 'body' in payload:
+            body = decode_body_data(payload)
 
         return body
 
