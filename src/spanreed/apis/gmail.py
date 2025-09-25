@@ -148,7 +148,7 @@ class GmailApi:
         config = await GmailApi._get_stored_credentials_config()
         return config is not None
 
-    async def authenticate(self, redirect_uri: str = "http://spanreed.ink:5000/gmail-oauth") -> str:
+    async def authenticate(self, redirect_uri: str = "https://spanreed.ink:5000/gmail-oauth") -> str:
         """Start OAuth2 flow for this user using global app credentials."""
         credentials_config = await self._get_stored_credentials_config()
         if not credentials_config:
@@ -163,7 +163,7 @@ class GmailApi:
         auth_url, _ = flow.authorization_url(prompt='consent', state=str(self.user.id))
         return auth_url
 
-    async def complete_authentication(self, authorization_code: str, redirect_uri: str = "http://spanreed.ink:5000/gmail-oauth") -> None:
+    async def complete_authentication(self, authorization_code: str, redirect_uri: str = "https://spanreed.ink:5000/gmail-oauth") -> None:
         """Complete OAuth2 flow and store user's access tokens."""
         credentials_config = await self._get_stored_credentials_config()
         if not credentials_config:
