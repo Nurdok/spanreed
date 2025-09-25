@@ -468,8 +468,8 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
             await bot.send_message("Fetching recent emails to test against...")
 
-            # Get recent 50 emails
-            recent_emails = await gmail.get_recent_messages(max_results=500)
+            # Get emails from inbox only
+            recent_emails = await gmail.get_recent_messages(query="in:inbox", max_results=500)
 
             await bot.send_message(f"Got {len(recent_emails)} emails to test against.")
 
