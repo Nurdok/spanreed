@@ -1,5 +1,6 @@
 import abc
 import re
+import html
 import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
@@ -38,26 +39,26 @@ class TelegramNotificationAction(EmailActionHandler):
         message_parts = []
 
         if custom_message:
-            message_parts.append(custom_message)
+            message_parts.append(html.escape(custom_message))
         else:
-            message_parts.append(f"📧 Email matched rule: **{rule_name}**")
+            message_parts.append(f"📧 Email matched rule: <b>{html.escape(rule_name)}</b>")
 
-        message_parts.append(f"**From:** {email.sender}")
-        message_parts.append(f"**Subject:** {email.subject}")
-        message_parts.append(f"**Date:** {email.date.strftime('%Y-%m-%d %H:%M:%S')}")
+        message_parts.append(f"<b>From:</b> {html.escape(email.sender)}")
+        message_parts.append(f"<b>Subject:</b> {html.escape(email.subject)}")
+        message_parts.append(f"<b>Date:</b> {email.date.strftime('%Y-%m-%d %H:%M:%S')}")
 
         if email.has_attachments:
             message_parts.append("📎 Has attachments")
 
         if include_snippet and email.snippet:
-            message_parts.append(f"**Preview:** {email.snippet}")
+            message_parts.append(f"<b>Preview:</b> {html.escape(email.snippet)}")
 
         if include_body and email.body:
             # Limit body length to avoid telegram message limits
             body_preview = email.body[:500]
             if len(email.body) > 500:
                 body_preview += "..."
-            message_parts.append(f"**Body:** {body_preview}")
+            message_parts.append(f"<b>Body:</b> {html.escape(body_preview)}")
 
         message = "\n\n".join(message_parts)
 
@@ -84,7 +85,7 @@ class DownloadLinkAction(EmailActionHandler):
             links = await self._extract_links_from_email(email, url_regex, text_regex)
 
             if not links:
-                await bot.send_message(f"🔗 No matching links found in email from {email.sender}")
+                await bot.send_message(f"🔗 No matching links found in email from {html.escape(email.sender)}")
                 return
 
             # Download and send each found link
@@ -197,6 +198,6 @@ class DownloadLinkAction(EmailActionHandler):
         await bot.send_document(filename, bytes(file_data))
 
         # Send additional info as separate message
-        await bot.send_message(f"📄 File from {email.sender}\n📧 {email.subject}\n🏷️ Rule: {rule_name}")
+        await bot.send_message(f"📄 File from {html.escape(email.sender)}\n📧 {html.escape(email.subject)}\n🏷️ Rule: {html.escape(rule_name)}")
 
         return filename
