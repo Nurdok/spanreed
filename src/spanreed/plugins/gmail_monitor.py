@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import json
 import re
 from dataclasses import dataclass, asdict
@@ -499,9 +500,9 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 if email in debug_emails:
                     debug_info.append(
                         f"Email {len(debug_info) + 1}:\n"
-                        f"  From: {email.sender}\n"
-                        f"  Subject: {email.subject}\n"
-                        f"  Body preview: {email.body[:100]}...\n"
+                        f"  From: {html.escape(email.sender)}\n"
+                        f"  Subject: {html.escape(email.subject)}\n"
+                        f"  Body preview: {html.escape(email.body[:100])}...\n"
                         f"  Has attachments: {email.has_attachments}\n"
                         f"  Matches: {rule.filter.matches(email)}"
                     )
@@ -518,15 +519,15 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
             if not matches:
                 try:
-                    await bot.send_message(f"No recent emails match rule '{rule.name}'.")
+                    await bot.send_message(f"No recent emails match rule '{html.escape(rule.name)}'.")
                 except Exception as e:
                     await bot.send_message(f"Error showing no matches result: {str(e)}")
             else:
                 try:
                     await bot.send_message(
-                        f"Found {len(matches)} matching email(s) for rule '{rule.name}':\n\n" +
+                        f"Found {len(matches)} matching email(s) for rule '{html.escape(rule.name)}':\n\n" +
                         "\n".join([
-                            f"• From: {email.sender}\n  Subject: {email.subject}\n  Date: {email.date.strftime('%Y-%m-%d %H:%M')}"
+                            f"• From: {html.escape(email.sender)}\n  Subject: {html.escape(email.subject)}\n  Date: {email.date.strftime('%Y-%m-%d %H:%M')}"
                             for email in matches[:5]  # Show first 5
                         ]) +
                         (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else "")
