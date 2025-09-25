@@ -607,13 +607,20 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             for email in recent_emails:
                 # Debug info for first 3 emails
                 if email in debug_emails:
+                    # Extract all links for debug purposes
+                    all_links = self._extract_all_links_for_debug(email.body)
+                    links_text = f"  All links found ({len(all_links)}): " + (", ".join(all_links[:5]) if all_links else "None")
+                    if len(all_links) > 5:
+                        links_text += f" ... and {len(all_links) - 5} more"
+
                     debug_info.append(
                         f"Email {len(debug_info) + 1}:\n"
                         f"  From: {html.escape(email.sender)}\n"
                         f"  Subject: {html.escape(email.subject)}\n"
                         f"  Body preview: {html.escape(email.body[:100])}...\n"
                         f"  Has attachments: {email.has_attachments}\n"
-                        f"  Matches: {rule.filter.matches(email)}"
+                        f"  Matches: {rule.filter.matches(email)}\n"
+                        f"{links_text}"
                     )
 
                 if rule.filter.matches(email):
@@ -824,3 +831,11 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         except Exception as e:
             self._logger.exception(f"Error in Gmail monitor for user {user}: {e}")
             raise
+
+    def _extract_all_links_for_debug(self, email_body: str) -> List[str]:
+        """Extract all HTTP/HTTPS links from email body for debugging purposes"""
+        import re
+        # Simple regex to find all HTTP/HTTPS URLs
+        url_pattern = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
+        links = url_pattern.findall(email_body)
+        return links
