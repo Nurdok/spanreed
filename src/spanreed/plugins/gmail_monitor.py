@@ -392,7 +392,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 "Enter a regex pattern to match URLs.\n" +
                 "Examples:\n" +
                 "• <code>https://track\\.icount\\.co\\.il/.*</code> (iCount links)\n" +
-                "• <code>https?://[^\\s<>\"']+\\.pdf</code> (any PDF)\n" +
+                "• <code>https?://[^\\s&lt;&gt;\"']+\\.pdf</code> (any PDF)\n" +
                 "• <code>https://example\\.com/.*</code> (specific domain)"
             )
             url_regex = await bot.request_user_input("URL regex pattern:")
