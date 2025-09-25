@@ -29,7 +29,7 @@ class AuthenticationFlow:
     CLIENT_ID = (
         "ed9577e2d6a8eb2ddd3223c5d251d210f1a9e3b16975c8f7ab4a9f5a32f6f22b"
     )
-    REDIRECT_URI = "http://spanreed.ink:5000/withings-oauth"
+    REDIRECT_URI = "https://spanreed.ink/withings-oauth"
 
     def __init__(self, user: User):
         self._user = user

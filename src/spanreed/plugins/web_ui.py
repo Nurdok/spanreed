@@ -114,7 +114,7 @@ class WebUiPlugin(Plugin[None]):
             return "Gmail authenticated successfully. You can close this tab."
 
         # Start the Quart app.
-        await app.run_task(debug=True, host="0.0.0.0", port=5000)
+        await app.run_task(debug=False, host="127.0.0.1", port=5000)
 
 
 class RedisPubSubHandler(logging.Handler):
