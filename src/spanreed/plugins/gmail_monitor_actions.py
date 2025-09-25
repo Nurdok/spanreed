@@ -152,9 +152,14 @@ class DownloadLinkAction(EmailActionHandler):
         rule_name: str,
         custom_filename: Optional[str],
         max_file_size_mb: int,
-        index: int
+        index: int,
+        redirect_count: int = 0
     ) -> Optional[str]:
         """Download file from URL and send via Telegram"""
+
+        # Prevent infinite redirects
+        if redirect_count > 5:
+            raise Exception("Too many redirects (maximum 5)")
 
         # Generate filename
         if custom_filename:
@@ -205,8 +210,21 @@ class DownloadLinkAction(EmailActionHandler):
                     # Peek at first 200 chars to see if it's HTML
                     preview = file_data[:200].decode('utf-8', errors='ignore')
                     if preview.strip().lower().startswith('<!doctype html') or preview.strip().lower().startswith('<html'):
-                        self._logger.warning(f"Got HTML response instead of file from {url}")
-                        raise Exception(f"URL returned HTML page instead of file (Content-Type: {content_type})")
+                        self._logger.warning(f"Got HTML response instead of file from {url}, checking for redirects")
+
+                        # Try to parse the HTML for redirects
+                        html_content = file_data.decode('utf-8', errors='ignore')
+                        redirect_url = self._extract_redirect_from_html(html_content, url)
+
+                        if redirect_url:
+                            self._logger.info(f"Found redirect in HTML: {redirect_url}")
+                            await bot.send_message(f"🔄 Following redirect to: <code>{html.escape(redirect_url[:100])}{'...' if len(redirect_url) > 100 else ''}</code>")
+                            # Follow the redirect (recursive call with redirect URL)
+                            return await self._download_and_send_file(
+                                bot, redirect_url, email, rule_name, custom_filename, max_file_size_mb, index, redirect_count + 1
+                            )
+                        else:
+                            raise Exception(f"URL returned HTML page instead of file (Content-Type: {content_type})")
 
         final_data = bytes(file_data)
 
@@ -221,3 +239,69 @@ class DownloadLinkAction(EmailActionHandler):
         await bot.send_message(f"📄 File from {html.escape(email.sender)}\n📧 {html.escape(email.subject)}\n🏷️ Rule: {html.escape(rule_name)}")
 
         return filename
+
+    def _extract_redirect_from_html(self, html_content: str, base_url: str) -> Optional[str]:
+        """Extract redirect URL from HTML content"""
+        try:
+            # Case 1: Meta refresh redirect
+            # <meta http-equiv="refresh" content="0;url=https://example.com">
+            meta_refresh_match = re.search(
+                r'<meta[^>]*http-equiv=["\']?refresh["\']?[^>]*content=["\']?[^;"]*;?\s*url=([^"\'>\s]+)["\']?[^>]*>',
+                html_content,
+                re.IGNORECASE
+            )
+            if meta_refresh_match:
+                redirect_url = meta_refresh_match.group(1).strip()
+                return self._resolve_url(redirect_url, base_url)
+
+            # Case 2: JavaScript window.location redirect
+            # window.location = "https://example.com"
+            # window.location.href = "https://example.com"
+            js_location_patterns = [
+                r'window\.location\s*=\s*["\']([^"\']+)["\']',
+                r'window\.location\.href\s*=\s*["\']([^"\']+)["\']',
+                r'location\.href\s*=\s*["\']([^"\']+)["\']',
+                r'document\.location\s*=\s*["\']([^"\']+)["\']',
+            ]
+
+            for pattern in js_location_patterns:
+                match = re.search(pattern, html_content, re.IGNORECASE)
+                if match:
+                    redirect_url = match.group(1).strip()
+                    return self._resolve_url(redirect_url, base_url)
+
+            # Case 3: HTML link with "click here" or auto-redirect text
+            # Look for links that might be the redirect target
+            link_patterns = [
+                r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>.*?(?:click|continue|redirect|download)',
+                r'href=["\']([^"\']+)["\'][^>]*>.*?(?:here|download|continue)',
+            ]
+
+            for pattern in link_patterns:
+                match = re.search(pattern, html_content, re.IGNORECASE | re.DOTALL)
+                if match:
+                    redirect_url = match.group(1).strip()
+                    return self._resolve_url(redirect_url, base_url)
+
+            return None
+        except Exception as e:
+            self._logger.warning(f"Error parsing HTML for redirects: {e}")
+            return None
+
+    def _resolve_url(self, url: str, base_url: str) -> str:
+        """Resolve relative URLs against base URL"""
+        if url.startswith('http://') or url.startswith('https://'):
+            return url
+        elif url.startswith('//'):
+            # Protocol-relative URL
+            base_protocol = 'https:' if base_url.startswith('https:') else 'http:'
+            return base_protocol + url
+        elif url.startswith('/'):
+            # Absolute path
+            from urllib.parse import urlparse
+            parsed_base = urlparse(base_url)
+            return f"{parsed_base.scheme}://{parsed_base.netloc}{url}"
+        else:
+            # Relative path
+            from urllib.parse import urljoin
+            return urljoin(base_url, url)
