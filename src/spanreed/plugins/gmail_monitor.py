@@ -600,38 +600,10 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 await bot.send_message(f"Error showing rule criteria: {str(e)}")
 
             matches = []
-            # Debug: Show first few emails being tested
-            debug_emails = recent_emails[:3]  # Show first 3 emails for debugging
-            debug_info = []
 
             for email in recent_emails:
-                # Debug info for first 3 emails
-                if email in debug_emails:
-                    # Extract all links for debug purposes
-                    all_links = self._extract_all_links_for_debug(email.body)
-                    links_text = f"  All links found ({len(all_links)}): " + (", ".join(all_links[:5]) if all_links else "None")
-                    if len(all_links) > 5:
-                        links_text += f" ... and {len(all_links) - 5} more"
-
-                    debug_info.append(
-                        f"Email {len(debug_info) + 1}:\n"
-                        f"  From: {html.escape(email.sender)}\n"
-                        f"  Subject: {html.escape(email.subject)}\n"
-                        f"  Body preview: {html.escape(email.body[:100])}...\n"
-                        f"  Has attachments: {email.has_attachments}\n"
-                        f"  Matches: {rule.filter.matches(email)}\n"
-                        f"{links_text}"
-                    )
-
                 if rule.filter.matches(email):
                     matches.append(email)
-
-            # Show debug info
-            if debug_info:
-                try:
-                    await bot.send_message("Debug - First 3 emails:\n\n" + "\n\n".join(debug_info))
-                except Exception as e:
-                    await bot.send_message(f"Error showing debug info: {str(e)}")
 
             if not matches:
                 try:
@@ -640,14 +612,28 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                     await bot.send_message(f"Error showing no matches result: {str(e)}")
             else:
                 try:
-                    await bot.send_message(
-                        f"Found {len(matches)} matching email(s) for rule '{html.escape(rule.name)}':\n\n" +
-                        "\n".join([
-                            f"• From: {html.escape(email.sender)}\n  Subject: {html.escape(email.subject)}\n  Date: {email.date.strftime('%Y-%m-%d %H:%M')}"
-                            for email in matches[:5]  # Show first 5
-                        ]) +
-                        (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else "")
-                    )
+                    # Show matching emails with link debug info
+                    match_details = []
+                    for email in matches[:5]:  # Show first 5
+                        all_links = self._extract_all_links_for_debug(email.body)
+                        links_text = f"Links found ({len(all_links)}): " + (", ".join(all_links[:3]) if all_links else "None")
+                        if len(all_links) > 3:
+                            links_text += f" ... and {len(all_links) - 3} more"
+
+                        match_details.append(
+                            f"• From: {html.escape(email.sender)}\n" +
+                            f"  Subject: {html.escape(email.subject)}\n" +
+                            f"  Date: {email.date.strftime('%Y-%m-%d %H:%M')}\n" +
+                            f"  {links_text}"
+                        )
+
+                    message_parts = [f"Found {len(matches)} matching email(s) for rule '{html.escape(rule.name)}':\n"]
+                    message_parts.extend(match_details)
+
+                    if len(matches) > 5:
+                        message_parts.append(f"\n... and {len(matches) - 5} more")
+
+                    await bot.send_message("\n\n".join(message_parts))
                 except Exception as e:
                     await bot.send_message(f"Error showing matches (found {len(matches)} matches): {str(e)}")
 
