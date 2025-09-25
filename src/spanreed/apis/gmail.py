@@ -5,6 +5,8 @@ import email
 import json
 import logging
 import os
+import quopri
+import urllib.parse
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
@@ -203,7 +205,23 @@ class GmailApi:
             """Helper to safely decode body data"""
             try:
                 if 'data' in body_part['body'] and body_part['body']['data']:
-                    return base64.urlsafe_b64decode(body_part['body']['data']).decode('utf-8')
+                    decoded_bytes = base64.urlsafe_b64decode(body_part['body']['data'])
+                    decoded_text = decoded_bytes.decode('utf-8')
+
+                    # Check if content is quoted-printable encoded
+                    if '=3D' in decoded_text or '=2E' in decoded_text or '=\n' in decoded_text:
+                        try:
+                            decoded_text = quopri.decodestring(decoded_text).decode('utf-8')
+                        except:
+                            pass  # If quopri decoding fails, use original
+
+                    # URL decode any remaining encoded characters
+                    try:
+                        decoded_text = urllib.parse.unquote(decoded_text)
+                    except:
+                        pass  # If URL decoding fails, use what we have
+
+                    return decoded_text
             except Exception as e:
                 # Log error but don't fail completely
                 print(f"Error decoding body data: {e}")
