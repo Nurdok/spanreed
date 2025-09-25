@@ -91,6 +91,10 @@ class DownloadLinkAction(EmailActionHandler):
             # Download and send each found link
             for i, link in enumerate(links[:3]):  # Limit to first 3 files
                 try:
+                    # Show the specific link being processed
+                    link_preview = link[:100] + "..." if len(link) > 100 else link
+                    await bot.send_message(f"🔗 Processing link {i+1}: {html.escape(link_preview)}")
+
                     filename = await self._download_and_send_file(
                         bot, link, email, rule_name, custom_filename, max_file_size_mb, i
                     )
@@ -98,7 +102,8 @@ class DownloadLinkAction(EmailActionHandler):
                         await bot.send_message(f"📄 Downloaded and sent: {filename}")
                 except Exception as e:
                     self._logger.error(f"Failed to download file from {link}: {e}")
-                    await bot.send_message(f"❌ Failed to download file: {str(e)}")
+                    link_preview = link[:100] + "..." if len(link) > 100 else link
+                    await bot.send_message(f"❌ Failed to download from {html.escape(link_preview)}: {str(e)}")
 
         except Exception as e:
             self._logger.error(f"Download link action failed: {e}")
@@ -175,7 +180,12 @@ class DownloadLinkAction(EmailActionHandler):
                 if response.status != 200:
                     raise Exception(f"HTTP {response.status}: {response.reason}")
 
+                # Debug info about the response
+                content_type = response.headers.get('content-type', 'unknown')
                 content_length = response.headers.get('content-length')
+
+                self._logger.info(f"Downloading from {url}: Content-Type: {content_type}, Content-Length: {content_length}")
+
                 if content_length and int(content_length) > max_file_size_mb * 1024 * 1024:
                     raise Exception(f"File too large: {int(content_length) / (1024*1024):.1f}MB > {max_file_size_mb}MB")
 
@@ -190,8 +200,22 @@ class DownloadLinkAction(EmailActionHandler):
                         raise Exception(f"File too large: {downloaded_size / (1024*1024):.1f}MB > {max_file_size_mb}MB")
                     file_data.extend(chunk)
 
+                # Check if we got HTML instead of the expected file (common redirect issue)
+                if content_type.startswith('text/html') and downloaded_size > 0:
+                    # Peek at first 200 chars to see if it's HTML
+                    preview = file_data[:200].decode('utf-8', errors='ignore')
+                    if preview.strip().lower().startswith('<!doctype html') or preview.strip().lower().startswith('<html'):
+                        self._logger.warning(f"Got HTML response instead of file from {url}")
+                        raise Exception(f"URL returned HTML page instead of file (Content-Type: {content_type})")
+
+        final_data = bytes(file_data)
+
+        # Send debug info about the downloaded file
+        debug_info = f"📊 File info: {len(final_data)} bytes, Content-Type: {content_type}"
+        await bot.send_message(debug_info)
+
         # Send via Telegram
-        await bot.send_document(filename, bytes(file_data))
+        await bot.send_document(filename, final_data)
 
         # Send additional info as separate message
         await bot.send_message(f"📄 File from {html.escape(email.sender)}\n📧 {html.escape(email.subject)}\n🏷️ Rule: {html.escape(rule_name)}")
