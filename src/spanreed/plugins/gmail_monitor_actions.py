@@ -106,42 +106,38 @@ class DownloadLinkAction(EmailActionHandler):
 
     async def _extract_links_from_email(self, email: EmailMessage, url_regex: str, text_regex: Optional[str]) -> List[str]:
         """Extract links from email body based on URL and text regex patterns"""
-        links = []
 
-        # First, find all URLs matching the URL regex
+        # First, find ALL URLs in the email body using a simple pattern
+        all_urls_pattern = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
+        all_urls = all_urls_pattern.findall(email.body)
+
+        # Now filter based on the configured url_regex
         url_pattern = re.compile(url_regex, re.IGNORECASE)
-        url_matches = url_pattern.findall(email.body)
+        matching_urls = [url for url in all_urls if url_pattern.search(url)]
 
+        # If no text regex specified, return all matching URLs
         if not text_regex:
-            # If no text regex specified, return all URL matches
-            return url_matches
+            return matching_urls
 
-        # If text regex specified, find links where the link text matches
+        # If text regex specified, filter URLs based on surrounding text
         text_pattern = re.compile(text_regex, re.IGNORECASE)
+        filtered_urls = []
 
-        # Look for HTML links: <a href="url">text</a>
-        html_link_pattern = re.compile(
-            r'<a[^>]+href=["\'](https?://[^\s<>"\']+)["\'][^>]*>([^<]+)</a>',
-            re.IGNORECASE
-        )
-        html_matches = html_link_pattern.findall(email.body)
+        for url in matching_urls:
+            # Look for the URL in the email body and check surrounding text
+            # Find the position of this URL in the email body
+            url_pos = email.body.find(url)
+            if url_pos != -1:
+                # Get some context around the URL (100 chars before and after)
+                start = max(0, url_pos - 100)
+                end = min(len(email.body), url_pos + len(url) + 100)
+                context = email.body[start:end]
 
-        for url, link_text in html_matches:
-            if url_pattern.search(url) and text_pattern.search(link_text):
-                links.append(url)
+                # Check if the text pattern matches anywhere in this context
+                if text_pattern.search(context):
+                    filtered_urls.append(url)
 
-        # Also look for plain text patterns where URL follows text
-        # This covers cases where emails have "Click here: http://..." or "Download: https://..."
-        text_url_pattern = re.compile(
-            rf'({text_regex}).*?(https?://[^\s<>"\']+)',
-            re.IGNORECASE | re.DOTALL
-        )
-        text_url_matches = text_url_pattern.findall(email.body)
-        for text_match, url in text_url_matches:
-            if url_pattern.search(url) and url not in links:  # Avoid duplicates
-                links.append(url)
-
-        return links
+        return filtered_urls
 
     async def _download_and_send_file(
         self,
