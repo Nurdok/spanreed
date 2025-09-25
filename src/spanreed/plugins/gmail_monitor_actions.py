@@ -117,6 +117,8 @@ class DownloadLinkAction(EmailActionHandler):
             return url_matches
 
         # If text regex specified, find links where the link text matches
+        text_pattern = re.compile(text_regex, re.IGNORECASE)
+
         # Look for HTML links: <a href="url">text</a>
         html_link_pattern = re.compile(
             r'<a[^>]+href=["\'](https?://[^\s<>"\']+)["\'][^>]*>([^<]+)</a>',
@@ -124,22 +126,20 @@ class DownloadLinkAction(EmailActionHandler):
         )
         html_matches = html_link_pattern.findall(email.body)
 
-        text_pattern = re.compile(text_regex, re.IGNORECASE)
         for url, link_text in html_matches:
-            if url_pattern.match(url) and text_pattern.search(link_text):
+            if url_pattern.search(url) and text_pattern.search(link_text):
                 links.append(url)
 
         # Also look for plain text patterns where URL follows text
-        # This is less reliable but covers cases where emails have "Click here: http://..."
-        if not links:
-            text_url_pattern = re.compile(
-                rf'({text_regex}).*?(https?://[^\s<>"\']+)',
-                re.IGNORECASE | re.DOTALL
-            )
-            text_url_matches = text_url_pattern.findall(email.body)
-            for text_match, url in text_url_matches:
-                if url_pattern.match(url):
-                    links.append(url)
+        # This covers cases where emails have "Click here: http://..." or "Download: https://..."
+        text_url_pattern = re.compile(
+            rf'({text_regex}).*?(https?://[^\s<>"\']+)',
+            re.IGNORECASE | re.DOTALL
+        )
+        text_url_matches = text_url_pattern.findall(email.body)
+        for text_match, url in text_url_matches:
+            if url_pattern.search(url) and url not in links:  # Avoid duplicates
+                links.append(url)
 
         return links
 
