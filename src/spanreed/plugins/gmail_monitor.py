@@ -169,8 +169,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
             auth_url = await auth_flow.get_auth_url()
             await bot.send_message(
-                f"Click [here]({auth_url}) to authenticate with Gmail.",
-                parse_markdown=True,
+                f'Click <a href="{auth_url}">here</a> to authenticate with Gmail.'
             )
 
             await auth_done.wait()
@@ -304,8 +303,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         # Confirm filter
         await bot.send_message(
-            "Filter criteria:\n" + "\n".join(f"• {c}" for c in criteria),
-            parse_markdown=True
+            "Filter criteria:\n" + "\n".join(f"• {c}" for c in criteria)
         )
 
         if await bot.request_user_choice("Is this correct?", ["Yes", "No"]) == 1:
@@ -487,7 +485,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 criteria.append(f"Has attachments: {rule.filter.has_attachments}")
 
             try:
-                await bot.send_message(f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria), parse_markdown=True)
+                await bot.send_message(f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria))
             except Exception as e:
                 await bot.send_message(f"Error showing rule criteria: {str(e)}")
 
@@ -531,8 +529,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                             f"• From: {html.escape(email.sender)}\n  Subject: {html.escape(email.subject)}\n  Date: {email.date.strftime('%Y-%m-%d %H:%M')}"
                             for email in matches[:5]  # Show first 5
                         ]) +
-                        (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else ""),
-                        parse_markdown=True
+                        (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else "")
                     )
                 except Exception as e:
                     await bot.send_message(f"Error showing matches (found {len(matches)} matches): {str(e)}")
@@ -555,18 +552,18 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         last_check_str = last_check if last_check else "Never"
 
         status_parts = [
-            f"**Gmail Status:** {auth_status}",
-            f"**Check Interval:** {config.check_interval_minutes} minutes",
-            f"**Last Check:** {last_check_str}",
-            f"**Enabled Rules:** {len(enabled_rules)}",
-            f"**Disabled Rules:** {len(disabled_rules)}",
+            f"<b>Gmail Status:</b> {auth_status}",
+            f"<b>Check Interval:</b> {config.check_interval_minutes} minutes",
+            f"<b>Last Check:</b> {last_check_str}",
+            f"<b>Enabled Rules:</b> {len(enabled_rules)}",
+            f"<b>Disabled Rules:</b> {len(disabled_rules)}",
         ]
 
         if enabled_rules:
-            status_parts.append("\n**Active Rules:**")
+            status_parts.append("\n<b>Active Rules:</b>")
             status_parts.extend([f"• {rule.name}" for rule in enabled_rules])
 
-        await bot.send_message("\n".join(status_parts), parse_markdown=True)
+        await bot.send_message("\n".join(status_parts))
 
     async def _get_processed_emails_key(self, user: User) -> str:
         return self._get_user_data_key(user, "processed_emails")
