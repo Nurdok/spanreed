@@ -19,6 +19,7 @@ from spanreed.apis.gmail import GmailApi, EmailMessage, GmailAuthenticationFlow
 from spanreed.plugins.gmail_monitor_actions import (
     EmailActionHandler,
     TelegramNotificationAction,
+    DownloadLinkAction,
     EmailMatch,
 )
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
@@ -92,6 +93,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         super().__init__()
         self._action_handlers: Dict[str, EmailActionHandler] = {
             'telegram_notification': TelegramNotificationAction(),
+            'download_link': DownloadLinkAction(),
         }
 
     @classmethod
@@ -321,39 +323,147 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         await bot.send_message("Now let's set up actions to take when emails match this filter.")
 
-        # Currently only support telegram notifications, but structured for extension
-        action_choice = await bot.request_user_choice(
-            "What action should be taken?",
-            ["Send Telegram notification", "Done"]
-        )
+        while True:
+            action_choice = await bot.request_user_choice(
+                "What action should be taken?",
+                ["Send Telegram notification", "Download link from email", "Done"]
+            )
 
-        if action_choice == 0:  # Telegram notification
-            # Configure notification options
-            include_body = await bot.request_user_choice(
-                "Include email body in notification?", ["Yes", "No"]
-            ) == 0
+            if action_choice == 0:  # Telegram notification
+                action_config = await self._configure_telegram_notification(bot)
+                actions.append(EmailAction(type='telegram_notification', config=action_config))
 
-            include_snippet = await bot.request_user_choice(
-                "Include email snippet in notification?", ["Yes", "No"]
-            ) == 0
+            elif action_choice == 1:  # Download link
+                action_config = await self._configure_download_link(bot)
+                if action_config:  # Only add if configuration completed
+                    actions.append(EmailAction(type='download_link', config=action_config))
 
-            custom_message = ""
-            if await bot.request_user_choice(
-                "Add custom message prefix?", ["Yes", "No"]
-            ) == 0:
-                custom_message = await bot.request_user_input(
-                    "Enter custom message:"
-                )
+            else:  # Done
+                break
 
-            action_config = {
-                'include_body': include_body,
-                'include_snippet': include_snippet,
-                'custom_message': custom_message
-            }
-
-            actions.append(EmailAction(type='telegram_notification', config=action_config))
+            # Ask if user wants to add another action
+            if await bot.request_user_choice("Add another action?", ["Yes", "No"]) == 1:
+                break
 
         return actions
+
+    async def _configure_telegram_notification(self, bot: TelegramBotApi) -> Dict[str, Any]:
+        """Configure Telegram notification action"""
+        include_body = await bot.request_user_choice(
+            "Include email body in notification?", ["Yes", "No"]
+        ) == 0
+
+        include_snippet = await bot.request_user_choice(
+            "Include email snippet in notification?", ["Yes", "No"]
+        ) == 0
+
+        custom_message = ""
+        if await bot.request_user_choice(
+            "Add custom message prefix?", ["Yes", "No"]
+        ) == 0:
+            custom_message = await bot.request_user_input(
+                "Enter custom message:"
+            )
+
+        return {
+            'include_body': include_body,
+            'include_snippet': include_snippet,
+            'custom_message': custom_message
+        }
+
+    async def _configure_download_link(self, bot: TelegramBotApi) -> Optional[Dict[str, Any]]:
+        """Configure download link action"""
+        await bot.send_message(
+            "🔗 <b>Download Link Configuration</b>\n\n" +
+            "This action will find links in emails and download files.\n" +
+            "You can specify patterns to match specific links."
+        )
+
+        # URL pattern configuration
+        use_default_url_pattern = await bot.request_user_choice(
+            "Use default URL pattern (matches any HTTP/HTTPS link)?",
+            ["Yes", "No"]
+        ) == 0
+
+        if use_default_url_pattern:
+            url_regex = r'https?://[^\s<>"\']+'
+        else:
+            await bot.send_message(
+                "Enter a regex pattern to match URLs.\n" +
+                "Examples:\n" +
+                "• <code>https://track\\.icount\\.co\\.il/.*</code> (iCount links)\n" +
+                "• <code>https?://[^\\s<>\"']+\\.pdf</code> (any PDF)\n" +
+                "• <code>https://example\\.com/.*</code> (specific domain)"
+            )
+            url_regex = await bot.request_user_input("URL regex pattern:")
+
+        # Link text pattern (optional)
+        use_text_pattern = await bot.request_user_choice(
+            "Also filter by link text (e.g., 'Download', 'View')?",
+            ["Yes", "No"]
+        ) == 0
+
+        text_regex = None
+        if use_text_pattern:
+            await bot.send_message(
+                "Enter a regex pattern to match link text.\n" +
+                "Examples:\n" +
+                "• <code>download</code> (contains 'download')\n" +
+                "• <code>view</code> (contains 'view')\n" +
+                "• <code>click.*here</code> (contains 'click' and 'here')"
+            )
+            text_regex = await bot.request_user_input("Link text regex pattern:")
+
+        # File size limit
+        max_file_size_mb = 10
+        if await bot.request_user_choice(
+            f"Change file size limit (currently {max_file_size_mb}MB)?",
+            ["Yes", "No"]
+        ) == 0:
+            size_input = await bot.request_user_input("Max file size in MB (1-50):")
+            try:
+                max_file_size_mb = max(1, min(50, int(size_input)))
+            except ValueError:
+                await bot.send_message(f"Invalid input, using default: {max_file_size_mb}MB")
+
+        # Custom filename pattern (optional)
+        custom_filename = None
+        if await bot.request_user_choice(
+            "Use custom filename pattern?",
+            ["Yes", "No"]
+        ) == 0:
+            await bot.send_message(
+                "Enter filename pattern with placeholders:\n" +
+                "• <code>{sender}</code> - Sender name\n" +
+                "• <code>{subject}</code> - Email subject (truncated)\n" +
+                "• <code>{date}</code> - Date (YYYYMMDD)\n" +
+                "• <code>{rule}</code> - Rule name\n" +
+                "• <code>{index}</code> - File index if multiple\n\n" +
+                "Example: <code>invoice_{sender}_{date}</code>"
+            )
+            custom_filename = await bot.request_user_input("Filename pattern:")
+
+        # Confirm configuration
+        config_summary = [
+            f"• URL pattern: {url_regex}",
+            f"• Text pattern: {text_regex or 'None'}",
+            f"• Max file size: {max_file_size_mb}MB",
+            f"• Custom filename: {custom_filename or 'Auto-generated'}"
+        ]
+
+        await bot.send_message(
+            "<b>Download Link Configuration:</b>\n" + "\n".join(config_summary)
+        )
+
+        if await bot.request_user_choice("Is this correct?", ["Yes", "No"]) == 1:
+            return None
+
+        return {
+            'url_regex': url_regex,
+            'text_regex': text_regex,
+            'max_file_size_mb': max_file_size_mb,
+            'custom_filename': custom_filename
+        }
 
     async def _edit_email_rule(self, user: User, bot: TelegramBotApi, config: UserConfig) -> None:
         if not config.rules:
