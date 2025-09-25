@@ -469,12 +469,46 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             await bot.send_message("Fetching recent emails to test against...")
 
             # Get recent 50 emails
-            recent_emails = await gmail.get_recent_messages(max_results=50)
+            recent_emails = await gmail.get_recent_messages(max_results=500)
+
+            await bot.send_message(f"Got {len(recent_emails)} emails to test against.")
+
+            # Debug: Show rule criteria
+            criteria = []
+            if rule.filter.sender_regex:
+                criteria.append(f"Sender: {rule.filter.sender_regex}")
+            if rule.filter.subject_regex:
+                criteria.append(f"Subject: {rule.filter.subject_regex}")
+            if rule.filter.body_regex:
+                criteria.append(f"Body: {rule.filter.body_regex}")
+            if rule.filter.has_attachments is not None:
+                criteria.append(f"Has attachments: {rule.filter.has_attachments}")
+
+            await bot.send_message(f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria))
 
             matches = []
+            # Debug: Show first few emails being tested
+            debug_emails = recent_emails[:3]  # Show first 3 emails for debugging
+            debug_info = []
+
             for email in recent_emails:
+                # Debug info for first 3 emails
+                if email in debug_emails:
+                    debug_info.append(
+                        f"Email {len(debug_info) + 1}:\n"
+                        f"  From: {email.sender}\n"
+                        f"  Subject: {email.subject}\n"
+                        f"  Body preview: {email.body[:100]}...\n"
+                        f"  Has attachments: {email.has_attachments}\n"
+                        f"  Matches: {rule.filter.matches(email)}"
+                    )
+
                 if rule.filter.matches(email):
                     matches.append(email)
+
+            # Show debug info
+            if debug_info:
+                await bot.send_message("Debug - First 3 emails:\n\n" + "\n\n".join(debug_info))
 
             if not matches:
                 await bot.send_message(f"No recent emails match rule '{rule.name}'.")
