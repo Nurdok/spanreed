@@ -228,20 +228,24 @@ class GmailApi:
             return ""
 
         if 'parts' in payload:
-            # Look for text/html first for better link extraction
+            # Collect content from both text/plain and text/html for comprehensive link extraction
+            html_body = ""
+            plain_body = ""
+
             for part in payload['parts']:
                 if part['mimeType'] == 'text/html':
-                    body = decode_body_data(part)
-                    if body.strip():  # Only use if not empty/whitespace
-                        break
+                    html_body = decode_body_data(part)
+                elif part['mimeType'] == 'text/plain':
+                    plain_body = decode_body_data(part)
 
-            # If no HTML found or HTML was empty, look for text/plain
-            if not body or not body.strip():
-                for part in payload['parts']:
-                    if part['mimeType'] == 'text/plain':
-                        body = decode_body_data(part)
-                        if body.strip():
-                            break
+            # Prefer HTML content if available and non-empty, but combine both for completeness
+            if html_body.strip():
+                body = html_body
+                # Also append plain text if it has content not in HTML
+                if plain_body.strip():
+                    body += "\n\n" + plain_body
+            elif plain_body.strip():
+                body = plain_body
 
             # If still no body, try recursing into nested parts
             if not body:
