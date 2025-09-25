@@ -612,28 +612,40 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                     await bot.send_message(f"Error showing no matches result: {str(e)}")
             else:
                 try:
-                    # Show matching emails with link debug info
-                    match_details = []
-                    for email in matches[:5]:  # Show first 5
+                    # Show basic match info first
+                    await bot.send_message(f"Found {len(matches)} matching email(s) for rule '{html.escape(rule.name)}'")
+
+                    # Show detailed info for each matching email
+                    for i, email in enumerate(matches[:5]):  # Show first 5
                         all_links = self._extract_all_links_for_debug(email.body)
                         links_text = f"Links found ({len(all_links)}): " + (", ".join(all_links[:3]) if all_links else "None")
                         if len(all_links) > 3:
                             links_text += f" ... and {len(all_links) - 3} more"
 
-                        match_details.append(
-                            f"• From: {html.escape(email.sender)}\n" +
-                            f"  Subject: {html.escape(email.subject)}\n" +
-                            f"  Date: {email.date.strftime('%Y-%m-%d %H:%M')}\n" +
-                            f"  {links_text}"
+                        # Send basic email info
+                        email_info = (
+                            f"<b>Email {i+1}:</b>\n" +
+                            f"From: {html.escape(email.sender)}\n" +
+                            f"Subject: {html.escape(email.subject)}\n" +
+                            f"Date: {email.date.strftime('%Y-%m-%d %H:%M')}\n" +
+                            f"{links_text}"
                         )
+                        await bot.send_message(email_info)
 
-                    message_parts = [f"Found {len(matches)} matching email(s) for rule '{html.escape(rule.name)}':\n"]
-                    message_parts.extend(match_details)
+                        # Send raw body in separate message to avoid message length limits
+                        try:
+                            # Truncate very long bodies and escape HTML
+                            raw_body = email.body
+                            if len(raw_body) > 3000:  # Telegram message limit considerations
+                                raw_body = raw_body[:3000] + "\n\n[... body truncated ...]"
+
+                            await bot.send_message(f"<b>Raw Body:</b>\n<pre>{html.escape(raw_body)}</pre>")
+                        except Exception as body_error:
+                            await bot.send_message(f"Error showing raw body: {str(body_error)}")
 
                     if len(matches) > 5:
-                        message_parts.append(f"\n... and {len(matches) - 5} more")
+                        await bot.send_message(f"... and {len(matches) - 5} more emails not shown")
 
-                    await bot.send_message("\n\n".join(message_parts))
                 except Exception as e:
                     await bot.send_message(f"Error showing matches (found {len(matches)} matches): {str(e)}")
 
