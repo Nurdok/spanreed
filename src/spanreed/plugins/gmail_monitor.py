@@ -304,7 +304,8 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         # Confirm filter
         await bot.send_message(
-            "Filter criteria:\n" + "\n".join(f"• {c}" for c in criteria)
+            "Filter criteria:\n" + "\n".join(f"• {c}" for c in criteria),
+            parse_markdown=True
         )
 
         if await bot.request_user_choice("Is this correct?", ["Yes", "No"]) == 1:
@@ -486,7 +487,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 criteria.append(f"Has attachments: {rule.filter.has_attachments}")
 
             try:
-                await bot.send_message(f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria))
+                await bot.send_message(f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria), parse_markdown=True)
             except Exception as e:
                 await bot.send_message(f"Error showing rule criteria: {str(e)}")
 
@@ -530,7 +531,8 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                             f"• From: {html.escape(email.sender)}\n  Subject: {html.escape(email.subject)}\n  Date: {email.date.strftime('%Y-%m-%d %H:%M')}"
                             for email in matches[:5]  # Show first 5
                         ]) +
-                        (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else "")
+                        (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else ""),
+                        parse_markdown=True
                     )
                 except Exception as e:
                     await bot.send_message(f"Error showing matches (found {len(matches)} matches): {str(e)}")
@@ -564,7 +566,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             status_parts.append("\n**Active Rules:**")
             status_parts.extend([f"• {rule.name}" for rule in enabled_rules])
 
-        await bot.send_message("\n".join(status_parts))
+        await bot.send_message("\n".join(status_parts), parse_markdown=True)
 
     async def _get_processed_emails_key(self, user: User) -> str:
         return self._get_user_data_key(user, "processed_emails")
