@@ -484,7 +484,10 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             if rule.filter.has_attachments is not None:
                 criteria.append(f"Has attachments: {rule.filter.has_attachments}")
 
-            await bot.send_message(f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria))
+            try:
+                await bot.send_message(f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria))
+            except Exception as e:
+                await bot.send_message(f"Error showing rule criteria: {str(e)}")
 
             matches = []
             # Debug: Show first few emails being tested
@@ -508,19 +511,28 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
             # Show debug info
             if debug_info:
-                await bot.send_message("Debug - First 3 emails:\n\n" + "\n\n".join(debug_info))
+                try:
+                    await bot.send_message("Debug - First 3 emails:\n\n" + "\n\n".join(debug_info))
+                except Exception as e:
+                    await bot.send_message(f"Error showing debug info: {str(e)}")
 
             if not matches:
-                await bot.send_message(f"No recent emails match rule '{rule.name}'.")
+                try:
+                    await bot.send_message(f"No recent emails match rule '{rule.name}'.")
+                except Exception as e:
+                    await bot.send_message(f"Error showing no matches result: {str(e)}")
             else:
-                await bot.send_message(
-                    f"Found {len(matches)} matching email(s) for rule '{rule.name}':\n\n" +
-                    "\n".join([
-                        f"• From: {email.sender}\n  Subject: {email.subject}\n  Date: {email.date.strftime('%Y-%m-%d %H:%M')}"
-                        for email in matches[:5]  # Show first 5
-                    ]) +
-                    (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else "")
-                )
+                try:
+                    await bot.send_message(
+                        f"Found {len(matches)} matching email(s) for rule '{rule.name}':\n\n" +
+                        "\n".join([
+                            f"• From: {email.sender}\n  Subject: {email.subject}\n  Date: {email.date.strftime('%Y-%m-%d %H:%M')}"
+                            for email in matches[:5]  # Show first 5
+                        ]) +
+                        (f"\n\n... and {len(matches) - 5} more" if len(matches) > 5 else "")
+                    )
+                except Exception as e:
+                    await bot.send_message(f"Error showing matches (found {len(matches)} matches): {str(e)}")
 
         except Exception as e:
             await bot.send_message(f"Error testing rule: {str(e)}")
