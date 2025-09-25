@@ -93,7 +93,7 @@ class DownloadLinkAction(EmailActionHandler):
                 try:
                     # Show the specific link being processed
                     link_preview = link[:100] + "..." if len(link) > 100 else link
-                    await bot.send_message(f"🔗 Processing link {i+1}: {html.escape(link_preview)}")
+                    await bot.send_message(f"🔗 Processing link {i+1}: <code>{html.escape(link_preview)}</code>")
 
                     filename = await self._download_and_send_file(
                         bot, link, email, rule_name, custom_filename, max_file_size_mb, i
@@ -103,7 +103,7 @@ class DownloadLinkAction(EmailActionHandler):
                 except Exception as e:
                     self._logger.error(f"Failed to download file from {link}: {e}")
                     link_preview = link[:100] + "..." if len(link) > 100 else link
-                    await bot.send_message(f"❌ Failed to download from {html.escape(link_preview)}: {str(e)}")
+                    await bot.send_message(f"❌ Failed to download from <code>{html.escape(link_preview)}</code>: {str(e)}")
 
         except Exception as e:
             self._logger.error(f"Download link action failed: {e}")
