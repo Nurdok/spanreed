@@ -7,6 +7,7 @@ from spanreed.plugin import Plugin
 from quart import Quart, websocket, request
 from spanreed.storage import redis_api
 from spanreed.apis.withings import WithingsApi
+from spanreed.apis.gmail import GmailApi
 
 
 class WebUiPlugin(Plugin[None]):
@@ -94,6 +95,23 @@ class WebUiPlugin(Plugin[None]):
                 WithingsApi.handle_oauth_redirect(code, state)
             )
             return "Authenticated successfully. You can close this tab."
+
+        @app.get("/gmail-oauth")
+        async def gmail_oauth_redirect() -> str:
+            # Extract the code from the query string.
+            code: str | None = request.args.get("code")
+            if code is None:
+                return "No code provided."
+
+            state: str | None = request.args.get("state")
+            if state is None:
+                return "No state provided."
+
+            # Pass the code to the Gmail API without blocking the Quart app.
+            await asyncio.create_task(
+                GmailApi.handle_oauth_redirect(code, state)
+            )
+            return "Gmail authenticated successfully. You can close this tab."
 
         # Start the Quart app.
         await app.run_task(debug=True, host="0.0.0.0", port=5000)

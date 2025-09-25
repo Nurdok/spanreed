@@ -31,9 +31,35 @@ class EmailMessage:
     has_attachments: bool
 
 
+class GmailAuthenticationFlow:
+    def __init__(self, user: User) -> None:
+        self.user = user
+        self._done_event: Optional[asyncio.Event] = None
+        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(f"auth.{user.id}")
+
+    async def get_done_event(self) -> asyncio.Event:
+        if self._done_event is not None:
+            raise ValueError("Done event already set.")
+        self._done_event = asyncio.Event()
+        return self._done_event
+
+    async def get_auth_url(self) -> str:
+        gmail = await GmailApi.for_user(self.user)
+        return await gmail.authenticate()
+
+    async def complete_authentication(self, code: str) -> None:
+        if self._done_event is None:
+            raise RuntimeError("Done event not set.")
+
+        gmail = await GmailApi.for_user(self.user)
+        await gmail.complete_authentication(code)
+        self._done_event.set()
+
+
 class GmailApi:
     SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
     _instances: Dict[int, 'GmailApi'] = {}
+    _authentication_flows: Dict[int, GmailAuthenticationFlow] = {}
 
     def __init__(self, user: User) -> None:
         self.user = user
@@ -45,6 +71,24 @@ class GmailApi:
         if user.id not in cls._instances:
             cls._instances[user.id] = cls(user)
         return cls._instances[user.id]
+
+    @classmethod
+    async def start_authentication(cls, user: User) -> GmailAuthenticationFlow:
+        if user.id in cls._authentication_flows:
+            raise ValueError("Authentication flow already started.")
+        flow = GmailAuthenticationFlow(user)
+        cls._authentication_flows[user.id] = flow
+        return flow
+
+    @classmethod
+    async def handle_oauth_redirect(cls, code: str, state: str) -> None:
+        user_id = int(state)
+        if user_id not in cls._authentication_flows:
+            raise ValueError(f"No authentication flow found for user {user_id}")
+
+        flow = cls._authentication_flows[user_id]
+        await flow.complete_authentication(code)
+        del cls._authentication_flows[user_id]
 
     def _get_credentials_key(self) -> str:
         return f"gmail:credentials:user_id={self.user.id}"
@@ -104,7 +148,7 @@ class GmailApi:
         config = await GmailApi._get_stored_credentials_config()
         return config is not None
 
-    async def authenticate(self, redirect_uri: str = "http://localhost:8080/callback") -> str:
+    async def authenticate(self, redirect_uri: str = "http://spanreed.ink:5000/gmail-oauth") -> str:
         """Start OAuth2 flow for this user using global app credentials."""
         credentials_config = await self._get_stored_credentials_config()
         if not credentials_config:
@@ -116,10 +160,10 @@ class GmailApi:
             redirect_uri=redirect_uri
         )
 
-        auth_url, _ = flow.authorization_url(prompt='consent')
+        auth_url, _ = flow.authorization_url(prompt='consent', state=str(self.user.id))
         return auth_url
 
-    async def complete_authentication(self, authorization_code: str, redirect_uri: str = "http://localhost:8080/callback") -> None:
+    async def complete_authentication(self, authorization_code: str, redirect_uri: str = "http://spanreed.ink:5000/gmail-oauth") -> None:
         """Complete OAuth2 flow and store user's access tokens."""
         credentials_config = await self._get_stored_credentials_config()
         if not credentials_config:

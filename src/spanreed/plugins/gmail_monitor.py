@@ -14,7 +14,7 @@ from spanreed.apis.telegram_bot import (
     UserInteractionPriority,
     UserInteractionPreempted,
 )
-from spanreed.apis.gmail import GmailApi, EmailMessage
+from spanreed.apis.gmail import GmailApi, EmailMessage, GmailAuthenticationFlow
 from spanreed.plugins.gmail_monitor_actions import (
     EmailActionHandler,
     TelegramNotificationAction,
@@ -163,18 +163,16 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             return
 
         try:
-            auth_url = await gmail.authenticate()
-            await bot.send_multiple_messages(
-                "Please visit this URL to authorize Gmail access:",
-                auth_url,
-                "After authorization, copy the authorization code from the browser."
+            auth_flow = await GmailApi.start_authentication(user)
+            auth_done = await auth_flow.get_done_event()
+
+            auth_url = await auth_flow.get_auth_url()
+            await bot.send_message(
+                f"Click [here]({auth_url}) to authenticate with Gmail.",
+                parse_markdown=True,
             )
 
-            auth_code = await bot.request_user_input(
-                "Please paste the authorization code here:"
-            )
-
-            await gmail.complete_authentication(auth_code)
+            await auth_done.wait()
             await bot.send_message("Gmail authentication successful!")
 
         except Exception as e:
