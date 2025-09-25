@@ -83,9 +83,35 @@ class GmailApi:
 
         return None
 
-    async def authenticate(self, credentials_file_path: str, redirect_uri: str = "http://localhost:8080/callback") -> str:
-        flow = Flow.from_client_secrets_file(
-            credentials_file_path,
+    @staticmethod
+    def _get_global_credentials_config_key() -> str:
+        return "gmail_credentials"
+
+    @staticmethod
+    async def _get_stored_credentials_config() -> Optional[Dict[str, Any]]:
+        config_data = await redis_api.get(GmailApi._get_global_credentials_config_key())
+        if config_data:
+            return json.loads(config_data)
+        return None
+
+    @staticmethod
+    async def _store_credentials_config(credentials_json: str) -> None:
+        await redis_api.set(GmailApi._get_global_credentials_config_key(), credentials_json)
+
+    @staticmethod
+    async def is_app_configured() -> bool:
+        """Check if Gmail client credentials are configured globally."""
+        config = await GmailApi._get_stored_credentials_config()
+        return config is not None
+
+    async def authenticate(self, redirect_uri: str = "http://localhost:8080/callback") -> str:
+        """Start OAuth2 flow for this user using global app credentials."""
+        credentials_config = await self._get_stored_credentials_config()
+        if not credentials_config:
+            raise ValueError("No global Gmail credentials configured. Configure app credentials first.")
+
+        flow = Flow.from_client_config(
+            credentials_config,
             scopes=self.SCOPES,
             redirect_uri=redirect_uri
         )
@@ -93,15 +119,21 @@ class GmailApi:
         auth_url, _ = flow.authorization_url(prompt='consent')
         return auth_url
 
-    async def complete_authentication(self, credentials_file_path: str, authorization_code: str, redirect_uri: str = "http://localhost:8080/callback") -> None:
-        flow = Flow.from_client_secrets_file(
-            credentials_file_path,
+    async def complete_authentication(self, authorization_code: str, redirect_uri: str = "http://localhost:8080/callback") -> None:
+        """Complete OAuth2 flow and store user's access tokens."""
+        credentials_config = await self._get_stored_credentials_config()
+        if not credentials_config:
+            raise ValueError("No global Gmail credentials configured. Configure app credentials first.")
+
+        flow = Flow.from_client_config(
+            credentials_config,
             scopes=self.SCOPES,
             redirect_uri=redirect_uri
         )
 
         flow.fetch_token(code=authorization_code)
         await self._store_credentials(flow.credentials)
+
 
     async def is_authenticated(self) -> bool:
         creds = await self._get_credentials()

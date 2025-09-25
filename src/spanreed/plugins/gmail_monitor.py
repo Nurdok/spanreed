@@ -78,7 +78,6 @@ class EmailRule:
 class UserConfig:
     rules: List[EmailRule]
     check_interval_minutes: int = 15
-    gmail_credentials_path: str = ""
 
     def __post_init__(self) -> None:
         for index, rule in enumerate(self.rules):
@@ -137,30 +136,26 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
     async def ask_for_user_config(cls, user: User) -> None:
         bot = await TelegramBotApi.for_user(user)
 
-        await bot.send_multiple_messages(
-            "Gmail Monitor requires OAuth2 authentication.",
-            "You'll need to provide a Gmail credentials file (client_secrets.json).",
-            "You can get this from the Google Cloud Console.",
-        )
-
-        credentials_path = await bot.request_user_input(
-            "Please provide the full path to your Gmail credentials JSON file:"
-        )
+        # Check if app-level Gmail credentials are configured
+        if not await GmailApi.is_app_configured():
+            await bot.send_message(
+                "Gmail app credentials not configured. Please contact your admin to set up Gmail integration."
+            )
+            return
 
         # Start with empty rules - user can add them later
         config = UserConfig(
             rules=[],
-            check_interval_minutes=15,
-            gmail_credentials_path=credentials_path
+            check_interval_minutes=15
         )
 
         await cls.set_config(user, config)
 
-        # Authenticate with Gmail
-        await cls._setup_gmail_auth(user, bot, credentials_path)
+        # Authenticate user with Gmail
+        await cls._setup_gmail_auth(user, bot)
 
     @classmethod
-    async def _setup_gmail_auth(cls, user: User, bot: TelegramBotApi, credentials_path: str) -> None:
+    async def _setup_gmail_auth(cls, user: User, bot: TelegramBotApi) -> None:
         gmail = await GmailApi.for_user(user)
 
         if await gmail.is_authenticated():
@@ -168,7 +163,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             return
 
         try:
-            auth_url = await gmail.authenticate(credentials_path)
+            auth_url = await gmail.authenticate()
             await bot.send_multiple_messages(
                 "Please visit this URL to authorize Gmail access:",
                 auth_url,
@@ -179,7 +174,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 "Please paste the authorization code here:"
             )
 
-            await gmail.complete_authentication(credentials_path, auth_code)
+            await gmail.complete_authentication(auth_code)
             await bot.send_message("Gmail authentication successful!")
 
         except Exception as e:

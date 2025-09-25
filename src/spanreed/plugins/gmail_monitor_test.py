@@ -63,8 +63,7 @@ def sample_config():
                 enabled=True
             )
         ],
-        check_interval_minutes=15,
-        gmail_credentials_path="/path/to/creds.json"
+        check_interval_minutes=15
     )
 
 
@@ -163,8 +162,7 @@ class TestUserConfig:
                 "actions": [{"type": "telegram_notification", "config": {}}],
                 "enabled": True
             }],
-            "check_interval_minutes": 15,
-            "gmail_credentials_path": "/path/to/creds.json"
+            "check_interval_minutes": 15
         }
         config = UserConfig(**config_data)
         assert len(config.rules) == 1
@@ -257,16 +255,16 @@ class TestGmailMonitorPlugin:
         assert processed == {"msg1", "msg2", "msg3"}
 
     @pytest.mark.asyncio
-    async def test_run_for_user_no_rules(self, plugin, user):
+    async def test_run_monitor_for_user_no_rules(self, plugin, user):
         # Mock config with no rules
-        config = UserConfig(rules=[], check_interval_minutes=15, gmail_credentials_path="")
+        config = UserConfig(rules=[], check_interval_minutes=15)
 
         with patch.object(plugin, 'get_config', return_value=config):
             # Should return early without error
-            await plugin.run_for_user(user)
+            await plugin._run_monitor_for_user(user)
 
     @pytest.mark.asyncio
-    async def test_run_for_user_no_enabled_rules(self, plugin, user):
+    async def test_run_monitor_for_user_no_enabled_rules(self, plugin, user):
         # Mock config with disabled rule
         rule = EmailRule(
             name="Test",
@@ -274,25 +272,25 @@ class TestGmailMonitorPlugin:
             actions=[],
             enabled=False
         )
-        config = UserConfig(rules=[rule], check_interval_minutes=15, gmail_credentials_path="")
+        config = UserConfig(rules=[rule], check_interval_minutes=15)
 
         with patch.object(plugin, 'get_config', return_value=config):
-            await plugin.run_for_user(user)
+            await plugin._run_monitor_for_user(user)
 
     @pytest.mark.asyncio
-    async def test_run_for_user_not_authenticated(self, plugin, user, sample_config):
+    async def test_run_monitor_for_user_not_authenticated(self, plugin, user, sample_config):
         mock_gmail = AsyncMock()
         mock_gmail.is_authenticated.return_value = False
 
         with patch.object(plugin, 'get_config', return_value=sample_config), \
              patch('spanreed.plugins.gmail_monitor.GmailApi.for_user', return_value=mock_gmail):
 
-            await plugin.run_for_user(user)
+            await plugin._run_monitor_for_user(user)
             mock_gmail.is_authenticated.assert_called_once()
 
     @pytest.mark.asyncio
     @freeze_time("2023-01-15 12:00:00")
-    async def test_run_for_user_with_matches(self, plugin, user, sample_config, sample_email):
+    async def test_run_monitor_for_user_with_matches(self, plugin, user, sample_config, sample_email):
         mock_gmail = AsyncMock()
         mock_gmail.is_authenticated.return_value = True
         mock_gmail.get_messages_since.return_value = [sample_email]
@@ -311,7 +309,7 @@ class TestGmailMonitorPlugin:
             # Mock the telegram action handler
             plugin._action_handlers['telegram_notification'] = mock_action
 
-            await plugin.run_for_user(user)
+            await plugin._run_monitor_for_user(user)
 
             # Verify email was processed
             mock_mark_processed.assert_called_once_with(user, ["msg123"])
@@ -323,7 +321,7 @@ class TestGmailMonitorPlugin:
             mock_set_data.assert_called()
 
     @pytest.mark.asyncio
-    async def test_run_for_user_skip_processed_emails(self, plugin, user, sample_config, sample_email):
+    async def test_run_monitor_for_user_skip_processed_emails(self, plugin, user, sample_config, sample_email):
         mock_gmail = AsyncMock()
         mock_gmail.is_authenticated.return_value = True
         mock_gmail.get_messages_since.return_value = [sample_email]
@@ -338,7 +336,7 @@ class TestGmailMonitorPlugin:
 
             plugin._action_handlers['telegram_notification'] = mock_action
 
-            await plugin.run_for_user(user)
+            await plugin._run_monitor_for_user(user)
 
             # Action should not be executed for already processed email
             mock_action.execute.assert_not_called()
