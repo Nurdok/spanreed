@@ -19,6 +19,7 @@ from spanreed.plugins.web_ui import WebUiPlugin
 from spanreed.plugins.spanreed_monitor import SpanreedMonitorPlugin
 from spanreed.plugins.timekiller import TimekillerPlugin
 from spanreed.plugins.withings import WithingsPlugin
+from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
 
 
 def setup_logger() -> None:
@@ -52,6 +53,7 @@ def load_plugins() -> List[Plugin]:
         SpanreedMonitorPlugin(),
         TimekillerPlugin(),
         WithingsPlugin(),
+        GmailMonitorPlugin(),
     ]
 
     return core_plugins + optional_plugins

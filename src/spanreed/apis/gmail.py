@@ -1,0 +1,219 @@
+import asyncio
+import base64
+import datetime
+import email
+import json
+import logging
+import os
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+from spanreed.user import User
+from spanreed.storage import redis_api
+
+
+@dataclass
+class EmailMessage:
+    id: str
+    thread_id: str
+    sender: str
+    subject: str
+    body: str
+    snippet: str
+    date: datetime.datetime
+    labels: List[str]
+    has_attachments: bool
+
+
+class GmailApi:
+    SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+    _instances: Dict[int, 'GmailApi'] = {}
+
+    def __init__(self, user: User) -> None:
+        self.user = user
+        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(str(user.id))
+        self._service = None
+
+    @classmethod
+    async def for_user(cls, user: User) -> 'GmailApi':
+        if user.id not in cls._instances:
+            cls._instances[user.id] = cls(user)
+        return cls._instances[user.id]
+
+    def _get_credentials_key(self) -> str:
+        return f"gmail:credentials:user_id={self.user.id}"
+
+    async def _get_stored_credentials(self) -> Optional[Credentials]:
+        creds_data = await redis_api.get(self._get_credentials_key())
+        if creds_data:
+            creds_dict = json.loads(creds_data)
+            return Credentials.from_authorized_user_info(creds_dict, self.SCOPES)
+        return None
+
+    async def _store_credentials(self, creds: Credentials) -> None:
+        creds_data = {
+            'token': creds.token,
+            'refresh_token': creds.refresh_token,
+            'token_uri': creds.token_uri,
+            'client_id': creds.client_id,
+            'client_secret': creds.client_secret,
+            'scopes': creds.scopes
+        }
+        await redis_api.set(self._get_credentials_key(), json.dumps(creds_data))
+
+    async def _get_credentials(self) -> Optional[Credentials]:
+        creds = await self._get_stored_credentials()
+
+        if creds and creds.valid:
+            return creds
+
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                await self._store_credentials(creds)
+                return creds
+            except Exception as e:
+                self._logger.error(f"Failed to refresh credentials: {e}")
+
+        return None
+
+    async def authenticate(self, credentials_file_path: str, redirect_uri: str = "http://localhost:8080/callback") -> str:
+        flow = Flow.from_client_secrets_file(
+            credentials_file_path,
+            scopes=self.SCOPES,
+            redirect_uri=redirect_uri
+        )
+
+        auth_url, _ = flow.authorization_url(prompt='consent')
+        return auth_url
+
+    async def complete_authentication(self, credentials_file_path: str, authorization_code: str, redirect_uri: str = "http://localhost:8080/callback") -> None:
+        flow = Flow.from_client_secrets_file(
+            credentials_file_path,
+            scopes=self.SCOPES,
+            redirect_uri=redirect_uri
+        )
+
+        flow.fetch_token(code=authorization_code)
+        await self._store_credentials(flow.credentials)
+
+    async def is_authenticated(self) -> bool:
+        creds = await self._get_credentials()
+        return creds is not None and creds.valid
+
+    async def _get_service(self):
+        if self._service is None:
+            creds = await self._get_credentials()
+            if not creds:
+                raise ValueError("Not authenticated with Gmail")
+
+            # Run in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            self._service = await loop.run_in_executor(
+                None, lambda: build('gmail', 'v1', credentials=creds)
+            )
+        return self._service
+
+    def _parse_email_body(self, payload: Dict[str, Any]) -> str:
+        body = ""
+
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    data = part['body']['data']
+                    body = base64.urlsafe_b64decode(data).decode('utf-8')
+                    break
+        elif payload['mimeType'] == 'text/plain' and 'data' in payload['body']:
+            data = payload['body']['data']
+            body = base64.urlsafe_b64decode(data).decode('utf-8')
+
+        return body
+
+    def _has_attachments(self, payload: Dict[str, Any]) -> bool:
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if 'filename' in part and part['filename']:
+                    return True
+        return False
+
+    async def get_recent_messages(self, query: str = "", max_results: int = 100) -> List[EmailMessage]:
+        service = await self._get_service()
+
+        try:
+            # Search for messages
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None,
+                lambda: service.users().messages().list(
+                    userId='me',
+                    q=query,
+                    maxResults=max_results
+                ).execute()
+            )
+
+            messages = results.get('messages', [])
+            email_messages = []
+
+            # Fetch details for each message
+            for message in messages:
+                msg_detail = await loop.run_in_executor(
+                    None,
+                    lambda msg_id=message['id']: service.users().messages().get(
+                        userId='me',
+                        id=msg_id
+                    ).execute()
+                )
+
+                payload = msg_detail['payload']
+                headers = payload.get('headers', [])
+
+                # Extract headers
+                sender = next((h['value'] for h in headers if h['name'] == 'From'), '')
+                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
+                date_str = next((h['value'] for h in headers if h['name'] == 'Date'), '')
+
+                # Parse date
+                try:
+                    date = email.utils.parsedate_to_datetime(date_str)
+                except:
+                    date = datetime.datetime.now()
+
+                # Extract body
+                body = self._parse_email_body(payload)
+
+                # Check for attachments
+                has_attachments = self._has_attachments(payload)
+
+                email_message = EmailMessage(
+                    id=message['id'],
+                    thread_id=message['threadId'],
+                    sender=sender,
+                    subject=subject,
+                    body=body,
+                    snippet=msg_detail.get('snippet', ''),
+                    date=date,
+                    labels=msg_detail.get('labelIds', []),
+                    has_attachments=has_attachments
+                )
+
+                email_messages.append(email_message)
+
+            return email_messages
+
+        except HttpError as error:
+            self._logger.error(f"Gmail API error: {error}")
+            raise
+        except Exception as error:
+            self._logger.error(f"Unexpected error fetching messages: {error}")
+            raise
+
+    async def get_messages_since(self, since_date: datetime.datetime) -> List[EmailMessage]:
+        # Gmail query format for date
+        date_query = f"after:{since_date.strftime('%Y/%m/%d')}"
+        return await self.get_recent_messages(query=date_query)

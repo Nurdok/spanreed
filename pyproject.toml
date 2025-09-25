@@ -18,6 +18,9 @@ quart = "*"
 pigpio = "^1.78"
 requests = "*"
 types-requests = "^2.32.0.20240602"
+google-auth = "*"
+google-auth-oauthlib = "*"
+google-api-python-client = "*"
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"
