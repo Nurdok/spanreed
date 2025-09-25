@@ -644,6 +644,38 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 except Exception as e:
                     await bot.send_message(f"Error showing matches (found {len(matches)} matches): {str(e)}")
 
+                # Ask if user wants to test actions on the matching emails
+                if rule.actions and matches:
+                    execute_actions = await bot.request_user_choice(
+                        f"Execute {len(rule.actions)} action(s) on the {len(matches)} matching email(s)?",
+                        ["Yes", "No"]
+                    ) == 0
+
+                    if execute_actions:
+                        await bot.send_message("🧪 Testing actions...")
+
+                        # Execute actions on first matching email (for testing)
+                        test_email = matches[0]
+                        await bot.send_message(f"Testing actions on email: '{html.escape(test_email.subject)}'")
+
+                        for action in rule.actions:
+                            if action.type in self._action_handlers:
+                                try:
+                                    handler = self._action_handlers[action.type]
+                                    email_match = EmailMatch(email=test_email, rule_name=rule.name)
+                                    await handler.execute(email_match, action.config, user)
+                                    await bot.send_message(f"✅ Executed {action.type} action")
+                                except Exception as e:
+                                    await bot.send_message(f"❌ Failed to execute {action.type} action: {str(e)}")
+                            else:
+                                await bot.send_message(f"⚠️ Unknown action type: {action.type}")
+
+                        await bot.send_message("🧪 Action testing complete!")
+                elif rule.actions and not matches:
+                    await bot.send_message(f"Rule has {len(rule.actions)} action(s) but no matching emails to test with.")
+                elif matches and not rule.actions:
+                    await bot.send_message("Found matching emails but rule has no actions configured.")
+
         except Exception as e:
             await bot.send_message(f"Error testing rule: {str(e)}")
 
