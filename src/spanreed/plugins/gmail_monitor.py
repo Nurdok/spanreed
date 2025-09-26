@@ -436,7 +436,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 "Enter filename pattern with placeholders:\n" +
                 "• <code>{sender}</code> - Sender name\n" +
                 "• <code>{subject}</code> - Email subject (truncated)\n" +
-                "• <code>{date}</code> - Date (YYYYMMDD)\n" +
+                "• <code>{date}</code> - Date (YYYY-MM-DD)\n" +
                 "• <code>{rule}</code> - Rule name\n" +
                 "• <code>{index}</code> - File index if multiple\n\n" +
                 "Example: <code>invoice_{sender}_{date}</code>"

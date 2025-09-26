@@ -167,7 +167,7 @@ class DownloadLinkAction(EmailActionHandler):
             filename = custom_filename.format(
                 sender=email.sender.split('@')[0] if '@' in email.sender else email.sender,
                 subject=re.sub(r'[^\w\-_.]', '_', email.subject)[:50],
-                date=email.date.strftime('%Y%m%d'),
+                date=email.date.strftime('%Y-%m-%d'),
                 rule=rule_name,
                 index=index
             )
@@ -177,7 +177,7 @@ class DownloadLinkAction(EmailActionHandler):
             if url_filename and '.' in url_filename:
                 filename = url_filename
             else:
-                filename = f"document_{email.date.strftime('%Y%m%d')}_{index}"
+                filename = f"document_{email.date.strftime('%Y-%m-%d')}_{index}"
 
         # Download the file with redirect following
         async with aiohttp.ClientSession() as session:
