@@ -392,11 +392,17 @@ class UserInteractionPriority(IntEnum):
 
 class UserInteraction:
     def __init__(
-        self, user_id: int, priority: UserInteractionPriority
+        self,
+        user_id: int,
+        priority: UserInteractionPriority,
     ) -> None:
         self.user_id = user_id
         self.priority = priority
         self.event = asyncio.Event()
+        # This is the timeout for the actual interaction, not for waiting in the queue.
+        # It is enforced if there's another interaction waiting, regardless of priority.
+        self.timeout = datetime.timedelta(hours=1).total_seconds()
+        self.start_time: Optional[datetime.datetime] = None
         task: asyncio.Task | None = asyncio.current_task()
         if task is None:
             raise RuntimeError("No current task")
@@ -418,6 +424,7 @@ class UserInteraction:
     async def wait_to_run(self) -> None:
         await self.event.wait()
         self.running = True
+        self.start_time = datetime.datetime.now()
 
     def preempt(self) -> None:
         self.preempted = True
@@ -724,11 +731,21 @@ class TelegramBotApi:
             self._logger.info("No current user interaction, so not preempting")
             return
 
+        current_interaction_timed_out = (
+            current_interaction.start_time is not None
+            and (
+                datetime.datetime.now() - current_interaction.start_time
+            ).total_seconds()
+            > current_interaction.timeout
+        )
+
         user_interaction_queues = await self._get_user_interaction_queues()
         # TODO: correct order
         for possible_priority in UserInteractionPriority:  # high to low
             if (
                 possible_priority >= current_interaction.priority
+                # if the current interaction has timed out, we can preempt it in favor of lower priority ones
+                and not current_interaction_timed_out
             ):  # >= means lower or equal priority, since higher priority is lower number
                 return
             if not user_interaction_queues[possible_priority]:
@@ -770,6 +787,8 @@ class TelegramBotApi:
         propagate_preemption: bool = True,
         priority: UserInteractionPriority = UserInteractionPriority.NORMAL,
     ) -> AsyncGenerator[None, None]:
+        default_timeout = datetime.timedelta(minutes=10)
+
         def log(msg: str) -> None:
             self._logger.info(msg + f" {user_interaction=}")
 
@@ -790,7 +809,8 @@ class TelegramBotApi:
         log("Got user interaction permission")
         async with lock:
             try:
-                yield
+                async with asyncio.timeout(timeout_seconds or default_timeout):
+                    yield
             except asyncio.CancelledError:
                 if user_interaction.preempted:
                     log("User interaction was preempted")
