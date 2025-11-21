@@ -14,7 +14,10 @@ from spanreed.plugins.gmail_monitor import (
     EmailRule,
     UserConfig,
 )
-from spanreed.plugins.gmail_monitor_actions import EmailMatch, TelegramNotificationAction
+from spanreed.plugins.gmail_monitor_actions import (
+    EmailMatch,
+    TelegramNotificationAction,
+)
 
 
 @pytest.fixture
@@ -39,7 +42,7 @@ def sample_email():
         snippet="Please find your invoice...",
         date=datetime.datetime(2023, 1, 15, 10, 30),
         labels=["INBOX"],
-        has_attachments=True
+        has_attachments=True,
     )
 
 
@@ -52,18 +55,21 @@ def sample_config():
                 filter=EmailFilter(
                     sender_regex=".*@example\\.com",
                     subject_regex="invoice",
-                    has_attachments=True
+                    has_attachments=True,
                 ),
                 actions=[
                     EmailAction(
                         type="telegram_notification",
-                        config={"include_body": False, "include_snippet": True}
+                        config={
+                            "include_body": False,
+                            "include_snippet": True,
+                        },
                     )
                 ],
-                enabled=True
+                enabled=True,
             )
         ],
-        check_interval_minutes=15
+        check_interval_minutes=15,
     )
 
 
@@ -100,7 +106,7 @@ class TestEmailFilter:
         filter = EmailFilter(
             sender_regex=".*@example\\.com",
             subject_regex="invoice",
-            has_attachments=True
+            has_attachments=True,
         )
         assert filter.matches(sample_email) is True
 
@@ -108,7 +114,7 @@ class TestEmailFilter:
         filter = EmailFilter(
             sender_regex=".*@example\\.com",
             subject_regex="receipt",  # This will fail
-            has_attachments=True
+            has_attachments=True,
         )
         assert filter.matches(sample_email) is False
 
@@ -134,7 +140,7 @@ class TestEmailRule:
             "name": "test",
             "filter": {"sender_regex": "test@test.com"},
             "actions": [{"type": "telegram_notification", "config": {}}],
-            "enabled": True
+            "enabled": True,
         }
         rule = EmailRule(**rule_data)
         assert isinstance(rule.filter, EmailFilter)
@@ -144,8 +150,10 @@ class TestEmailRule:
         rule_data = {
             "name": "test",
             "filter": EmailFilter(),
-            "actions": [{"type": "telegram_notification", "config": {"key": "value"}}],
-            "enabled": True
+            "actions": [
+                {"type": "telegram_notification", "config": {"key": "value"}}
+            ],
+            "enabled": True,
         }
         rule = EmailRule(**rule_data)
         assert len(rule.actions) == 1
@@ -156,13 +164,17 @@ class TestEmailRule:
 class TestUserConfig:
     def test_post_init_dict_rules(self):
         config_data = {
-            "rules": [{
-                "name": "test",
-                "filter": {"sender_regex": "test@test.com"},
-                "actions": [{"type": "telegram_notification", "config": {}}],
-                "enabled": True
-            }],
-            "check_interval_minutes": 15
+            "rules": [
+                {
+                    "name": "test",
+                    "filter": {"sender_regex": "test@test.com"},
+                    "actions": [
+                        {"type": "telegram_notification", "config": {}}
+                    ],
+                    "enabled": True,
+                }
+            ],
+            "check_interval_minutes": 15,
         }
         config = UserConfig(**config_data)
         assert len(config.rules) == 1
@@ -175,7 +187,10 @@ class TestTelegramNotificationAction:
     async def test_execute_basic_notification(self, user, sample_email):
         # Mock TelegramBotApi
         mock_bot = AsyncMock()
-        with patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi.for_user", return_value=mock_bot):
+        with patch(
+            "spanreed.plugins.gmail_monitor_actions.TelegramBotApi.for_user",
+            return_value=mock_bot,
+        ):
             action = TelegramNotificationAction()
             email_match = EmailMatch(email=sample_email, rule_name="Test Rule")
             config = {"include_body": False, "include_snippet": True}
@@ -195,7 +210,10 @@ class TestTelegramNotificationAction:
     @pytest.mark.asyncio
     async def test_execute_with_custom_message(self, user, sample_email):
         mock_bot = AsyncMock()
-        with patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi.for_user", return_value=mock_bot):
+        with patch(
+            "spanreed.plugins.gmail_monitor_actions.TelegramBotApi.for_user",
+            return_value=mock_bot,
+        ):
             action = TelegramNotificationAction()
             email_match = EmailMatch(email=sample_email, rule_name="Test Rule")
             config = {"custom_message": "New invoice received!"}
@@ -211,7 +229,10 @@ class TestTelegramNotificationAction:
     @pytest.mark.asyncio
     async def test_execute_with_body(self, user, sample_email):
         mock_bot = AsyncMock()
-        with patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi.for_user", return_value=mock_bot):
+        with patch(
+            "spanreed.plugins.gmail_monitor_actions.TelegramBotApi.for_user",
+            return_value=mock_bot,
+        ):
             action = TelegramNotificationAction()
             email_match = EmailMatch(email=sample_email, rule_name="Test Rule")
             config = {"include_body": True}
@@ -259,7 +280,7 @@ class TestGmailMonitorPlugin:
         # Mock config with no rules
         config = UserConfig(rules=[], check_interval_minutes=15)
 
-        with patch.object(plugin, 'get_config', return_value=config):
+        with patch.object(plugin, "get_config", return_value=config):
             # Should return early without error
             await plugin._run_monitor_for_user(user)
 
@@ -267,30 +288,36 @@ class TestGmailMonitorPlugin:
     async def test_run_monitor_for_user_no_enabled_rules(self, plugin, user):
         # Mock config with disabled rule
         rule = EmailRule(
-            name="Test",
-            filter=EmailFilter(),
-            actions=[],
-            enabled=False
+            name="Test", filter=EmailFilter(), actions=[], enabled=False
         )
         config = UserConfig(rules=[rule], check_interval_minutes=15)
 
-        with patch.object(plugin, 'get_config', return_value=config):
+        with patch.object(plugin, "get_config", return_value=config):
             await plugin._run_monitor_for_user(user)
 
     @pytest.mark.asyncio
-    async def test_run_monitor_for_user_not_authenticated(self, plugin, user, sample_config):
+    async def test_run_monitor_for_user_not_authenticated(
+        self, plugin, user, sample_config
+    ):
         mock_gmail = AsyncMock()
         mock_gmail.is_authenticated.return_value = False
 
-        with patch.object(plugin, 'get_config', return_value=sample_config), \
-             patch('spanreed.plugins.gmail_monitor.GmailApi.for_user', return_value=mock_gmail):
+        with (
+            patch.object(plugin, "get_config", return_value=sample_config),
+            patch(
+                "spanreed.plugins.gmail_monitor.GmailApi.for_user",
+                return_value=mock_gmail,
+            ),
+        ):
 
             await plugin._run_monitor_for_user(user)
             mock_gmail.is_authenticated.assert_called_once()
 
     @pytest.mark.asyncio
     @freeze_time("2023-01-15 12:00:00")
-    async def test_run_monitor_for_user_with_matches(self, plugin, user, sample_config, sample_email):
+    async def test_run_monitor_for_user_with_matches(
+        self, plugin, user, sample_config, sample_email
+    ):
         mock_gmail = AsyncMock()
         mock_gmail.is_authenticated.return_value = True
         mock_gmail.get_messages_since.return_value = [sample_email]
@@ -298,16 +325,28 @@ class TestGmailMonitorPlugin:
         mock_bot = AsyncMock()
         mock_action = AsyncMock()
 
-        with patch.object(plugin, 'get_config', return_value=sample_config), \
-             patch('spanreed.plugins.gmail_monitor.GmailApi.for_user', return_value=mock_gmail), \
-             patch('spanreed.plugins.gmail_monitor.TelegramBotApi.for_user', return_value=mock_bot), \
-             patch.object(plugin, '_get_processed_email_ids', return_value=set()), \
-             patch.object(plugin, '_mark_emails_processed') as mock_mark_processed, \
-             patch.object(plugin, 'get_user_data', return_value=None), \
-             patch.object(plugin, 'set_user_data') as mock_set_data:
+        with (
+            patch.object(plugin, "get_config", return_value=sample_config),
+            patch(
+                "spanreed.plugins.gmail_monitor.GmailApi.for_user",
+                return_value=mock_gmail,
+            ),
+            patch(
+                "spanreed.plugins.gmail_monitor.TelegramBotApi.for_user",
+                return_value=mock_bot,
+            ),
+            patch.object(
+                plugin, "_get_processed_email_ids", return_value=set()
+            ),
+            patch.object(
+                plugin, "_mark_emails_processed"
+            ) as mock_mark_processed,
+            patch.object(plugin, "get_user_data", return_value=None),
+            patch.object(plugin, "set_user_data") as mock_set_data,
+        ):
 
             # Mock the telegram action handler
-            plugin._action_handlers['telegram_notification'] = mock_action
+            plugin._action_handlers["telegram_notification"] = mock_action
 
             await plugin._run_monitor_for_user(user)
 
@@ -321,20 +360,29 @@ class TestGmailMonitorPlugin:
             mock_set_data.assert_called()
 
     @pytest.mark.asyncio
-    async def test_run_monitor_for_user_skip_processed_emails(self, plugin, user, sample_config, sample_email):
+    async def test_run_monitor_for_user_skip_processed_emails(
+        self, plugin, user, sample_config, sample_email
+    ):
         mock_gmail = AsyncMock()
         mock_gmail.is_authenticated.return_value = True
         mock_gmail.get_messages_since.return_value = [sample_email]
 
         mock_action = AsyncMock()
 
-        with patch.object(plugin, 'get_config', return_value=sample_config), \
-             patch('spanreed.plugins.gmail_monitor.GmailApi.for_user', return_value=mock_gmail), \
-             patch.object(plugin, '_get_processed_email_ids', return_value={"msg123"}), \
-             patch.object(plugin, 'get_user_data', return_value=None), \
-             patch.object(plugin, 'set_user_data'):
+        with (
+            patch.object(plugin, "get_config", return_value=sample_config),
+            patch(
+                "spanreed.plugins.gmail_monitor.GmailApi.for_user",
+                return_value=mock_gmail,
+            ),
+            patch.object(
+                plugin, "_get_processed_email_ids", return_value={"msg123"}
+            ),
+            patch.object(plugin, "get_user_data", return_value=None),
+            patch.object(plugin, "set_user_data"),
+        ):
 
-            plugin._action_handlers['telegram_notification'] = mock_action
+            plugin._action_handlers["telegram_notification"] = mock_action
 
             await plugin._run_monitor_for_user(user)
 

@@ -37,7 +37,9 @@ class GmailAuthenticationFlow:
     def __init__(self, user: User) -> None:
         self.user = user
         self._done_event: Optional[asyncio.Event] = None
-        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(f"auth.{user.id}")
+        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(
+            f"auth.{user.id}"
+        )
 
     async def get_done_event(self) -> asyncio.Event:
         if self._done_event is not None:
@@ -59,17 +61,19 @@ class GmailAuthenticationFlow:
 
 
 class GmailApi:
-    SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-    _instances: Dict[int, 'GmailApi'] = {}
+    SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+    _instances: Dict[int, "GmailApi"] = {}
     _authentication_flows: Dict[int, GmailAuthenticationFlow] = {}
 
     def __init__(self, user: User) -> None:
         self.user = user
-        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(str(user.id))
+        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(
+            str(user.id)
+        )
         self._service = None
 
     @classmethod
-    async def for_user(cls, user: User) -> 'GmailApi':
+    async def for_user(cls, user: User) -> "GmailApi":
         if user.id not in cls._instances:
             cls._instances[user.id] = cls(user)
         return cls._instances[user.id]
@@ -86,7 +90,9 @@ class GmailApi:
     async def handle_oauth_redirect(cls, code: str, state: str) -> None:
         user_id = int(state)
         if user_id not in cls._authentication_flows:
-            raise ValueError(f"No authentication flow found for user {user_id}")
+            raise ValueError(
+                f"No authentication flow found for user {user_id}"
+            )
 
         flow = cls._authentication_flows[user_id]
         await flow.complete_authentication(code)
@@ -99,19 +105,23 @@ class GmailApi:
         creds_data = await redis_api.get(self._get_credentials_key())
         if creds_data:
             creds_dict = json.loads(creds_data)
-            return Credentials.from_authorized_user_info(creds_dict, self.SCOPES)
+            return Credentials.from_authorized_user_info(
+                creds_dict, self.SCOPES
+            )
         return None
 
     async def _store_credentials(self, creds: Credentials) -> None:
         creds_data = {
-            'token': creds.token,
-            'refresh_token': creds.refresh_token,
-            'token_uri': creds.token_uri,
-            'client_id': creds.client_id,
-            'client_secret': creds.client_secret,
-            'scopes': creds.scopes
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes,
         }
-        await redis_api.set(self._get_credentials_key(), json.dumps(creds_data))
+        await redis_api.set(
+            self._get_credentials_key(), json.dumps(creds_data)
+        )
 
     async def _get_credentials(self) -> Optional[Credentials]:
         creds = await self._get_stored_credentials()
@@ -135,14 +145,18 @@ class GmailApi:
 
     @staticmethod
     async def _get_stored_credentials_config() -> Optional[Dict[str, Any]]:
-        config_data = await redis_api.get(GmailApi._get_global_credentials_config_key())
+        config_data = await redis_api.get(
+            GmailApi._get_global_credentials_config_key()
+        )
         if config_data:
             return json.loads(config_data)
         return None
 
     @staticmethod
     async def _store_credentials_config(credentials_json: str) -> None:
-        await redis_api.set(GmailApi._get_global_credentials_config_key(), credentials_json)
+        await redis_api.set(
+            GmailApi._get_global_credentials_config_key(), credentials_json
+        )
 
     @staticmethod
     async def is_app_configured() -> bool:
@@ -150,36 +164,43 @@ class GmailApi:
         config = await GmailApi._get_stored_credentials_config()
         return config is not None
 
-    async def authenticate(self, redirect_uri: str = "https://spanreed.ink/gmail-oauth") -> str:
+    async def authenticate(
+        self, redirect_uri: str = "https://spanreed.ink/gmail-oauth"
+    ) -> str:
         """Start OAuth2 flow for this user using global app credentials."""
         credentials_config = await self._get_stored_credentials_config()
         if not credentials_config:
-            raise ValueError("No global Gmail credentials configured. Configure app credentials first.")
+            raise ValueError(
+                "No global Gmail credentials configured. Configure app credentials first."
+            )
 
         flow = Flow.from_client_config(
-            credentials_config,
-            scopes=self.SCOPES,
-            redirect_uri=redirect_uri
+            credentials_config, scopes=self.SCOPES, redirect_uri=redirect_uri
         )
 
-        auth_url, _ = flow.authorization_url(prompt='consent', state=str(self.user.id))
+        auth_url, _ = flow.authorization_url(
+            prompt="consent", state=str(self.user.id)
+        )
         return auth_url
 
-    async def complete_authentication(self, authorization_code: str, redirect_uri: str = "https://spanreed.ink/gmail-oauth") -> None:
+    async def complete_authentication(
+        self,
+        authorization_code: str,
+        redirect_uri: str = "https://spanreed.ink/gmail-oauth",
+    ) -> None:
         """Complete OAuth2 flow and store user's access tokens."""
         credentials_config = await self._get_stored_credentials_config()
         if not credentials_config:
-            raise ValueError("No global Gmail credentials configured. Configure app credentials first.")
+            raise ValueError(
+                "No global Gmail credentials configured. Configure app credentials first."
+            )
 
         flow = Flow.from_client_config(
-            credentials_config,
-            scopes=self.SCOPES,
-            redirect_uri=redirect_uri
+            credentials_config, scopes=self.SCOPES, redirect_uri=redirect_uri
         )
 
         flow.fetch_token(code=authorization_code)
         await self._store_credentials(flow.credentials)
-
 
     async def is_authenticated(self) -> bool:
         creds = await self._get_credentials()
@@ -194,7 +215,7 @@ class GmailApi:
             # Run in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             self._service = await loop.run_in_executor(
-                None, lambda: build('gmail', 'v1', credentials=creds)
+                None, lambda: build("gmail", "v1", credentials=creds)
             )
         return self._service
 
@@ -204,14 +225,22 @@ class GmailApi:
         def decode_body_data(body_part):
             """Helper to safely decode body data"""
             try:
-                if 'data' in body_part['body'] and body_part['body']['data']:
-                    decoded_bytes = base64.urlsafe_b64decode(body_part['body']['data'])
-                    decoded_text = decoded_bytes.decode('utf-8')
+                if "data" in body_part["body"] and body_part["body"]["data"]:
+                    decoded_bytes = base64.urlsafe_b64decode(
+                        body_part["body"]["data"]
+                    )
+                    decoded_text = decoded_bytes.decode("utf-8")
 
                     # Check if content is quoted-printable encoded
-                    if '=3D' in decoded_text or '=2E' in decoded_text or '=\n' in decoded_text:
+                    if (
+                        "=3D" in decoded_text
+                        or "=2E" in decoded_text
+                        or "=\n" in decoded_text
+                    ):
                         try:
-                            decoded_text = quopri.decodestring(decoded_text).decode('utf-8')
+                            decoded_text = quopri.decodestring(
+                                decoded_text
+                            ).decode("utf-8")
                         except:
                             pass  # If quopri decoding fails, use original
 
@@ -227,15 +256,15 @@ class GmailApi:
                 print(f"Error decoding body data: {e}")
             return ""
 
-        if 'parts' in payload:
+        if "parts" in payload:
             # Collect content from both text/plain and text/html for comprehensive link extraction
             html_body = ""
             plain_body = ""
 
-            for part in payload['parts']:
-                if part['mimeType'] == 'text/html':
+            for part in payload["parts"]:
+                if part["mimeType"] == "text/html":
                     html_body = decode_body_data(part)
-                elif part['mimeType'] == 'text/plain':
+                elif part["mimeType"] == "text/plain":
                     plain_body = decode_body_data(part)
 
             # Prefer HTML content if available and non-empty, but combine both for completeness
@@ -249,28 +278,30 @@ class GmailApi:
 
             # If still no body, try recursing into nested parts
             if not body:
-                for part in payload['parts']:
-                    if 'parts' in part:
+                for part in payload["parts"]:
+                    if "parts" in part:
                         nested_body = self._parse_email_body(part)
                         if nested_body:
                             body = nested_body
                             break
 
-        elif payload['mimeType'] == 'text/plain' and 'body' in payload:
+        elif payload["mimeType"] == "text/plain" and "body" in payload:
             body = decode_body_data(payload)
-        elif payload['mimeType'] == 'text/html' and 'body' in payload:
+        elif payload["mimeType"] == "text/html" and "body" in payload:
             body = decode_body_data(payload)
 
         return body
 
     def _has_attachments(self, payload: Dict[str, Any]) -> bool:
-        if 'parts' in payload:
-            for part in payload['parts']:
-                if 'filename' in part and part['filename']:
+        if "parts" in payload:
+            for part in payload["parts"]:
+                if "filename" in part and part["filename"]:
                     return True
         return False
 
-    async def get_recent_messages(self, query: str = "", max_results: int = 100) -> List[EmailMessage]:
+    async def get_recent_messages(
+        self, query: str = "", max_results: int = 100
+    ) -> List[EmailMessage]:
         service = await self._get_service()
 
         try:
@@ -278,33 +309,38 @@ class GmailApi:
             loop = asyncio.get_event_loop()
             results = await loop.run_in_executor(
                 None,
-                lambda: service.users().messages().list(
-                    userId='me',
-                    q=query,
-                    maxResults=max_results
-                ).execute()
+                lambda: service.users()
+                .messages()
+                .list(userId="me", q=query, maxResults=max_results)
+                .execute(),
             )
 
-            messages = results.get('messages', [])
+            messages = results.get("messages", [])
             email_messages = []
 
             # Fetch details for each message
             for message in messages:
                 msg_detail = await loop.run_in_executor(
                     None,
-                    lambda msg_id=message['id']: service.users().messages().get(
-                        userId='me',
-                        id=msg_id
-                    ).execute()
+                    lambda msg_id=message["id"]: service.users()
+                    .messages()
+                    .get(userId="me", id=msg_id)
+                    .execute(),
                 )
 
-                payload = msg_detail['payload']
-                headers = payload.get('headers', [])
+                payload = msg_detail["payload"]
+                headers = payload.get("headers", [])
 
                 # Extract headers
-                sender = next((h['value'] for h in headers if h['name'] == 'From'), '')
-                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
-                date_str = next((h['value'] for h in headers if h['name'] == 'Date'), '')
+                sender = next(
+                    (h["value"] for h in headers if h["name"] == "From"), ""
+                )
+                subject = next(
+                    (h["value"] for h in headers if h["name"] == "Subject"), ""
+                )
+                date_str = next(
+                    (h["value"] for h in headers if h["name"] == "Date"), ""
+                )
 
                 # Parse date
                 try:
@@ -319,15 +355,15 @@ class GmailApi:
                 has_attachments = self._has_attachments(payload)
 
                 email_message = EmailMessage(
-                    id=message['id'],
-                    thread_id=message['threadId'],
+                    id=message["id"],
+                    thread_id=message["threadId"],
                     sender=sender,
                     subject=subject,
                     body=body,
-                    snippet=msg_detail.get('snippet', ''),
+                    snippet=msg_detail.get("snippet", ""),
                     date=date,
-                    labels=msg_detail.get('labelIds', []),
-                    has_attachments=has_attachments
+                    labels=msg_detail.get("labelIds", []),
+                    has_attachments=has_attachments,
                 )
 
                 email_messages.append(email_message)
@@ -341,7 +377,9 @@ class GmailApi:
             self._logger.error(f"Unexpected error fetching messages: {error}")
             raise
 
-    async def get_messages_since(self, since_date: datetime.datetime) -> List[EmailMessage]:
+    async def get_messages_since(
+        self, since_date: datetime.datetime
+    ) -> List[EmailMessage]:
         # Gmail query format for date
         date_query = f"after:{since_date.strftime('%Y/%m/%d')}"
         return await self.get_recent_messages(query=date_query)
