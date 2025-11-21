@@ -193,7 +193,7 @@ class HabitTrackerPlugin(Plugin):
                 return
 
             while habits:
-                choices: list[str] = [
+                choices: list[str | list[str]] = [
                     habit.name.capitalize() for habit in habits
                 ] + [["Cancel"]]
                 choice: int = await bot.request_user_choice(

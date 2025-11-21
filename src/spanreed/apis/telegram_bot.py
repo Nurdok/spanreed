@@ -787,8 +787,6 @@ class TelegramBotApi:
         propagate_preemption: bool = True,
         priority: UserInteractionPriority = UserInteractionPriority.NORMAL,
     ) -> AsyncGenerator[None, None]:
-        default_timeout = datetime.timedelta(minutes=10)
-
         def log(msg: str) -> None:
             self._logger.info(msg + f" {user_interaction=}")
 
@@ -809,8 +807,7 @@ class TelegramBotApi:
         log("Got user interaction permission")
         async with lock:
             try:
-                async with asyncio.timeout(timeout_seconds or default_timeout):
-                    yield
+                yield
             except asyncio.CancelledError:
                 if user_interaction.preempted:
                     log("User interaction was preempted")

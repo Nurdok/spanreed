@@ -222,7 +222,7 @@ class GmailApi:
     def _parse_email_body(self, payload: Dict[str, Any]) -> str:
         body = ""
 
-        def decode_body_data(body_part):
+        def decode_body_data(body_part: Dict[str, Any]):
             """Helper to safely decode body data"""
             try:
                 if "data" in body_part["body"] and body_part["body"]["data"]:

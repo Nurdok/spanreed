@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from freezegun import freeze_time
 
+from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.gmail import EmailMessage, GmailApi
 from spanreed.plugins.gmail_monitor import (
@@ -27,7 +28,7 @@ async def user():
 
 
 @pytest.fixture
-async def plugin():
+async def plugin() -> Plugin:
     return GmailMonitorPlugin()
 
 
