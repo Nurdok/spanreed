@@ -700,7 +700,11 @@ class TelegramBotApi:
         app = await self.get_application()
         app.bot_data[CURRENT_USER_INTERACTION][self._telegram_user_id] = None
 
-    async def _try_to_allow_next_user_interaction(self) -> None:
+    async def _try_to_allow_next_user_interaction(
+        self, delay: datetime.timedelta | None = None
+    ) -> None:
+        if delay is not None:
+            await asyncio.sleep(delay.total_seconds())
         self._logger.info("Trying to allow next user interaction")
         await self._preempt_user_interaction_if_needed()
         if (await self._get_current_user_interaction()) is not None:
