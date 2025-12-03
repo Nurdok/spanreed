@@ -366,6 +366,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 ],
             )
 
+            action_config: Dict[str, Any] | None
             if action_choice == 0:  # Telegram notification
                 action_config = await self._configure_telegram_notification(
                     bot

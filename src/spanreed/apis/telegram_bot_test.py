@@ -12,7 +12,7 @@ def test_user_interaction_simple_usage(
 ) -> None:
     """Test using the user_interaction context manager from the user's perspective."""
 
-    async def run_test():
+    async def run_test() -> None:
         # Setup mock application
         mock_app = AsyncMock()
         mock_app.bot_data = {}
@@ -23,7 +23,7 @@ def test_user_interaction_simple_usage(
         bot_api = TelegramBotApi(telegram_user_id)
 
         # Create a simple async function that uses user_interaction
-        async def send_greeting():
+        async def send_greeting() -> None:
             async with bot_api.user_interaction():
                 await bot_api.send_message("Hello!")
 
@@ -45,7 +45,7 @@ def test_user_interaction_handles_early_cancellation_properly(
 ) -> None:
     """Test that user_interaction properly handles early cancellation without RuntimeError."""
 
-    async def run_test():
+    async def run_test() -> None:
         # Setup mock application
         mock_app = AsyncMock()
         mock_app.bot_data = {}

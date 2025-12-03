@@ -70,7 +70,7 @@ class GmailApi:
         self._logger = logging.getLogger("spanreed.apis.gmail").getChild(
             str(user.id)
         )
-        self._service = None
+        self._service: Any | None = None
 
     @classmethod
     async def for_user(cls, user: User) -> "GmailApi":
@@ -206,7 +206,7 @@ class GmailApi:
         creds = await self._get_credentials()
         return creds is not None and creds.valid
 
-    async def _get_service(self):
+    async def _get_service(self) -> Any:
         if self._service is None:
             creds = await self._get_credentials()
             if not creds:
