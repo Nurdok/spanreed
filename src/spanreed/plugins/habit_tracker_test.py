@@ -42,7 +42,7 @@ def test_run_for_user(
     def fake_user_choice(prompt: str, choices: list[str], columns: int) -> int:
         if "Did you do any of these habits today?" in prompt:
             assert "Habit1" in choices
-            assert "Cancel" in choices
+            assert ["Cancel"] in choices
             if "Habit2" in choices:
                 return 1
             raise asyncio.CancelledError
@@ -88,7 +88,7 @@ def test_run_for_user_passed_midnight(
     def fake_user_choice(prompt: str, choices: list[str], columns: int) -> int:
         if "Did you do any of these habits today?" in prompt:
             assert "Habit1" in choices
-            assert "Cancel" in choices
+            assert ["Cancel"] in choices
             if "Habit2" in choices:
                 return 1
             raise asyncio.CancelledError
