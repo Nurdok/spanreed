@@ -401,7 +401,7 @@ class UserInteraction:
         self.event = asyncio.Event()
         # This is the timeout for the actual interaction, not for waiting in the queue.
         # It is enforced if there's another interaction waiting, regardless of priority.
-        self.timeout = datetime.timedelta(hours=1).total_seconds()
+        self.timeout = datetime.timedelta(hours=1)
         self.start_time: Optional[datetime.datetime] = None
         task: asyncio.Task | None = asyncio.current_task()
         if task is None:
@@ -740,7 +740,7 @@ class TelegramBotApi:
             and (
                 datetime.datetime.now() - current_interaction.start_time
             ).total_seconds()
-            > current_interaction.timeout
+            > current_interaction.timeout.total_seconds()
         )
 
         user_interaction_queues = await self._get_user_interaction_queues()
@@ -811,6 +811,11 @@ class TelegramBotApi:
         log("Got user interaction permission")
         async with lock:
             try:
+                asyncio.create_task(
+                    self._try_to_allow_next_user_interaction(
+                        user_interaction.timeout
+                    )
+                )
                 yield
             except asyncio.CancelledError:
                 if user_interaction.preempted:
