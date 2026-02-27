@@ -34,53 +34,125 @@ class ObsidianApi:
     async def for_user(cls, user: User) -> "ObsidianApi":
         return ObsidianApi(user)
 
+    async def _run_progress_bar(
+        self,
+        attempt: int,
+        max_attempts: int,
+        timeout_seconds: float,
+    ) -> None:
+        """Background task that shows a Telegram progress bar after 5s delay.
+
+        Sets self._progress_message when the first message is sent.
+        """
+        await asyncio.sleep(5)
+        bot: TelegramBotApi = await TelegramBotApi.for_user(self._user)
+        start_time = asyncio.get_event_loop().time()
+        while True:
+            elapsed = (
+                asyncio.get_event_loop().time() - start_time + 5
+            )  # include initial delay
+            fraction = min(elapsed / timeout_seconds, 1.0)
+            filled = int(fraction * 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            text = f"⏳ Waiting for Obsidian [{bar}] (attempt {attempt}/{max_attempts})"
+            if self._progress_message is None:
+                self._progress_message = await bot.send_message(
+                    text, parse_html=False
+                )
+            else:
+                try:
+                    await self._progress_message.edit_text(text)
+                except Exception:
+                    pass  # telegram raises if text hasn't changed
+            await asyncio.sleep(3)
+
     async def _send_request(
         self,
         method: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        request_id: int = uuid.uuid4().int
-        request: dict[str, Any] = {
-            # Needs to be a string because the TS JSON parser can't handle ints that big
-            "request_id": str(request_id),
-            "method": method,
-            "params": params or {},
-        }
-        self._logger.info(f"Sending request: {request=}")
-
+        max_attempts = 3
         request_queue_name: str = f"obsidian-plugin-tasks:{self._user.id}"
-        try:
-            async with asyncio.timeout(
-                datetime.timedelta(seconds=30).total_seconds()
-            ):
-                await redis_api.lpush(request_queue_name, json.dumps(request))
-        except Exception:
-            self._logger.error(f"Failed to send request: {request=}")
-            raise
+        self._progress_message = None
 
-        try:
-            async with asyncio.timeout(
-                datetime.timedelta(seconds=30).total_seconds()
-            ):
-                response_queue_name: str = (
-                    f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
-                )
-                self._logger.info(
-                    f"Waiting for response on {response_queue_name=}"
-                )
-                response: dict = json.loads(
-                    # Take the value from the tuple returned by `blpop`, we already know the key
-                    (await redis_api.blpop(response_queue_name))[1]
-                )
-                self._logger.info(
-                    f"Got response for {method=} on {response_queue_name=}: {response=}"
-                )
-        except TimeoutError:
-            # Delete the request from the queue
-            await redis_api.lrem(request_queue_name, 0, json.dumps(request))
-            raise ObsidianApiTimeoutError(
-                f"Obsidian API request timed out ({request_id=})."
+        for attempt in range(1, max_attempts + 1):
+            request_id: int = uuid.uuid4().int
+            request: dict[str, Any] = {
+                # Needs to be a string because the TS JSON parser can't handle ints that big
+                "request_id": str(request_id),
+                "method": method,
+                "params": params or {},
+            }
+            self._logger.info(
+                f"Sending request: {request=} (attempt {attempt}/{max_attempts})"
             )
+
+            try:
+                async with asyncio.timeout(
+                    datetime.timedelta(seconds=30).total_seconds()
+                ):
+                    await redis_api.lpush(
+                        request_queue_name, json.dumps(request)
+                    )
+            except Exception:
+                self._logger.error(f"Failed to send request: {request=}")
+                raise
+
+            progress_task = asyncio.create_task(
+                self._run_progress_bar(attempt, max_attempts, 30)
+            )
+
+            try:
+                async with asyncio.timeout(
+                    datetime.timedelta(seconds=30).total_seconds()
+                ):
+                    response_queue_name: str = (
+                        f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
+                    )
+                    self._logger.info(
+                        f"Waiting for response on {response_queue_name=}"
+                    )
+                    response: dict = json.loads(
+                        # Take the value from the tuple returned by `blpop`, we already know the key
+                        (await redis_api.blpop(response_queue_name))[1]
+                    )
+                    self._logger.info(
+                        f"Got response for {method=} on {response_queue_name=}: {response=}"
+                    )
+            except TimeoutError:
+                progress_task.cancel()
+                # Delete the request from the queue
+                await redis_api.lrem(
+                    request_queue_name, 0, json.dumps(request)
+                )
+                if attempt < max_attempts:
+                    self._logger.warning(
+                        f"Obsidian API request timed out ({request_id=}), "
+                        f"retrying (attempt {attempt}/{max_attempts})"
+                    )
+                    continue
+                # Final attempt failed
+                if self._progress_message is not None:
+                    try:
+                        await self._progress_message.edit_text(
+                            "❌ Obsidian didn't respond"
+                        )
+                    except Exception:
+                        pass
+                raise ObsidianApiTimeoutError(
+                    f"Obsidian API request timed out after {max_attempts} attempts ({request_id=})."
+                )
+            else:
+                progress_task.cancel()
+                break
+
+        # Clean up progress message on success
+        if self._progress_message is not None:
+            try:
+                await self._progress_message.delete()
+            except Exception:
+                pass
+
         self._logger.info(f"Got response: {response=}")
 
         if not response["success"]:
