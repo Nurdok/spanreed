@@ -4,6 +4,7 @@ from typing import Any, TypeVar, Callable, Awaitable, cast
 import asyncio
 from functools import wraps
 
+from requests.exceptions import HTTPError as RequestsHTTPError
 from todoist_api_python.api_async import TodoistAPIAsync
 from todoist_api_python.models import (
     Task,
@@ -32,8 +33,9 @@ def with_retries(
                     return await func(*args, **kwargs)
                 except Exception as e:
                     if (
-                        isinstance(e, (TodoistAPIAsync.HttpError))
-                        and e.status_code == 503
+                        isinstance(e, RequestsHTTPError)
+                        and e.response is not None
+                        and e.response.status_code == 503
                     ):
                         if attempt < max_retries - 1:
                             await asyncio.sleep(delay)
