@@ -5,7 +5,7 @@ from typing import List
 
 from spanreed.plugin import Plugin
 
-from spanreed.apis.telegram_bot import TelegramBotPlugin
+from spanreed.apis.telegram_bot import TelegramBotApi, TelegramBotPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.obsidian_webhook import ObsidianWebhookPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
@@ -67,11 +67,36 @@ async def run_all_tasks() -> None:
         f"{[plugin.canonical_name() for plugin in plugins]}"
     )
 
-    async with asyncio.TaskGroup() as tg:
-        for plugin in plugins:
-            tg.create_task(plugin.run())
+    results = await asyncio.gather(
+        *(plugin.run() for plugin in plugins),
+        return_exceptions=True,
+    )
+
+    for plugin, result in zip(plugins, results):
+        if isinstance(result, BaseException):
+            logging.error(f"Plugin {plugin.canonical_name()} failed: {result}")
+            try:
+                await _notify_plugin_failure(plugin, result)
+            except Exception:
+                logging.exception(
+                    f"Failed to notify users about {plugin.canonical_name()} failure"
+                )
 
     logging.error("All plugins have stopped. Exiting.")
+
+
+async def _notify_plugin_failure(plugin: Plugin, error: BaseException) -> None:
+    for user in await plugin.get_users():
+        try:
+            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+            await bot.send_message(
+                f"Plugin '{plugin.name()}' has crashed: {error}"
+            )
+        except Exception:
+            logging.exception(
+                f"Failed to notify user {user.id} about "
+                f"{plugin.canonical_name()} failure"
+            )
 
 
 def main() -> None:
