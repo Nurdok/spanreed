@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 from contextlib import suppress
 
+import telegram.error
+
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.telegram_bot import (
@@ -260,12 +262,12 @@ class HabitTrackerPlugin(Plugin):
         self._logger.info(f"Running for user {user}")
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
 
-        try:
-            while True:
-                self._logger.info(f"Polling user {user}")
-                eod_timeout = time_until_end_of_day().total_seconds()
-                one_hour = 60 * 60
-                min_timeout = min(eod_timeout, one_hour)
+        while True:
+            self._logger.info(f"Polling user {user}")
+            eod_timeout = time_until_end_of_day().total_seconds()
+            one_hour = 60 * 60
+            min_timeout = min(eod_timeout, one_hour)
+            try:
                 with suppress(TimeoutError):
                     async with asyncio.timeout(min_timeout):
                         try:
@@ -285,8 +287,11 @@ class HabitTrackerPlugin(Plugin):
                                 datetime.timedelta(hours=4).total_seconds()
                             )
                 self._logger.info("Passed midnight, re-asking")
-        except Exception:
-            self._logger.exception("Error in run_for_user")
-            raise
-        finally:
-            self._logger.info("Exiting run_for_user")
+            except telegram.error.RetryAfter as e:
+                self._logger.warning(
+                    f"Telegram flood control, sleeping for {e.retry_after}s"
+                )
+                await asyncio.sleep(e.retry_after)
+            except Exception:
+                self._logger.exception("Error in run_for_user, continuing")
+                await asyncio.sleep(60)
