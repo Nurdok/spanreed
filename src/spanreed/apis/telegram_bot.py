@@ -58,6 +58,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     def __init__(self) -> None:
         super().__init__()
         self.background_tasks: set[asyncio.Task] = set()
+        self._do_tasks: dict[int, asyncio.Task] = {}
 
     @classmethod
     def name(cls) -> str:
@@ -340,7 +341,14 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     )
                     await chosen_command.callback(user)
 
-        self.create_task(show_command_menu_task())
+        if telegram_user_id in self._do_tasks:
+            self._do_tasks[telegram_user_id].cancel()
+
+        task = asyncio.create_task(show_command_menu_task())
+        self._do_tasks[telegram_user_id] = task
+        task.add_done_callback(
+            lambda _: self._do_tasks.pop(telegram_user_id, None)
+        )
 
     async def handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
