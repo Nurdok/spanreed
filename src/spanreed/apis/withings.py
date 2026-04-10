@@ -2,8 +2,6 @@ import asyncio
 import datetime
 from typing import AsyncGenerator
 
-from yaml import YAMLError
-
 from spanreed.storage import redis_api
 from spanreed.user import User
 import contextlib
@@ -208,10 +206,17 @@ class WithingsApi:
             response = requests.post(url, headers=headers, data=data)
         self._logger.info(f"Got response: {response.json()}")
 
+        status = response.json()["status"]
+        if status != 0:
+            self._logger.error(
+                f"Withings API error: {status=}, response={response.json()}"
+            )
+            return None
+
         # TODO: handle multiple measurements
         try:
             result = self.extract_measurements_from_json(response.json())
-        except YAMLError:
+        except (KeyError, ValueError):
             self._logger.exception(
                 f"Failed to parse response: {response.text}"
             )
