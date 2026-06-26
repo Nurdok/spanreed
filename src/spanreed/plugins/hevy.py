@@ -9,7 +9,7 @@ import yaml
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
 from spanreed.apis.hevy import HevyApi, Workout, Exercise, WorkoutSet
 from spanreed.apis.obsidian_webhook import (
     ObsidianWebhookApi,
@@ -80,41 +80,63 @@ class HevyPlugin(Plugin):
     async def _set_synced_ids(self, user: User, ids: set[str]) -> None:
         await self.set_user_data(user, SYNCED_IDS_KEY, json.dumps(sorted(ids)))
 
+    async def run(self) -> None:
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Sync Hevy workouts", callback=self._sync_now
+            ),
+        )
+        await super().run()
+
     async def run_for_user(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        while True:
+            await self._sync(user, bot)
+            await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
+
+    async def _sync_now(self, user: User) -> None:
+        """Manually triggered sync via the Telegram command."""
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        await bot.send_message("Checking Hevy for new workouts…")
+        if await self._sync(user, bot) == 0:
+            await bot.send_message("No new Hevy workouts found.")
+
+    async def _sync(self, user: User, bot: TelegramBotApi) -> int:
+        """Fetch and write any new workouts. Returns the number written."""
         config: UserConfig = await self.get_config(user)
         hevy = await HevyApi.for_user(user)
         webhook = await ObsidianWebhookApi.for_user(user)
 
-        while True:
-            # Capture the cursor *before* fetching so we never miss workouts
-            # logged while a sync is running. Overlap is harmless: the synced
-            # id set prevents duplicate notes.
-            poll_start = datetime.datetime.now(
-                datetime.timezone.utc
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
-            since = (await self.get_user_data(user, SINCE_KEY)) or EPOCH
+        # Capture the cursor *before* fetching so we never miss workouts
+        # logged while a sync is running. Overlap is harmless: the synced
+        # id set prevents duplicate notes.
+        poll_start = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        since = (await self.get_user_data(user, SINCE_KEY)) or EPOCH
+        synced_ids: set[str] = await self._get_synced_ids(user)
 
-            synced_ids: set[str] = await self._get_synced_ids(user)
+        workouts = await hevy.get_updated_workouts_since(since)
+        new_count = 0
+        for workout in workouts:
+            if workout.id in synced_ids:
+                # Already written. (Edits made in Hevy after the fact are
+                # not re-synced, since the webhook only appends.)
+                continue
 
-            workouts = await hevy.get_updated_workouts_since(since)
-            for workout in workouts:
-                if workout.id in synced_ids:
-                    # Already written. (Edits made in Hevy after the fact are
-                    # not re-synced, since the webhook only appends.)
-                    continue
+            set_count = await self._write_workout(config, webhook, workout)
+            synced_ids.add(workout.id)
+            await self._set_synced_ids(user, synced_ids)
+            await bot.send_message(
+                f"Logged Hevy workout: {workout.title} "
+                f"({set_count} sets across "
+                f"{len(workout.exercises)} exercises)."
+            )
+            new_count += 1
 
-                set_count = await self._write_workout(config, webhook, workout)
-                synced_ids.add(workout.id)
-                await self._set_synced_ids(user, synced_ids)
-                await bot.send_message(
-                    f"Logged Hevy workout: {workout.title} "
-                    f"({set_count} sets across "
-                    f"{len(workout.exercises)} exercises)."
-                )
-
-            await self.set_user_data(user, SINCE_KEY, poll_start)
-            await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
+        await self.set_user_data(user, SINCE_KEY, poll_start)
+        return new_count
 
     async def _write_workout(
         self,
