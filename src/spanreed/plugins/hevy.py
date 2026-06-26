@@ -87,6 +87,12 @@ class HevyPlugin(Plugin):
                 text="Sync Hevy workouts", callback=self._sync_now
             ),
         )
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Re-create Hevy data", callback=self._recreate_data
+            ),
+        )
         await super().run()
 
     async def run_for_user(self, user: User) -> None:
@@ -137,6 +143,91 @@ class HevyPlugin(Plugin):
 
         await self.set_user_data(user, SINCE_KEY, poll_start)
         return new_count
+
+    async def _recreate_data(self, user: User) -> None:
+        """Manually re-write set notes for a date, a workout id, or all.
+
+        Useful after the note structure changes. Note: the Obsidian webhook
+        appends, so any notes that already exist should be deleted first to
+        avoid stacking a second copy onto them.
+        """
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        hevy = await HevyApi.for_user(user)
+
+        choice = await bot.request_user_choice(
+            "Re-create Hevy data for…",
+            ["A specific date", "A workout ID", "All workouts", "Cancel"],
+        )
+
+        workouts: list[Workout]
+        if choice == 0:  # A specific date
+            date_str = await bot.request_user_input(
+                "Enter the date to re-create (YYYY-MM-DD):"
+            )
+            try:
+                target = datetime.date.fromisoformat(date_str.strip())
+            except ValueError:
+                await bot.send_message(
+                    "That doesn't look like a YYYY-MM-DD date."
+                )
+                return
+            workouts = [
+                w
+                for w in await hevy.get_all_workouts()
+                if self._workout_date(w) == target
+            ]
+            if not workouts:
+                await bot.send_message(
+                    f"No workout found on {target.isoformat()}."
+                )
+                return
+        elif choice == 1:  # A workout ID
+            workout_id = (
+                await bot.request_user_input("Enter the Hevy workout ID:")
+            ).strip()
+            try:
+                workouts = [await hevy.get_workout(workout_id)]
+            except Exception:
+                self._logger.exception(f"Failed to fetch {workout_id=}")
+                await bot.send_message(
+                    f"Couldn't fetch workout `{workout_id}`."
+                )
+                return
+        elif choice == 2:  # All workouts
+            confirm = await bot.request_user_choice(
+                "Re-create notes for ALL workouts? This re-writes every "
+                "set note.",
+                ["Yes", "Cancel"],
+            )
+            if confirm != 0:
+                return
+            workouts = await hevy.get_all_workouts()
+            if not workouts:
+                await bot.send_message("No workouts found.")
+                return
+        else:  # Cancel
+            return
+
+        await bot.send_message(f"Re-creating {len(workouts)} workout(s)…")
+        total_sets = await self._recreate(user, workouts)
+        await bot.send_message(
+            f"Done. Wrote {total_sets} set notes across "
+            f"{len(workouts)} workout(s)."
+        )
+
+    async def _recreate(self, user: User, workouts: list[Workout]) -> int:
+        """Force-write set notes for the given workouts. Returns set count."""
+        config: UserConfig = await self.get_config(user)
+        webhook = await ObsidianWebhookApi.for_user(user)
+        synced_ids: set[str] = await self._get_synced_ids(user)
+
+        total_sets = 0
+        for workout in workouts:
+            total_sets += await self._write_workout(config, webhook, workout)
+            synced_ids.add(workout.id)
+
+        await self._set_synced_ids(user, synced_ids)
+        return total_sets
 
     async def _write_workout(
         self,

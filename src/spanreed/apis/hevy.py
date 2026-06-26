@@ -106,6 +106,32 @@ class HevyApi:
                 response.raise_for_status()
                 return await response.json()
 
+    async def get_workout(self, workout_id: str) -> Workout:
+        """Fetch a single workout by its Hevy id."""
+        data = await self._get(f"workouts/{workout_id}", {})
+        # The endpoint returns the workout object, possibly wrapped.
+        if "workout" in data:
+            data = data["workout"]
+        return Workout.from_json(data)
+
+    async def get_all_workouts(self) -> list[Workout]:
+        """Fetch every workout, oldest-first."""
+        workouts: list[Workout] = []
+        page = 1
+        while True:
+            data = await self._get(
+                "workouts", {"page": page, "pageSize": MAX_PAGE_SIZE}
+            )
+            for workout in data.get("workouts", []):
+                workouts.append(Workout.from_json(workout))
+            page_count = data.get("page_count", 1)
+            if page >= page_count:
+                break
+            page += 1
+        # The endpoint returns newest-first; flip to oldest-first.
+        workouts.reverse()
+        return workouts
+
     async def get_updated_workouts_since(self, since: str) -> list[Workout]:
         """Return workouts created or updated since `since` (ISO 8601).
 
