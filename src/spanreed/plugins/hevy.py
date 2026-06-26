@@ -155,14 +155,17 @@ class HevyPlugin(Plugin):
         )
         seen: dict[str, int] = collections.defaultdict(int)
 
-        set_count = 0
-        for exercise in workout.exercises:
+        set_ordinal = 0
+        for exercise_index, exercise in enumerate(
+            workout.exercises, start=1
+        ):
             seen[exercise.title] += 1
             occurrence = seen[exercise.title]
             suffix = (
                 f" ({occurrence})" if title_counts[exercise.title] > 1 else ""
             )
             for set_number, workout_set in enumerate(exercise.sets, start=1):
+                set_ordinal += 1
                 filename = (
                     f"{self._sanitize(exercise.title)}{suffix} "
                     f"set {set_number}.md"
@@ -173,11 +176,16 @@ class HevyPlugin(Plugin):
                     / filename
                 )
                 content = self._render_set_note(
-                    workout, exercise, workout_set, set_number, date
+                    workout,
+                    exercise,
+                    workout_set,
+                    set_number,
+                    date,
+                    exercise_index,
+                    set_ordinal,
                 )
                 await webhook.append_to_note(note_path, content)
-                set_count += 1
-        return set_count
+        return set_ordinal
 
     @staticmethod
     def _sanitize(name: str) -> str:
@@ -215,6 +223,8 @@ class HevyPlugin(Plugin):
         workout_set: WorkoutSet,
         set_number: int,
         date: datetime.date | None,
+        exercise_index: int,
+        set_ordinal: int,
     ) -> str:
         volume_kg = None
         if workout_set.weight_kg is not None and workout_set.reps is not None:
@@ -227,7 +237,13 @@ class HevyPlugin(Plugin):
         frontmatter["exercise"] = exercise.title
         frontmatter["workout"] = workout.title
         frontmatter["workout_id"] = workout.id
+        # exercise_index: position of this exercise in the session (1-based).
+        # set_ordinal: position of this set across the whole session (1-based).
+        # Sort a Base by date, exercise_index, set_number — or just
+        # set_ordinal — to reproduce the order performed.
+        frontmatter["exercise_index"] = exercise_index
         frontmatter["set_number"] = set_number
+        frontmatter["set_ordinal"] = set_ordinal
         frontmatter["set_type"] = workout_set.type
         frontmatter["weight_kg"] = workout_set.weight_kg
         frontmatter["reps"] = workout_set.reps
