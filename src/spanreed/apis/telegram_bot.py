@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import datetime
+import json
 import os
 from enum import auto, IntEnum
 import logging
@@ -10,6 +11,7 @@ from dataclasses import dataclass
 from collections.abc import AsyncGenerator
 
 from spanreed.plugin import Plugin
+from spanreed.storage import redis_api
 from spanreed.user import User
 
 from telegram import (
@@ -19,7 +21,13 @@ from telegram import (
     constants,
     Message,
 )
-from telegram.error import TelegramError
+from telegram.error import (
+    RetryAfter,
+    TimedOut,
+    NetworkError,
+    BadRequest,
+    Forbidden,
+)
 from telegram.ext import (
     ApplicationBuilder,
     AIORateLimiter,
@@ -38,6 +46,13 @@ USER_INTERACTION_LOCKS = "user-interaction-locks"
 USER_INTERACTION_QUEUES = "user-interaction-queue"
 CURRENT_USER_INTERACTION = "current-user-interaction"
 USER_MESSAGE_CALLBACK_ID = "user-message-callback-id"
+
+# Durable outbound notification queue. `notify()` enqueues here; a per-user
+# consumer (started by TelegramBotPlugin) drains it, so notifications survive
+# restarts and Telegram flood-control bans instead of being dropped.
+OUTBOUND_QUEUE_MAX = 200  # keep newest N; drop older on overflow
+OUTBOUND_INITIAL_BACKOFF_S = 60
+OUTBOUND_MAX_BACKOFF_S = 30 * 60
 
 
 class CallbackData(NamedTuple):
@@ -88,6 +103,10 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             TelegramBotApi._application_initialized.set()
             TelegramBotApi._application = application
 
+            # Start the durable outbound-message consumer for each user so
+            # queued notifications (see TelegramBotApi.notify) get delivered.
+            await self._start_outbound_consumers()
+
             try:
                 # Wait for cancellation so we can perform the cleanup.
                 self._logger.info("Waiting for cancellation...")
@@ -104,6 +123,16 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 await application.stop()
                 self._logger.info("Stopped")
                 raise
+
+    async def _start_outbound_consumers(self) -> None:
+        for user in await self.get_users():
+            bot = await TelegramBotApi.for_user(user)
+            task = asyncio.create_task(bot.deliver_outbound_messages())
+            self.background_tasks.add(task)
+            task.add_done_callback(self.background_tasks.discard)
+            self._logger.info(
+                f"Started outbound-message consumer for user {user.id}"
+            )
 
     async def setup_application(
         self,
@@ -532,31 +561,144 @@ class TelegramBotApi:
                 ),
             )
 
+    def _outbound_key(self) -> str:
+        return f"outbound-messages:{self._telegram_user_id}"
+
+    def _outbound_inflight_key(self) -> str:
+        return f"outbound-messages:inflight:{self._telegram_user_id}"
+
     async def notify(
         self,
         text: str,
         *,
         parse_html: bool = True,
         parse_markdown: bool = False,
-    ) -> Message | None:
-        """Best-effort notification: deliver `text`, but never raise.
+    ) -> None:
+        """Fire-and-forget, durable notification.
 
-        Use for fire-and-forget confirmations (e.g. "Logged X") where a
-        failed or rate-limited send must not abort the work that produced it,
-        nor crash the calling loop. Returns the sent Message, or None if
-        delivery failed.
+        Enqueues `text` to a per-user Redis queue that a background consumer
+        (see `deliver_outbound_messages`) drains in FIFO order. Delivery
+        survives process restarts and Telegram flood-control bans, so a
+        rate-limited or failed send never aborts the work that produced it
+        nor crashes the calling loop.
+
+        Use this for fire-and-forget confirmations and notices (e.g.
+        "Logged X", "Spanreed is starting up"). For interactive messages that
+        must arrive immediately or surface their failure (prompts, the auth
+        link), use `send_message`.
         """
+        entry = json.dumps(
+            {
+                "id": uuid.uuid4().hex,
+                "text": text,
+                "parse_html": parse_html,
+                "parse_markdown": parse_markdown,
+                "enqueued_at": datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat(),
+            }
+        )
+        key = self._outbound_key()
+        await redis_api.lpush(key, entry)
+        # Bound the backlog so a long outage can't grow it without limit.
+        # New entries are pushed on the left, so keeping [0, MAX) retains the
+        # newest and drops the oldest undelivered ones.
+        await redis_api.ltrim(key, 0, OUTBOUND_QUEUE_MAX - 1)
+
+    async def deliver_outbound_messages(self) -> None:
+        """Drain the durable outbound queue for this user, forever.
+
+        Started once per user by TelegramBotPlugin. Reserves each message
+        into an inflight list (crash-safe), delivers it, and only then acks
+        by removing it. Backs off on transient failures (flood control,
+        timeouts, network) so a ban doesn't turn into a hammering loop, and
+        drops messages that are permanently undeliverable (bad markup, etc.)
+        so a single poison message can't wedge the queue.
+        """
+        await self._recover_inflight()
+        while True:
+            try:
+                # Reserve the oldest message (queue tail) into the inflight
+                # list atomically, so a crash mid-send can't lose it.
+                raw = await redis_api.brpoplpush(
+                    self._outbound_key(),
+                    self._outbound_inflight_key(),
+                    timeout=30,
+                )
+                if raw is None:
+                    continue
+                await self._deliver_one(raw)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Never let the consumer die (e.g. a Redis blip); back off
+                # briefly and keep going.
+                self._logger.exception(
+                    "Outbound delivery loop error; retrying in 5s."
+                )
+                await asyncio.sleep(5)
+
+    async def _recover_inflight(self) -> None:
+        """Return messages reserved but not acked before a crash to the queue.
+
+        Pushes them back on the right (oldest) end so they keep FIFO priority.
+        """
+        while (
+            item := await redis_api.lpop(self._outbound_inflight_key())
+        ) is not None:
+            await redis_api.rpush(self._outbound_key(), item)
+
+    async def _deliver_one(self, raw: bytes | str) -> None:
+        """Deliver one reserved message, retrying until it sticks or is dropped."""
         try:
-            return await self.send_message(
-                text,
-                parse_html=parse_html,
-                parse_markdown=parse_markdown,
+            message = json.loads(raw)
+            text = message["text"]
+            parse_html = message.get("parse_html", True)
+            parse_markdown = message.get("parse_markdown", False)
+        except (ValueError, KeyError, TypeError):
+            self._logger.exception(
+                f"Dropping malformed outbound entry: {raw!r}"
             )
-        except (TelegramError, TimeoutError):
-            self._logger.warning(
-                f"Failed to deliver notification: {text!r}", exc_info=True
-            )
-            return None
+            await redis_api.lrem(self._outbound_inflight_key(), 1, raw)
+            return
+
+        backoff = OUTBOUND_INITIAL_BACKOFF_S
+        while True:
+            try:
+                await self.send_message(
+                    text,
+                    parse_html=parse_html,
+                    parse_markdown=parse_markdown,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (BadRequest, Forbidden):
+                # Permanent (bad markup, message too long, bot blocked):
+                # retrying can't help, so drop it. Caught before the transient
+                # branch because BadRequest is a subclass of NetworkError.
+                self._logger.exception(
+                    f"Dropping undeliverable outbound message: {text!r}"
+                )
+            except (RetryAfter, TimedOut, NetworkError, TimeoutError) as e:
+                # Transient: Telegram is throttling/unreachable. Wait and
+                # retry the *same* message (it stays reserved in inflight).
+                retry_after = getattr(e, "retry_after", None)
+                delay = min(retry_after or backoff, OUTBOUND_MAX_BACKOFF_S)
+                self._logger.warning(
+                    f"Outbound delivery deferred ({e!r}); retrying in {delay}s."
+                )
+                await asyncio.sleep(delay)
+                backoff = min(backoff * 2, OUTBOUND_MAX_BACKOFF_S)
+                continue
+            except Exception:
+                # Any other error (unexpected / non-Telegram): drop rather
+                # than wedge the queue.
+                self._logger.exception(
+                    f"Dropping undeliverable outbound message: {text!r}"
+                )
+            # Delivered or permanently dropped: ack by removing from inflight.
+            await redis_api.lrem(self._outbound_inflight_key(), 1, raw)
+            return
 
     async def send_multiple_messages(
         self, *text: str, delay: int = 1, parse_html: bool = True
