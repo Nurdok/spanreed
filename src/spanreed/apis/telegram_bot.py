@@ -21,6 +21,7 @@ from telegram import (
 )
 from telegram.ext import (
     ApplicationBuilder,
+    AIORateLimiter,
     ContextTypes,
     CommandHandler,
     MessageHandler,
@@ -116,6 +117,11 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         application = (
             app_builder.token(os.environ["TELEGRAM_API_TOKEN"])
             .arbitrary_callback_data(True)
+            # Pace outbound requests to Telegram's limits (~1 msg/s per chat,
+            # ~30/s overall) so bursts don't trip flood control, and retry the
+            # occasional RetryAfter transparently. This prevents the multi-hour
+            # bans we'd otherwise accumulate by ignoring 429s.
+            .rate_limiter(AIORateLimiter(max_retries=3))
             .build()
         )
 
