@@ -22,10 +22,11 @@ from telegram import (
     Message,
 )
 from telegram.error import (
-    TelegramError,
     RetryAfter,
     TimedOut,
     NetworkError,
+    BadRequest,
+    Forbidden,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -642,7 +643,9 @@ class TelegramBotApi:
 
         Pushes them back on the right (oldest) end so they keep FIFO priority.
         """
-        while (item := await redis_api.lpop(self._outbound_inflight_key())) is not None:
+        while (
+            item := await redis_api.lpop(self._outbound_inflight_key())
+        ) is not None:
             await redis_api.rpush(self._outbound_key(), item)
 
     async def _deliver_one(self, raw: bytes | str) -> None:
@@ -653,7 +656,9 @@ class TelegramBotApi:
             parse_html = message.get("parse_html", True)
             parse_markdown = message.get("parse_markdown", False)
         except (ValueError, KeyError, TypeError):
-            self._logger.exception(f"Dropping malformed outbound entry: {raw!r}")
+            self._logger.exception(
+                f"Dropping malformed outbound entry: {raw!r}"
+            )
             await redis_api.lrem(self._outbound_inflight_key(), 1, raw)
             return
 
@@ -667,6 +672,13 @@ class TelegramBotApi:
                 )
             except asyncio.CancelledError:
                 raise
+            except (BadRequest, Forbidden):
+                # Permanent (bad markup, message too long, bot blocked):
+                # retrying can't help, so drop it. Caught before the transient
+                # branch because BadRequest is a subclass of NetworkError.
+                self._logger.exception(
+                    f"Dropping undeliverable outbound message: {text!r}"
+                )
             except (RetryAfter, TimedOut, NetworkError, TimeoutError) as e:
                 # Transient: Telegram is throttling/unreachable. Wait and
                 # retry the *same* message (it stays reserved in inflight).
@@ -679,8 +691,8 @@ class TelegramBotApi:
                 backoff = min(backoff * 2, OUTBOUND_MAX_BACKOFF_S)
                 continue
             except Exception:
-                # Permanent (bad markup, message too long, bot blocked, or an
-                # unexpected error): drop it rather than wedge the queue.
+                # Any other error (unexpected / non-Telegram): drop rather
+                # than wedge the queue.
                 self._logger.exception(
                     f"Dropping undeliverable outbound message: {text!r}"
                 )
