@@ -104,9 +104,9 @@ class HevyPlugin(Plugin):
     async def _sync_now(self, user: User) -> None:
         """Manually triggered sync via the Telegram command."""
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-        await bot.send_message("Checking Hevy for new workouts…")
+        await bot.notify("Checking Hevy for new workouts…")
         if await self._sync(user, bot) == 0:
-            await bot.send_message("No new Hevy workouts found.")
+            await bot.notify("No new Hevy workouts found.")
 
     async def _sync(self, user: User, bot: TelegramBotApi) -> int:
         """Fetch and write any new workouts. Returns the number written."""
@@ -134,7 +134,7 @@ class HevyPlugin(Plugin):
             set_count = await self._write_workout(config, webhook, workout)
             synced_ids.add(workout.id)
             await self._set_synced_ids(user, synced_ids)
-            await bot.send_message(
+            await bot.notify(
                 f"Logged Hevy workout: {workout.title} "
                 f"({set_count} sets across "
                 f"{len(workout.exercises)} exercises)."
@@ -167,7 +167,7 @@ class HevyPlugin(Plugin):
             try:
                 target = datetime.date.fromisoformat(date_str.strip())
             except ValueError:
-                await bot.send_message(
+                await bot.notify(
                     "That doesn't look like a YYYY-MM-DD date."
                 )
                 return
@@ -177,7 +177,7 @@ class HevyPlugin(Plugin):
                 if self._workout_date(w) == target
             ]
             if not workouts:
-                await bot.send_message(
+                await bot.notify(
                     f"No workout found on {target.isoformat()}."
                 )
                 return
@@ -189,7 +189,7 @@ class HevyPlugin(Plugin):
                 workouts = [await hevy.get_workout(workout_id)]
             except Exception:
                 self._logger.exception(f"Failed to fetch {workout_id=}")
-                await bot.send_message(
+                await bot.notify(
                     f"Couldn't fetch workout `{workout_id}`."
                 )
                 return
@@ -203,14 +203,14 @@ class HevyPlugin(Plugin):
                 return
             workouts = await hevy.get_all_workouts()
             if not workouts:
-                await bot.send_message("No workouts found.")
+                await bot.notify("No workouts found.")
                 return
         else:  # Cancel
             return
 
-        await bot.send_message(f"Re-creating {len(workouts)} workout(s)…")
+        await bot.notify(f"Re-creating {len(workouts)} workout(s)…")
         total_sets = await self._recreate(user, workouts)
-        await bot.send_message(
+        await bot.notify(
             f"Done. Wrote {total_sets} set notes across "
             f"{len(workouts)} workout(s)."
         )

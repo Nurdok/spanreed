@@ -19,6 +19,7 @@ from telegram import (
     constants,
     Message,
 )
+from telegram.error import TelegramError
 from telegram.ext import (
     ApplicationBuilder,
     AIORateLimiter,
@@ -530,6 +531,32 @@ class TelegramBotApi:
                     parse_mode=parse_mode,
                 ),
             )
+
+    async def notify(
+        self,
+        text: str,
+        *,
+        parse_html: bool = True,
+        parse_markdown: bool = False,
+    ) -> Message | None:
+        """Best-effort notification: deliver `text`, but never raise.
+
+        Use for fire-and-forget confirmations (e.g. "Logged X") where a
+        failed or rate-limited send must not abort the work that produced it,
+        nor crash the calling loop. Returns the sent Message, or None if
+        delivery failed.
+        """
+        try:
+            return await self.send_message(
+                text,
+                parse_html=parse_html,
+                parse_markdown=parse_markdown,
+            )
+        except (TelegramError, TimeoutError):
+            self._logger.warning(
+                f"Failed to deliver notification: {text!r}", exc_info=True
+            )
+            return None
 
     async def send_multiple_messages(
         self, *text: str, delay: int = 1, parse_html: bool = True
