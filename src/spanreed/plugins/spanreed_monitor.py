@@ -9,7 +9,6 @@ from contextlib import suppress, asynccontextmanager
 from typing import AsyncGenerator
 
 import redis
-import telegram.error
 
 from spanreed.apis.telegram_bot import TelegramBotApi
 from spanreed.user import User
@@ -37,7 +36,9 @@ class SpanreedMonitorPlugin(Plugin):
 
     async def _monitor_exceptions(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-        await bot.send_message("Spanreed is starting up.")
+        # Durable: delivered once the bot can send, even if it's flood-limited
+        # at startup.
+        await bot.notify("Spanreed is starting up.")
 
         interval: datetime.timedelta = datetime.timedelta(days=1, hours=6)
 
@@ -48,18 +49,21 @@ class SpanreedMonitorPlugin(Plugin):
                         _, exception = await redis_api.blpop(
                             self.EXCEPTION_QUEUE_NAME
                         )
-                        with suppress(telegram.error.BadRequest):
-                            await bot.send_message(
-                                f"Exception retrieved from storage:\n\n"
-                                f"```python\n{str(exception.decode('utf-8'))}\n```",
-                                parse_html=False,
-                                parse_markdown=True,
-                            )
-                        await bot.send_message("Spanreed is still running.")
+                        await bot.notify(
+                            f"Exception retrieved from storage:\n\n"
+                            f"```python\n{str(exception.decode('utf-8'))}\n```",
+                            parse_html=False,
+                            parse_markdown=True,
+                        )
+                        await bot.notify("Spanreed is still running.")
                         await redis_api.delete(self.EXCEPTION_QUEUE_NAME)
         except asyncio.CancelledError:
             self._logger.info("Spanreed Monitor cancelled.")
-            await bot.send_message("Spanreed is shutting down.")
+            # Best-effort immediate send: the process (and the outbound
+            # consumer) is going away, so a queued message wouldn't be
+            # delivered until the next startup.
+            with suppress(Exception):
+                await bot.send_message("Spanreed is shutting down.")
 
     async def _monitor_obsidian_plugin(self, user: User) -> None:
         from spanreed.apis.obsidian import ObsidianPlugin
