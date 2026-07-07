@@ -9,6 +9,8 @@ from spanreed.user import User
 import abc
 from dataclasses import asdict
 
+from telegram.error import RetryAfter
+
 UC = TypeVar("UC")
 
 
@@ -158,6 +160,37 @@ class Plugin(abc.ABC, Generic[UC]):
     async def run_for_user(self, user: User) -> None:
         pass
 
+    async def _run_for_user_supervised(self, user: User) -> None:
+        """Run a user's loop, restarting it if it crashes.
+
+        `run_for_user` is typically an infinite loop. Without this, a single
+        unhandled exception (e.g. a Telegram flood-control `RetryAfter` that
+        escaped the rate limiter) would kill the task permanently: `run()` is
+        gathered in `__main__` with `return_exceptions=True` and never
+        restarted, so the plugin would stay dead until a full service restart.
+        Returning normally is treated as "done" and is not restarted.
+        """
+        while True:
+            try:
+                await self.run_for_user(user)
+                return
+            except asyncio.CancelledError:
+                raise
+            except RetryAfter as e:
+                self._logger.warning(
+                    f"{self.canonical_name()} hit Telegram flood control for"
+                    f" user {user.id}; sleeping {e.retry_after}s before retry."
+                )
+                # Cap the sleep so a stale multi-hour ban doesn't wedge the
+                # loop; the rate limiter keeps us from re-tripping it.
+                await asyncio.sleep(min(e.retry_after, 3600))
+            except Exception:
+                self._logger.exception(
+                    f"{self.canonical_name()} crashed for user {user.id};"
+                    f" restarting in 60s."
+                )
+                await asyncio.sleep(60)
+
     # This currently assumes that user <--> plugin subscription doesn't
     # change during the lifetime of the plugin.
     # TODO: Refactor to allow for dynamic subscription changes.
@@ -170,7 +203,7 @@ class Plugin(abc.ABC, Generic[UC]):
                     f"Running plugin {self.canonical_name()} for user"
                     f" {user.id}"
                 )
-                tg.create_task(self.run_for_user(user))
+                tg.create_task(self._run_for_user_supervised(user))
 
     @classmethod
     def reset_registry(cls) -> None:
