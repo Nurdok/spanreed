@@ -167,25 +167,44 @@ class WithingsApi:
         flow: AuthenticationFlow = cls.authentication_flows[user_id]
         await flow.authenticate(code)
 
-    async def get_measurements(self) -> dict | None:
+    async def get_measurements(
+        self,
+        start_date: datetime.date | None = None,
+        end_date: datetime.date | None = None,
+    ) -> dict[datetime.date, dict[MeasurementType, float]]:
+        """Fetch measurements grouped by the date they were taken.
+
+        Defaults to today only. Pass ``start_date``/``end_date`` to fetch a
+        wider range (used by the manual "last week" sync). Both bounds are
+        inclusive.
+        """
+        if start_date is None:
+            start_date = datetime.date.today()
+        if end_date is None:
+            end_date = datetime.date.today()
+
         url = "https://wbsapi.withings.net/measure"
         headers = {
             "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
         }
-        today = datetime.datetime.now().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
         measurement_types = [
             MeasurementType.WEIGHT,
             MeasurementType.FAT_PERCENTAGE,
             MeasurementType.FAT_MASS,
             MeasurementType.HEART_PULSE,
         ]
+        start_dt = datetime.datetime.combine(start_date, datetime.time.min)
+        # `enddate` filters by measurement date; advance to the start of the
+        # day after `end_date` so the whole of `end_date` is included.
+        end_dt = datetime.datetime.combine(
+            end_date + datetime.timedelta(days=1), datetime.time.min
+        )
         data = {
             "action": "getmeas",
             "meastypes": ",".join([str(t) for t in measurement_types]),
             "category": 1,  # 1 = real measurement, 2 = user goal
-            "lastupdate": today.timestamp(),
+            "startdate": int(start_dt.timestamp()),
+            "enddate": int(end_dt.timestamp()),
         }
         self._logger.info(f"Sending request: {url=} {headers=} {data=}")
         response = requests.post(url, headers=headers, data=data)
@@ -201,33 +220,34 @@ class WithingsApi:
                 )
             if did_suppress:
                 self._logger.info("Token refresh failed.")
-                return None
+                return {}
             headers = {
                 "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
             }
             response = requests.post(url, headers=headers, data=data)
         self._logger.info(f"Got response: {response.json()}")
 
-        # TODO: handle multiple measurements
         try:
-            result = self.extract_measurements_from_json(response.json())
+            return self.extract_measurements_from_json(response.json())
         except YAMLError:
             self._logger.exception(
                 f"Failed to parse response: {response.text}"
             )
-            return None
-
-        if not result.keys():
-            return None
-        return result
+            return {}
 
     def extract_measurements_from_json(
         self, data: dict
-    ) -> dict[MeasurementType, float]:
-        result: dict[MeasurementType, float] = {}
-        for measure_group in data["body"]["measuregrps"]:
+    ) -> dict[datetime.date, dict[MeasurementType, float]]:
+        result: dict[datetime.date, dict[MeasurementType, float]] = {}
+        # Process groups oldest-first so that, when a day has more than one
+        # reading of the same measurement type, the latest one wins.
+        for measure_group in sorted(
+            data["body"]["measuregrps"], key=lambda g: g["date"]
+        ):
+            group_date = datetime.date.fromtimestamp(measure_group["date"])
+            day = result.setdefault(group_date, {})
             for measure in measure_group["measures"]:
-                result[MeasurementType(int(measure["type"]))] = int(
+                day[MeasurementType(int(measure["type"]))] = int(
                     measure["value"]
                 ) * 10 ** int(measure["unit"])
         return result
