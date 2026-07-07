@@ -79,9 +79,9 @@ class WithingsPlugin(Plugin):
         else:  # Cancel
             return
 
-        await bot.send_message("Syncing Withings data…")
+        await bot.notify("Syncing Withings data…")
         if await self._sync(user, days=days) == 0:
-            await bot.send_message("No new Withings measurements found.")
+            await bot.notify("No new Withings measurements found.")
 
     async def _sync(self, user: User, *, days: int = 1) -> int:
         """Write measurements into the daily notes for the last ``days`` days.
@@ -120,13 +120,13 @@ class WithingsPlugin(Plugin):
                         daily_note, name, value
                     )
                 except FileNotFoundError:
-                    await bot.send_message(
+                    await bot.notify(
                         f"No daily note for {date.isoformat()}; skipping."
                     )
                     break
 
                 written += 1
-                await bot.send_message(
+                await bot.notify(
                     f"Logged {name} for {date.isoformat()}: {value}."
                 )
         return written
