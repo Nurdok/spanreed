@@ -189,6 +189,37 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             await bot.send_message(f"Gmail authentication failed: {str(e)}")
             raise
 
+    async def _ensure_authenticated(self, user: User, bot: TelegramBotApi) -> bool:
+        """Return True if authenticated; else DM a re-auth link and False.
+
+        When the stored token can no longer be refreshed (e.g. Google's 7-day
+        refresh-token expiry for OAuth apps in "Testing"), the poll would
+        otherwise skip forever in silence. Instead we proactively send a fresh
+        consent link. Non-blocking, and sends at most one link per outstanding
+        flow: ``start_authentication`` raises once a flow exists, and the
+        OAuth redirect completes it out of band.
+        """
+        gmail = await GmailApi.for_user(user)
+        if await gmail.is_authenticated():
+            return True
+        if not await GmailApi.is_app_configured():
+            self._logger.warning(
+                "Gmail app credentials missing; cannot prompt re-auth."
+            )
+            return False
+        try:
+            flow = await GmailApi.start_authentication(user)
+        except ValueError:
+            # A re-auth link is already outstanding; don't send another.
+            return False
+        await flow.get_done_event()
+        auth_url = await flow.get_auth_url()
+        await bot.send_message(
+            f'⚠️ Gmail access has expired. Click <a href="{auth_url}">here</a>'
+            f" to re-authenticate and resume email monitoring."
+        )
+        return False
+
     async def manage_email_rules(self, user: User) -> None:
         bot = await TelegramBotApi.for_user(user)
         config = await self.get_config(user)
@@ -893,10 +924,10 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 self._logger.info("No enabled rules, skipping")
                 return
 
-            gmail = await GmailApi.for_user(user)
-            if not await gmail.is_authenticated():
-                self._logger.warning("Gmail not authenticated")
+            if not await self._ensure_authenticated(user, bot):
                 return
+
+            gmail = await GmailApi.for_user(user)
 
             # Get time since last check
             last_check_data = await self.get_user_data(user, "last_check")

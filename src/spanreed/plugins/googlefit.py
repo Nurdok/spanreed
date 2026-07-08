@@ -59,13 +59,47 @@ class GoogleFitPlugin(Plugin):
         await super().run()
 
     async def run_for_user(self, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         while True:
             # Sync a 2-day rolling window silently: today's count keeps
             # growing through the day (so we overwrite it each hour), and
             # yesterday is refreshed so its final total lands after midnight
             # (the last poll before midnight would otherwise miss the tail).
-            await self._sync(user, days=2, notify=False)
+            if await self._ensure_authenticated(user, bot):
+                await self._sync(user, days=2, notify=False)
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
+
+    async def _ensure_authenticated(self, user: User, bot: TelegramBotApi) -> bool:
+        """Return True if authenticated; else DM a re-auth link and False.
+
+        When a refresh token dies (e.g. Google's 7-day expiry for OAuth apps
+        in "Testing"), the hourly poll would otherwise fail silently forever.
+        Instead we proactively send a fresh consent link. Non-blocking, and
+        sends at most one link per outstanding flow: ``start_authentication``
+        raises once a flow exists, and the OAuth redirect completes it out of
+        band.
+        """
+        fit = await GoogleFitApi.for_user(user)
+        if await fit.is_authenticated():
+            return True
+        if not await GoogleFitApi.is_app_configured():
+            self._logger.warning(
+                "Google Fit app credentials missing; cannot prompt re-auth."
+            )
+            return False
+        try:
+            flow = await GoogleFitApi.start_authentication(user)
+        except ValueError:
+            # A re-auth link is already outstanding; don't send another.
+            return False
+        await flow.get_done_event()
+        auth_url = await flow.get_auth_url()
+        await bot.send_message(
+            f"⚠️ Google Fit access has expired. Click [here]({auth_url}) to "
+            f"re-authenticate and resume step syncing.",
+            parse_markdown=True,
+        )
+        return False
 
     async def _sync_now(self, user: User) -> None:
         """Manually triggered sync via the Telegram command."""

@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from spanreed.plugins.googlefit import GoogleFitPlugin
 from spanreed.plugin import Plugin
@@ -192,3 +192,68 @@ def test_sync_skips_missing_daily_note(
     assert written == 0
     mock_obsidian.set_value_of_property.assert_not_called()
     mock_bot.notify.assert_awaited_once_with("No daily note for 2024-01-01; skipping.")
+
+
+@patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
+@patch_telegram_bot("spanreed.plugins.googlefit")
+def test_ensure_authenticated_true_when_authed(
+    mock_bot: AsyncMock, mock_fit: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = GoogleFitPlugin()
+
+    mock_fit.for_user = AsyncMock(return_value=mock_fit)
+    mock_fit.is_authenticated = AsyncMock(return_value=True)
+
+    user = mock_user_find_by_id(4)
+    result = asyncio.run(plugin._ensure_authenticated(user, mock_bot))
+
+    assert result is True
+    mock_fit.start_authentication.assert_not_called()
+    mock_bot.send_message.assert_not_called()
+
+
+@patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
+@patch_telegram_bot("spanreed.plugins.googlefit")
+def test_ensure_authenticated_prompts_when_token_dead(
+    mock_bot: AsyncMock, mock_fit: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = GoogleFitPlugin()
+
+    mock_fit.for_user = AsyncMock(return_value=mock_fit)
+    mock_fit.is_authenticated = AsyncMock(return_value=False)
+    mock_fit.is_app_configured = AsyncMock(return_value=True)
+
+    flow = MagicMock()
+    flow.get_done_event = AsyncMock()
+    flow.get_auth_url = AsyncMock(return_value="https://auth.example/xyz")
+    mock_fit.start_authentication = AsyncMock(return_value=flow)
+
+    user = mock_user_find_by_id(4)
+    result = asyncio.run(plugin._ensure_authenticated(user, mock_bot))
+
+    assert result is False
+    mock_bot.send_message.assert_awaited_once()
+    assert "auth.example/xyz" in mock_bot.send_message.call_args.args[0]
+
+
+@patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
+@patch_telegram_bot("spanreed.plugins.googlefit")
+def test_ensure_authenticated_no_double_prompt(
+    mock_bot: AsyncMock, mock_fit: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = GoogleFitPlugin()
+
+    mock_fit.for_user = AsyncMock(return_value=mock_fit)
+    mock_fit.is_authenticated = AsyncMock(return_value=False)
+    mock_fit.is_app_configured = AsyncMock(return_value=True)
+    # A flow is already outstanding: start_authentication raises.
+    mock_fit.start_authentication = AsyncMock(side_effect=ValueError("already started"))
+
+    user = mock_user_find_by_id(4)
+    result = asyncio.run(plugin._ensure_authenticated(user, mock_bot))
+
+    assert result is False
+    mock_bot.send_message.assert_not_called()
