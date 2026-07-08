@@ -20,6 +20,7 @@ from spanreed.plugins.gmail_monitor_actions import (
     EmailActionHandler,
     TelegramNotificationAction,
     DownloadLinkAction,
+    DownloadAttachmentAction,
     EmailMatch,
 )
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
@@ -103,6 +104,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         self._action_handlers: Dict[str, EmailActionHandler] = {
             "telegram_notification": TelegramNotificationAction(),
             "download_link": DownloadLinkAction(),
+            "download_attachment": DownloadAttachmentAction(),
         }
 
     @classmethod
@@ -200,9 +202,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                     status = "✅" if rule.enabled else "❌"
                     rule_status.append(f"{status} {rule.name}")
 
-                await bot.send_message(
-                    "Your email rules:\n" + "\n".join(rule_status)
-                )
+                await bot.send_message("Your email rules:\n" + "\n".join(rule_status))
 
             choice = await bot.request_user_choice(
                 "What would you like to do?",
@@ -229,14 +229,10 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
     async def _add_email_rule(
         self, user: User, bot: TelegramBotApi, config: UserConfig
     ) -> None:
-        rule_name = await bot.request_user_input(
-            "Enter a name for this email rule:"
-        )
+        rule_name = await bot.request_user_input("Enter a name for this email rule:")
 
         # Check for duplicate names
-        if any(
-            rule.name.lower() == rule_name.lower() for rule in config.rules
-        ):
+        if any(rule.name.lower() == rule_name.lower() for rule in config.rules):
             await bot.send_message(f"Rule '{rule_name}' already exists!")
             return
 
@@ -260,9 +256,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         await bot.send_message(f"Email rule '{rule_name}' added successfully!")
 
-    async def _create_email_filter(
-        self, bot: TelegramBotApi
-    ) -> Optional[EmailFilter]:
+    async def _create_email_filter(self, bot: TelegramBotApi) -> Optional[EmailFilter]:
         await bot.send_message("Let's create the email filter criteria.")
 
         criteria = []
@@ -302,9 +296,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             )
             == 0
         ):
-            body_regex = await bot.request_user_input(
-                "Enter body regex pattern:"
-            )
+            body_regex = await bot.request_user_input("Enter body regex pattern:")
             criteria.append(f"Body: {body_regex}")
 
         # Attachment filter
@@ -324,9 +316,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             criteria.append("Has attachments: No")
 
         if not criteria:
-            await bot.send_message(
-                "You must specify at least one filter criteria!"
-            )
+            await bot.send_message("You must specify at least one filter criteria!")
             return None
 
         # Confirm filter
@@ -334,10 +324,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             "Filter criteria:\n" + "\n".join(f"• {c}" for c in criteria)
         )
 
-        if (
-            await bot.request_user_choice("Is this correct?", ["Yes", "No"])
-            == 1
-        ):
+        if await bot.request_user_choice("Is this correct?", ["Yes", "No"]) == 1:
             return None
 
         return EmailFilter(
@@ -347,9 +334,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             has_attachments=has_attachments,
         )
 
-    async def _create_email_actions(
-        self, bot: TelegramBotApi
-    ) -> List[EmailAction]:
+    async def _create_email_actions(self, bot: TelegramBotApi) -> List[EmailAction]:
         actions = []
 
         await bot.send_message(
@@ -362,19 +347,16 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 [
                     "Send Telegram notification",
                     "Download link from email",
+                    "Download attached file",
                     "Done",
                 ],
             )
 
             action_config: Dict[str, Any] | None
             if action_choice == 0:  # Telegram notification
-                action_config = await self._configure_telegram_notification(
-                    bot
-                )
+                action_config = await self._configure_telegram_notification(bot)
                 actions.append(
-                    EmailAction(
-                        type="telegram_notification", config=action_config
-                    )
+                    EmailAction(type="telegram_notification", config=action_config)
                 )
 
             elif action_choice == 1:  # Download link
@@ -384,16 +366,17 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                         EmailAction(type="download_link", config=action_config)
                     )
 
+            elif action_choice == 2:  # Download attachment
+                action_config = await self._configure_download_attachment(bot)
+                actions.append(
+                    EmailAction(type="download_attachment", config=action_config)
+                )
+
             else:  # Done
                 break
 
             # Ask if user wants to add another action
-            if (
-                await bot.request_user_choice(
-                    "Add another action?", ["Yes", "No"]
-                )
-                == 1
-            ):
+            if await bot.request_user_choice("Add another action?", ["Yes", "No"]) == 1:
                 break
 
         return actions
@@ -418,20 +401,28 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         custom_message = ""
         if (
-            await bot.request_user_choice(
-                "Add custom message prefix?", ["Yes", "No"]
-            )
+            await bot.request_user_choice("Add custom message prefix?", ["Yes", "No"])
             == 0
         ):
-            custom_message = await bot.request_user_input(
-                "Enter custom message:"
-            )
+            custom_message = await bot.request_user_input("Enter custom message:")
 
         return {
             "include_body": include_body,
             "include_snippet": include_snippet,
             "custom_message": custom_message,
         }
+
+    async def _configure_download_attachment(
+        self, bot: TelegramBotApi
+    ) -> Dict[str, Any]:
+        """Configure the download-attachment action."""
+        choice = await bot.request_user_choice(
+            "Which attachments should be downloaded?",
+            ["PDF files only", "All attachments"],
+        )
+        if choice == 0:
+            return {"mime_types": ["application/pdf"]}
+        return {"mime_types": None}
 
     async def _configure_download_link(
         self, bot: TelegramBotApi
@@ -482,9 +473,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 + "• <code>view</code> (contains 'view')\n"
                 + "• <code>click.*here</code> (contains 'click' and 'here')"
             )
-            text_regex = await bot.request_user_input(
-                "Link text regex pattern:"
-            )
+            text_regex = await bot.request_user_input("Link text regex pattern:")
 
         # File size limit
         max_file_size_mb = 10
@@ -495,9 +484,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             )
             == 0
         ):
-            size_input = await bot.request_user_input(
-                "Max file size in MB (1-50):"
-            )
+            size_input = await bot.request_user_input("Max file size in MB (1-50):")
             try:
                 max_file_size_mb = max(1, min(50, int(size_input)))
             except ValueError:
@@ -508,9 +495,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         # Custom filename pattern (optional)
         custom_filename = None
         if (
-            await bot.request_user_choice(
-                "Use custom filename pattern?", ["Yes", "No"]
-            )
+            await bot.request_user_choice("Use custom filename pattern?", ["Yes", "No"])
             == 0
         ):
             await bot.send_message(
@@ -536,10 +521,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             "<b>Download Link Configuration:</b>\n" + "\n".join(config_summary)
         )
 
-        if (
-            await bot.request_user_choice("Is this correct?", ["Yes", "No"])
-            == 1
-        ):
+        if await bot.request_user_choice("Is this correct?", ["Yes", "No"]) == 1:
             return None
 
         return {
@@ -557,9 +539,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             return
 
         rule_names = [rule.name for rule in config.rules] + ["Cancel"]
-        choice = await bot.request_user_choice(
-            "Which rule to edit?", rule_names
-        )
+        choice = await bot.request_user_choice("Which rule to edit?", rule_names)
 
         if choice == len(config.rules):  # Cancel
             return
@@ -607,9 +587,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             return
 
         rule_names = [rule.name for rule in config.rules] + ["Cancel"]
-        choice = await bot.request_user_choice(
-            "Which rule to delete?", rule_names
-        )
+        choice = await bot.request_user_choice("Which rule to delete?", rule_names)
 
         if choice == len(config.rules):  # Cancel
             return
@@ -617,9 +595,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         rule = config.rules[choice]
 
         if (
-            await bot.request_user_choice(
-                f"Delete rule '{rule.name}'?", ["Yes", "No"]
-            )
+            await bot.request_user_choice(f"Delete rule '{rule.name}'?", ["Yes", "No"])
             == 0
         ):
             config.rules.remove(rule)
@@ -638,9 +614,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             for rule in config.rules
         ] + ["Cancel"]
 
-        choice = await bot.request_user_choice(
-            "Which rule to toggle?", rule_names
-        )
+        choice = await bot.request_user_choice("Which rule to toggle?", rule_names)
 
         if choice == len(config.rules):  # Cancel
             return
@@ -662,9 +636,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         # Select rule to test
         rule_names = [rule.name for rule in config.rules] + ["Cancel"]
-        choice = await bot.request_user_choice(
-            "Which rule to test?", rule_names
-        )
+        choice = await bot.request_user_choice("Which rule to test?", rule_names)
 
         if choice == len(config.rules):  # Cancel
             return
@@ -686,9 +658,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 query="in:inbox", max_results=500
             )
 
-            await bot.send_message(
-                f"Got {len(recent_emails)} emails to test against."
-            )
+            await bot.send_message(f"Got {len(recent_emails)} emails to test against.")
 
             # Debug: Show rule criteria
             criteria = []
@@ -699,18 +669,14 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             if rule.filter.body_regex:
                 criteria.append(f"Body: {rule.filter.body_regex}")
             if rule.filter.has_attachments is not None:
-                criteria.append(
-                    f"Has attachments: {rule.filter.has_attachments}"
-                )
+                criteria.append(f"Has attachments: {rule.filter.has_attachments}")
 
             try:
                 await bot.send_message(
                     f"Rule criteria:\n" + "\n".join(f"• {c}" for c in criteria)
                 )
             except Exception as e:
-                await bot.send_message(
-                    f"Error showing rule criteria: {str(e)}"
-                )
+                await bot.send_message(f"Error showing rule criteria: {str(e)}")
 
             matches = []
 
@@ -724,9 +690,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                         f"No recent emails match rule '{html.escape(rule.name)}'."
                     )
                 except Exception as e:
-                    await bot.send_message(
-                        f"Error showing no matches result: {str(e)}"
-                    )
+                    await bot.send_message(f"Error showing no matches result: {str(e)}")
             else:
                 try:
                     # Show basic match info first
@@ -736,9 +700,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
                     # Show detailed info for each matching email
                     for i, email in enumerate(matches[:5]):  # Show first 5
-                        all_links = self._extract_all_links_for_debug(
-                            email.body
-                        )
+                        all_links = self._extract_all_links_for_debug(email.body)
                         links_text = f"Links found ({len(all_links)}): " + (
                             ", ".join(all_links[:3]) if all_links else "None"
                         )
@@ -763,8 +725,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                                 len(raw_body) > 3000
                             ):  # Telegram message limit considerations
                                 raw_body = (
-                                    raw_body[:3000]
-                                    + "\n\n[... body truncated ...]"
+                                    raw_body[:3000] + "\n\n[... body truncated ...]"
                                 )
 
                             await bot.send_message(
@@ -807,9 +768,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                         for action in rule.actions:
                             if action.type in self._action_handlers:
                                 try:
-                                    handler = self._action_handlers[
-                                        action.type
-                                    ]
+                                    handler = self._action_handlers[action.type]
                                     email_match = EmailMatch(
                                         email=test_email, rule_name=rule.name
                                     )
@@ -882,9 +841,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             return set(json.loads(data))
         return set()
 
-    async def _mark_emails_processed(
-        self, user: User, email_ids: List[str]
-    ) -> None:
+    async def _mark_emails_processed(self, user: User, email_ids: List[str]) -> None:
         processed = await self._get_processed_email_ids(user)
         processed.update(email_ids)
 
@@ -893,9 +850,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         if len(processed) > 1000:
             processed = set(list(processed)[-500:])  # Keep latest 500
 
-        await self.set_user_data(
-            user, "processed_emails", json.dumps(list(processed))
-        )
+        await self.set_user_data(user, "processed_emails", json.dumps(list(processed)))
 
     async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Starting Gmail monitor loop for user {user}")
@@ -917,9 +872,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 await asyncio.sleep(check_interval.total_seconds())
 
         except Exception as e:
-            self._logger.exception(
-                f"Error in Gmail monitor loop for user {user}: {e}"
-            )
+            self._logger.exception(f"Error in Gmail monitor loop for user {user}: {e}")
             raise
         finally:
             self._logger.info("Exiting Gmail monitor run_for_user")
@@ -951,9 +904,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 last_check = datetime.datetime.fromisoformat(last_check_data)
             else:
                 # First run - check last hour only
-                last_check = datetime.datetime.now() - datetime.timedelta(
-                    hours=1
-                )
+                last_check = datetime.datetime.now() - datetime.timedelta(hours=1)
 
             # Get recent emails since last check
             recent_emails = await gmail.get_messages_since(last_check)
@@ -964,9 +915,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
             # Filter out already processed emails
             new_emails = [
-                email
-                for email in recent_emails
-                if email.id not in processed_email_ids
+                email for email in recent_emails if email.id not in processed_email_ids
             ]
             self._logger.info(f"Found {len(new_emails)} new emails to process")
 
@@ -1012,9 +961,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             )
 
         except Exception as e:
-            self._logger.exception(
-                f"Error in Gmail monitor for user {user}: {e}"
-            )
+            self._logger.exception(f"Error in Gmail monitor for user {user}: {e}")
             raise
 
     def _extract_all_links_for_debug(self, email_body: str) -> List[str]:

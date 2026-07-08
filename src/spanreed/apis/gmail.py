@@ -33,6 +33,13 @@ class EmailMessage:
     has_attachments: bool
 
 
+@dataclass
+class Attachment:
+    filename: str
+    mime_type: str
+    data: bytes
+
+
 class GmailAuthenticationFlow:
     def __init__(self, user: User) -> None:
         self.user = user
@@ -67,9 +74,7 @@ class GmailApi:
 
     def __init__(self, user: User) -> None:
         self.user = user
-        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(
-            str(user.id)
-        )
+        self._logger = logging.getLogger("spanreed.apis.gmail").getChild(str(user.id))
         self._service: Any | None = None
 
     @classmethod
@@ -90,9 +95,7 @@ class GmailApi:
     async def handle_oauth_redirect(cls, code: str, state: str) -> None:
         user_id = int(state)
         if user_id not in cls._authentication_flows:
-            raise ValueError(
-                f"No authentication flow found for user {user_id}"
-            )
+            raise ValueError(f"No authentication flow found for user {user_id}")
 
         flow = cls._authentication_flows[user_id]
         await flow.complete_authentication(code)
@@ -105,9 +108,7 @@ class GmailApi:
         creds_data = await redis_api.get(self._get_credentials_key())
         if creds_data:
             creds_dict = json.loads(creds_data)
-            return Credentials.from_authorized_user_info(
-                creds_dict, self.SCOPES
-            )
+            return Credentials.from_authorized_user_info(creds_dict, self.SCOPES)
         return None
 
     async def _store_credentials(self, creds: Credentials) -> None:
@@ -119,9 +120,7 @@ class GmailApi:
             "client_secret": creds.client_secret,
             "scopes": creds.scopes,
         }
-        await redis_api.set(
-            self._get_credentials_key(), json.dumps(creds_data)
-        )
+        await redis_api.set(self._get_credentials_key(), json.dumps(creds_data))
 
     async def _get_credentials(self) -> Optional[Credentials]:
         creds = await self._get_stored_credentials()
@@ -145,9 +144,7 @@ class GmailApi:
 
     @staticmethod
     async def _get_stored_credentials_config() -> Optional[Dict[str, Any]]:
-        config_data = await redis_api.get(
-            GmailApi._get_global_credentials_config_key()
-        )
+        config_data = await redis_api.get(GmailApi._get_global_credentials_config_key())
         if config_data:
             return json.loads(config_data)
         return None
@@ -178,9 +175,7 @@ class GmailApi:
             credentials_config, scopes=self.SCOPES, redirect_uri=redirect_uri
         )
 
-        auth_url, _ = flow.authorization_url(
-            prompt="consent", state=str(self.user.id)
-        )
+        auth_url, _ = flow.authorization_url(prompt="consent", state=str(self.user.id))
         return auth_url
 
     async def complete_authentication(
@@ -226,9 +221,7 @@ class GmailApi:
             """Helper to safely decode body data"""
             try:
                 if "data" in body_part["body"] and body_part["body"]["data"]:
-                    decoded_bytes = base64.urlsafe_b64decode(
-                        body_part["body"]["data"]
-                    )
+                    decoded_bytes = base64.urlsafe_b64decode(body_part["body"]["data"])
                     decoded_text = decoded_bytes.decode("utf-8")
 
                     # Check if content is quoted-printable encoded
@@ -238,9 +231,9 @@ class GmailApi:
                         or "=\n" in decoded_text
                     ):
                         try:
-                            decoded_text = quopri.decodestring(
-                                decoded_text
-                            ).decode("utf-8")
+                            decoded_text = quopri.decodestring(decoded_text).decode(
+                                "utf-8"
+                            )
                         except:
                             pass  # If quopri decoding fails, use original
 
@@ -332,9 +325,7 @@ class GmailApi:
                 headers = payload.get("headers", [])
 
                 # Extract headers
-                sender = next(
-                    (h["value"] for h in headers if h["name"] == "From"), ""
-                )
+                sender = next((h["value"] for h in headers if h["name"] == "From"), "")
                 subject = next(
                     (h["value"] for h in headers if h["name"] == "Subject"), ""
                 )
@@ -383,3 +374,81 @@ class GmailApi:
         # Gmail query format for date
         date_query = f"after:{since_date.strftime('%Y/%m/%d')}"
         return await self.get_recent_messages(query=date_query)
+
+    @staticmethod
+    def _collect_attachment_parts(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Walk a message payload and return all parts that are attachments.
+
+        Attachment parts are the ones carrying a (non-empty) ``filename``.
+        Bodies can be nested arbitrarily (multipart/mixed wrapping
+        multipart/alternative, etc.), so recurse through ``parts``.
+        """
+        result: List[Dict[str, Any]] = []
+
+        def walk(part: Dict[str, Any]) -> None:
+            if part.get("filename"):
+                result.append(part)
+            for sub in part.get("parts", []):
+                walk(sub)
+
+        walk(payload)
+        return result
+
+    async def get_attachments(
+        self,
+        message_id: str,
+        mime_types: Optional[List[str]] = None,
+    ) -> List[Attachment]:
+        """Download attachments for a message.
+
+        ``mime_types`` restricts which attachments are returned (e.g.
+        ``["application/pdf"]``); pass ``None`` to fetch all of them. Large
+        attachments are stored out-of-line by Gmail and fetched via a second
+        ``attachments().get`` call; small ones are inline in the part body.
+        """
+        service = await self._get_service()
+        loop = asyncio.get_event_loop()
+
+        message = await loop.run_in_executor(
+            None,
+            lambda: service.users()
+            .messages()
+            .get(userId="me", id=message_id)
+            .execute(),
+        )
+
+        parts = self._collect_attachment_parts(message.get("payload", {}))
+        attachments: List[Attachment] = []
+        for part in parts:
+            mime_type = part.get("mimeType", "")
+            if mime_types is not None and mime_type not in mime_types:
+                continue
+
+            body = part.get("body", {})
+            attachment_id = body.get("attachmentId")
+            if attachment_id:
+                fetched = await loop.run_in_executor(
+                    None,
+                    lambda aid=attachment_id: service.users()
+                    .messages()
+                    .attachments()
+                    .get(userId="me", messageId=message_id, id=aid)
+                    .execute(),
+                )
+                data_b64 = fetched.get("data", "")
+            else:
+                # Small attachments are inlined directly in the part body.
+                data_b64 = body.get("data", "")
+
+            if not data_b64:
+                continue
+
+            attachments.append(
+                Attachment(
+                    filename=part.get("filename", ""),
+                    mime_type=mime_type,
+                    data=base64.urlsafe_b64decode(data_b64),
+                )
+            )
+
+        return attachments

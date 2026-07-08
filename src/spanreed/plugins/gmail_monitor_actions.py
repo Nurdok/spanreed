@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import aiohttp
 
 from spanreed.user import User
-from spanreed.apis.gmail import EmailMessage
+from spanreed.apis.gmail import EmailMessage, GmailApi
 from spanreed.apis.telegram_bot import TelegramBotApi
 
 
@@ -51,17 +51,13 @@ class TelegramNotificationAction(EmailActionHandler):
 
         message_parts.append(f"<b>From:</b> {html.escape(email.sender)}")
         message_parts.append(f"<b>Subject:</b> {html.escape(email.subject)}")
-        message_parts.append(
-            f"<b>Date:</b> {email.date.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+        message_parts.append(f"<b>Date:</b> {email.date.strftime('%Y-%m-%d %H:%M:%S')}")
 
         if email.has_attachments:
             message_parts.append("📎 Has attachments")
 
         if include_snippet and email.snippet:
-            message_parts.append(
-                f"<b>Preview:</b> {html.escape(email.snippet)}"
-            )
+            message_parts.append(f"<b>Preview:</b> {html.escape(email.snippet)}")
 
         if include_body and email.body:
             # Limit body length to avoid telegram message limits
@@ -73,6 +69,62 @@ class TelegramNotificationAction(EmailActionHandler):
         message = "\n\n".join(message_parts)
 
         await bot.send_message(message)
+
+
+class DownloadAttachmentAction(EmailActionHandler):
+    """Download the email's file attachments and send them over Telegram.
+
+    Unlike ``DownloadLinkAction`` (which scrapes URLs out of the body), this
+    fetches the actual MIME attachments via the Gmail API.
+    """
+
+    def __init__(self) -> None:
+        self._logger = logging.getLogger(__name__)
+
+    async def execute(
+        self, email_match: EmailMatch, config: Dict[str, Any], user: User
+    ) -> None:
+        bot = await TelegramBotApi.for_user(user)
+        email = email_match.email
+        rule_name = email_match.rule_name
+
+        # `mime_types = None` means "all attachments". Default to PDFs only.
+        mime_types = config.get("mime_types", ["application/pdf"])
+
+        gmail = await GmailApi.for_user(user)
+        try:
+            attachments = await gmail.get_attachments(email.id, mime_types=mime_types)
+        except Exception as e:
+            self._logger.error(f"Failed to fetch attachments for {email.id}: {e}")
+            await bot.send_message(
+                f"❌ Failed to fetch attachments from "
+                f"{html.escape(email.sender)}: {str(e)}"
+            )
+            return
+
+        if not attachments:
+            await bot.send_message(
+                f"📎 No matching attachment found in email from "
+                f"{html.escape(email.sender)}"
+            )
+            return
+
+        for attachment in attachments:
+            try:
+                await bot.send_document(attachment.filename, attachment.data)
+                await bot.send_message(
+                    f"📄 {html.escape(attachment.filename)} from "
+                    f"{html.escape(email.sender)}\n"
+                    f"🏷️ Rule: {html.escape(rule_name)}"
+                )
+            except Exception as e:
+                self._logger.error(
+                    f"Failed to send attachment {attachment.filename}: {e}"
+                )
+                await bot.send_message(
+                    f"❌ Failed to send {html.escape(attachment.filename)}: "
+                    f"{str(e)}"
+                )
 
 
 class DownloadLinkAction(EmailActionHandler):
@@ -94,9 +146,7 @@ class DownloadLinkAction(EmailActionHandler):
 
         try:
             # Extract links from email body
-            links = await self._extract_links_from_email(
-                email, url_regex, text_regex
-            )
+            links = await self._extract_links_from_email(email, url_regex, text_regex)
 
             if not links:
                 await bot.send_message(
@@ -108,9 +158,7 @@ class DownloadLinkAction(EmailActionHandler):
             for i, link in enumerate(links[:3]):  # Limit to first 3 files
                 try:
                     # Show the specific link being processed
-                    link_preview = (
-                        link[:100] + "..." if len(link) > 100 else link
-                    )
+                    link_preview = link[:100] + "..." if len(link) > 100 else link
                     await bot.send_message(
                         f"🔗 Processing link {i+1}: <code>{html.escape(link_preview)}</code>"
                     )
@@ -125,16 +173,10 @@ class DownloadLinkAction(EmailActionHandler):
                         i,
                     )
                     if filename:
-                        await bot.send_message(
-                            f"📄 Downloaded and sent: {filename}"
-                        )
+                        await bot.send_message(f"📄 Downloaded and sent: {filename}")
                 except Exception as e:
-                    self._logger.error(
-                        f"Failed to download file from {link}: {e}"
-                    )
-                    link_preview = (
-                        link[:100] + "..." if len(link) > 100 else link
-                    )
+                    self._logger.error(f"Failed to download file from {link}: {e}")
+                    link_preview = link[:100] + "..." if len(link) > 100 else link
                     await bot.send_message(
                         f"❌ Failed to download from <code>{html.escape(link_preview)}</code>: {str(e)}"
                     )
@@ -202,9 +244,7 @@ class DownloadLinkAction(EmailActionHandler):
             # Replace placeholders in custom filename
             filename = custom_filename.format(
                 sender=(
-                    email.sender.split("@")[0]
-                    if "@" in email.sender
-                    else email.sender
+                    email.sender.split("@")[0] if "@" in email.sender else email.sender
                 ),
                 subject=re.sub(r"[^\w\-_.]", "_", email.subject)[:50],
                 date=email.date.strftime("%Y-%m-%d"),
@@ -217,17 +257,13 @@ class DownloadLinkAction(EmailActionHandler):
             if url_filename and "." in url_filename:
                 filename = url_filename
             else:
-                filename = (
-                    f"document_{email.date.strftime('%Y-%m-%d')}_{index}"
-                )
+                filename = f"document_{email.date.strftime('%Y-%m-%d')}_{index}"
 
         # Download the file with redirect following
         async with aiohttp.ClientSession() as session:
             async with session.get(url, allow_redirects=True) as response:
                 if response.status != 200:
-                    raise Exception(
-                        f"HTTP {response.status}: {response.reason}"
-                    )
+                    raise Exception(f"HTTP {response.status}: {response.reason}")
 
                 # Debug info about the response
                 content_type = response.headers.get("content-type", "unknown")
@@ -259,10 +295,7 @@ class DownloadLinkAction(EmailActionHandler):
                     file_data.extend(chunk)
 
                 # Check if we got HTML instead of the expected file (common redirect issue)
-                if (
-                    content_type.startswith("text/html")
-                    and downloaded_size > 0
-                ):
+                if content_type.startswith("text/html") and downloaded_size > 0:
                     # Peek at first 200 chars to see if it's HTML
                     preview = file_data[:200].decode("utf-8", errors="ignore")
                     if preview.strip().lower().startswith(
@@ -273,17 +306,13 @@ class DownloadLinkAction(EmailActionHandler):
                         )
 
                         # Try to parse the HTML for redirects
-                        html_content = file_data.decode(
-                            "utf-8", errors="ignore"
-                        )
+                        html_content = file_data.decode("utf-8", errors="ignore")
                         redirect_url = self._extract_redirect_from_html(
                             html_content, url
                         )
 
                         if redirect_url:
-                            self._logger.info(
-                                f"Found redirect in HTML: {redirect_url}"
-                            )
+                            self._logger.info(f"Found redirect in HTML: {redirect_url}")
                             await bot.send_message(
                                 f"🔄 Following redirect to: <code>{html.escape(redirect_url[:100])}{'...' if len(redirect_url) > 100 else ''}</code>"
                             )
@@ -306,7 +335,9 @@ class DownloadLinkAction(EmailActionHandler):
         final_data = bytes(file_data)
 
         # Send debug info about the downloaded file
-        debug_info = f"📊 File info: {len(final_data)} bytes, Content-Type: {content_type}"
+        debug_info = (
+            f"📊 File info: {len(final_data)} bytes, Content-Type: {content_type}"
+        )
         await bot.send_message(debug_info)
 
         # Send via Telegram
@@ -359,9 +390,7 @@ class DownloadLinkAction(EmailActionHandler):
             ]
 
             for pattern in link_patterns:
-                match = re.search(
-                    pattern, html_content, re.IGNORECASE | re.DOTALL
-                )
+                match = re.search(pattern, html_content, re.IGNORECASE | re.DOTALL)
                 if match:
                     redirect_url = match.group(1).strip()
                     return self._resolve_url(redirect_url, base_url)
@@ -377,9 +406,7 @@ class DownloadLinkAction(EmailActionHandler):
             return url
         elif url.startswith("//"):
             # Protocol-relative URL
-            base_protocol = (
-                "https:" if base_url.startswith("https:") else "http:"
-            )
+            base_protocol = "https:" if base_url.startswith("https:") else "http:"
             return base_protocol + url
         elif url.startswith("/"):
             # Absolute path
