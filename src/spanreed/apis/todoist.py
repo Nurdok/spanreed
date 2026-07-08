@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import logging
-from typing import Any, TypeVar, Callable, Awaitable, cast
+from typing import Any, TypeVar, Callable, Awaitable, AsyncIterator
 import asyncio
 from functools import wraps
 
@@ -75,17 +75,27 @@ class Todoist:
     async def add_task(self, **kwargs: Any) -> Task:
         return await self._wrapped_api_call(self._api.add_task, **kwargs)
 
-    async def update_task(self, task: Task, **kwargs: Any) -> bool:
+    async def update_task(self, task: Task, **kwargs: Any) -> Task:
+        # The new Todoist API's update_task can't change a task's project;
+        # moving between projects is a separate operation.
+        project_id = kwargs.pop("project_id", None)
+        if project_id is not None:
+            await self._wrapped_api_call(
+                self._api.move_task, task.id, project_id=project_id
+            )
         return await self._wrapped_api_call(
             self._api.update_task, task.id, **kwargs
         )
 
     async def add_comment(self, task: Task, **kwargs: Any) -> Comment:
+        # The new API's add_comment takes the content positionally and the
+        # target as a keyword, so pass task_id explicitly (kwargs carries
+        # `content`).
         return await self._wrapped_api_call(
-            self._api.add_comment, task.id, **kwargs
+            self._api.add_comment, task_id=task.id, **kwargs
         )
 
-    async def update_comment(self, comment: Comment, **kwargs: Any) -> bool:
+    async def update_comment(self, comment: Comment, **kwargs: Any) -> Comment:
         return await self._wrapped_api_call(
             self._api.update_comment, comment.id, **kwargs
         )
@@ -95,7 +105,7 @@ class Todoist:
         task: Task,
         create: bool = False,
     ) -> Comment:
-        comments: list[Comment] = await self._wrapped_api_call(
+        comments: list[Comment] = await self._collect(
             self._api.get_comments, task_id=task.id
         )
         for comment in comments:
@@ -114,7 +124,7 @@ class Todoist:
         )
 
     async def _get_inbox_project(self) -> Project:
-        projects = await self._wrapped_api_call(self._api.get_projects)
+        projects = await self._collect(self._api.get_projects)
         for project in projects:
             if project.is_inbox_project:
                 return project
@@ -122,7 +132,7 @@ class Todoist:
         raise RuntimeError("No inbox project found")
 
     async def get_inbox_tasks(self) -> list[Task]:
-        return await self._wrapped_api_call(
+        return await self._collect(
             self._api.get_tasks,
             project_id=(await self._get_inbox_project()).id,
         )
@@ -132,16 +142,16 @@ class Todoist:
         # associated time-of-day that's in the future - this is because
         # due time-of-day usually indicates _start_ time, not due time.
         query = "overdue | (today & no time) | due before:+0 hours"
-        return await self._wrapped_api_call(self._api.get_tasks, filter=query)
+        return await self._collect(self._api.filter_tasks, query=query)
 
     async def get_tasks_with_label(self, label: str) -> list[Task]:
         # By default, only non-completed tasks are returned.
         query = f"@{label}"
-        return await self._wrapped_api_call(self._api.get_tasks, filter=query)
+        return await self._collect(self._api.filter_tasks, query=query)
 
     async def get_overdue_tasks_with_label(self, label: str) -> list[Task]:
         query = f"@{label} & overdue"
-        return await self._wrapped_api_call(self._api.get_tasks, filter=query)
+        return await self._collect(self._api.filter_tasks, query=query)
 
     async def set_due_date_to_today(self, task: Task) -> None:
         self._logger.info(f"Updating {format_task(task)} due date to today")
@@ -164,7 +174,7 @@ class Todoist:
             )
 
     async def get_projects(self) -> list[Project]:
-        return await self._wrapped_api_call(self._api.get_projects)
+        return await self._collect(self._api.get_projects)
 
     @with_retries()
     async def _wrapped_api_call(
@@ -173,5 +183,23 @@ class Todoist:
         *args: Any,
         **kwargs: Any,
     ) -> T:
-        """Wrapper for Todoist API calls that adds retry logic."""
+        """Wrapper for single Todoist API calls that adds retry logic."""
         return await api_method(*args, **kwargs)
+
+    @with_retries()
+    async def _collect(
+        self,
+        api_method: Callable[..., Awaitable[AsyncIterator[list[T]]]],
+        **kwargs: Any,
+    ) -> list[T]:
+        """Flatten a paginated endpoint into a single list.
+
+        The new Todoist API's list endpoints (get_tasks, filter_tasks,
+        get_comments, get_projects) are coroutines that return an async
+        iterator of pages.
+        """
+        paginator: AsyncIterator[list[T]] = await api_method(**kwargs)
+        results: list[T] = []
+        async for page in paginator:
+            results.extend(page)
+        return results
