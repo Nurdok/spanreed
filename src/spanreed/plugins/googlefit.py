@@ -60,7 +60,11 @@ class GoogleFitPlugin(Plugin):
 
     async def run_for_user(self, user: User) -> None:
         while True:
-            await self._sync(user)
+            # Sync a 2-day rolling window silently: today's count keeps
+            # growing through the day (so we overwrite it each hour), and
+            # yesterday is refreshed so its final total lands after midnight
+            # (the last poll before midnight would otherwise miss the tail).
+            await self._sync(user, days=2, notify=False)
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
 
     async def _sync_now(self, user: User) -> None:
@@ -78,14 +82,17 @@ class GoogleFitPlugin(Plugin):
             return
 
         await bot.notify("Syncing steps…")
-        if await self._sync(user, days=days) == 0:
+        if await self._sync(user, days=days, notify=True) == 0:
             await bot.notify("No new step counts found.")
 
-    async def _sync(self, user: User, *, days: int = 1) -> int:
+    async def _sync(self, user: User, *, days: int = 1, notify: bool = True) -> int:
         """Write step counts into the daily notes for the last ``days`` days.
 
-        Existing ``steps`` property values are left untouched. Returns the
-        number of days newly written.
+        The ``steps`` property is overwritten whenever the fetched count
+        differs from what's stored, so a day's total keeps updating as more
+        steps are walked. Days whose value is already current are left
+        untouched. When ``notify`` is false (the hourly background sync) no
+        Telegram messages are sent. Returns the number of days written.
         """
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
         fit = await GoogleFitApi.for_user(user)
@@ -107,13 +114,16 @@ class GoogleFitPlugin(Plugin):
             daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
             try:
                 existing_value = await obsidian.get_property(daily_note, STEPS_PROPERTY)
-                if existing_value is not None:
+                if existing_value == steps:
+                    # Already up to date; nothing to write.
                     continue
                 await obsidian.set_value_of_property(daily_note, STEPS_PROPERTY, steps)
             except FileNotFoundError:
-                await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
+                if notify:
+                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
                 continue
 
             written += 1
-            await bot.notify(f"Logged steps for {date.isoformat()}: {steps}.")
+            if notify:
+                await bot.notify(f"Logged steps for {date.isoformat()}: {steps}.")
         return written
