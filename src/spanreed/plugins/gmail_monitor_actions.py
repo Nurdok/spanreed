@@ -531,3 +531,149 @@ class DownloadLinkAction(EmailActionHandler):
             from urllib.parse import urljoin
 
             return urljoin(base_url, url)
+
+
+class SaveLinkToVaultAction(DownloadLinkAction):
+    """Download the file behind a link in the email body and save it to the vault.
+
+    The link-delivered counterpart to ``SaveAttachmentToVaultAction``: it
+    reuses ``DownloadLinkAction``'s link extraction and HTML-redirect following
+    (e.g. iCount links that bounce through a redirect page), but writes the
+    downloaded bytes into the Obsidian vault instead of sending them to
+    Telegram.
+
+    Config parameters:
+      - ``vault_dir``: destination folder in the vault.
+      - ``url_regex`` / ``text_regex``: which body links to download (same
+        semantics as ``download_link``).
+      - ``filename_template``: naming, as in ``save_attachment_to_vault``.
+      - ``max_file_size_mb``: download cap (default 10).
+      - ``overwrite``: overwrite an existing file (default False -> skip).
+    """
+
+    async def execute(
+        self, email_match: EmailMatch, config: Dict[str, Any], user: User
+    ) -> None:
+        bot = await TelegramBotApi.for_user(user)
+        email = email_match.email
+        rule_name = email_match.rule_name
+
+        url_regex = config.get("url_regex", r'https?://[^\s<>"\']+')
+        text_regex = config.get("text_regex", None)
+        vault_dir = str(config.get("vault_dir", "")).strip().strip("/")
+        filename_template = config.get("filename_template") or "{original}"
+        max_file_size_mb = config.get("max_file_size_mb", 10)
+        overwrite = bool(config.get("overwrite", False))
+
+        links = await self._extract_links_from_email(email, url_regex, text_regex)
+        if not links:
+            await bot.send_message(
+                f"🔗 No matching links to save from " f"{html.escape(email.sender)}"
+            )
+            return
+
+        obsidian = await ObsidianApi.for_user(user)
+        for index, link in enumerate(links[:3], start=1):  # cap like download
+            try:
+                data, content_type, suggested = await self._download_bytes(
+                    link, max_file_size_mb
+                )
+            except Exception as e:
+                self._logger.error(f"Failed to download {link}: {e}")
+                await bot.send_message(
+                    f"❌ Failed to download from "
+                    f"{html.escape(link[:100])}: {str(e)}"
+                )
+                continue
+
+            original = suggested or f"download-{index}"
+            # Links often lack a file extension; infer .pdf from the type.
+            if "." not in original and "pdf" in content_type.lower():
+                original += ".pdf"
+            filename = SaveAttachmentToVaultAction._build_filename(
+                filename_template, original, email, index
+            )
+            filepath = (
+                str(pathlib.PurePosixPath(vault_dir) / filename)
+                if vault_dir
+                else filename
+            )
+            try:
+                await obsidian.write_binary_file(filepath, data, overwrite=overwrite)
+            except FileExistsError:
+                await bot.send_message(
+                    f"⚠️ {html.escape(filepath)} already exists; skipped."
+                )
+                continue
+            except Exception as e:
+                self._logger.error(f"Failed to save {filepath}: {e}")
+                await bot.send_message(
+                    f"❌ Failed to save {html.escape(filename)}: {str(e)}"
+                )
+                continue
+
+            await bot.send_message(
+                f"💾 Saved {html.escape(filepath)} " f"(rule: {html.escape(rule_name)})"
+            )
+
+    async def _download_bytes(
+        self, url: str, max_file_size_mb: int, redirect_count: int = 0
+    ) -> tuple[bytes, str, str]:
+        """Download ``url``, following HTML redirects. Returns (data, type, name)."""
+        if redirect_count > 5:
+            raise Exception("Too many redirects (maximum 5)")
+
+        max_size = max_file_size_mb * 1024 * 1024
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, allow_redirects=True) as response:
+                if response.status != 200:
+                    raise Exception(f"HTTP {response.status}: {response.reason}")
+                content_type = response.headers.get("content-type", "")
+                suggested = self._filename_from_headers(
+                    response.headers, str(response.url)
+                )
+                content_length = response.headers.get("content-length")
+                if content_length and int(content_length) > max_size:
+                    raise Exception(
+                        f"File too large: "
+                        f"{int(content_length) / (1024 * 1024):.1f}MB > "
+                        f"{max_file_size_mb}MB"
+                    )
+                downloaded = 0
+                data = bytearray()
+                async for chunk in response.content.iter_chunked(8192):
+                    downloaded += len(chunk)
+                    if downloaded > max_size:
+                        raise Exception(
+                            f"File too large: "
+                            f"{downloaded / (1024 * 1024):.1f}MB > "
+                            f"{max_file_size_mb}MB"
+                        )
+                    data.extend(chunk)
+
+        # Some links return an HTML redirect page rather than the file itself.
+        if content_type.startswith("text/html") and len(data) > 0:
+            preview = data[:200].decode("utf-8", errors="ignore").strip().lower()
+            if preview.startswith("<!doctype html") or preview.startswith("<html"):
+                redirect_url = self._extract_redirect_from_html(
+                    data.decode("utf-8", errors="ignore"), url
+                )
+                if redirect_url:
+                    return await self._download_bytes(
+                        redirect_url, max_file_size_mb, redirect_count + 1
+                    )
+                raise Exception("URL returned an HTML page instead of a file")
+
+        return bytes(data), content_type, suggested
+
+    @staticmethod
+    def _filename_from_headers(headers: Any, final_url: str) -> str:
+        """Best-effort filename: Content-Disposition, else the URL basename."""
+        cd = headers.get("content-disposition", "") if headers else ""
+        match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?", cd, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        from urllib.parse import urlparse, unquote
+
+        basename = unquote(urlparse(final_url).path.rsplit("/", 1)[-1])
+        return basename.split("?")[0]

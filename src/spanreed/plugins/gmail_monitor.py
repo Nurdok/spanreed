@@ -22,6 +22,7 @@ from spanreed.plugins.gmail_monitor_actions import (
     DownloadLinkAction,
     DownloadAttachmentAction,
     SaveAttachmentToVaultAction,
+    SaveLinkToVaultAction,
     EmailMatch,
 )
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
@@ -107,6 +108,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             "download_link": DownloadLinkAction(),
             "download_attachment": DownloadAttachmentAction(),
             "save_attachment_to_vault": SaveAttachmentToVaultAction(),
+            "save_link_to_vault": SaveLinkToVaultAction(),
         }
 
     @classmethod
@@ -390,6 +392,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                     "Download link from email",
                     "Download attached file",
                     "Save attachment to vault",
+                    "Save linked file to vault",
                     "Done",
                 ],
             )
@@ -419,6 +422,13 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 actions.append(
                     EmailAction(type="save_attachment_to_vault", config=action_config)
                 )
+
+            elif action_choice == 4:  # Save linked file to vault
+                action_config = await self._configure_save_link_to_vault(bot)
+                if action_config:
+                    actions.append(
+                        EmailAction(type="save_link_to_vault", config=action_config)
+                    )
 
             else:  # Done
                 break
@@ -510,6 +520,60 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         return {
             "vault_dir": vault_dir,
             "mime_types": mime_types,
+            "filename_template": filename_template,
+            "overwrite": overwrite,
+        }
+
+    async def _configure_save_link_to_vault(
+        self, bot: TelegramBotApi
+    ) -> Dict[str, Any]:
+        """Configure the save-linked-file-to-vault action."""
+        vault_dir = (
+            await bot.request_user_input(
+                "Which folder in your vault should linked files be saved to? "
+                "(e.g. Assets/Invoices/Inbox — leave blank for the vault root)"
+            )
+        ).strip()
+
+        use_default = (
+            await bot.request_user_choice(
+                "Match any HTTP/HTTPS link in the email? "
+                "(No lets you enter a specific pattern.)",
+                ["Yes", "No"],
+            )
+            == 0
+        )
+        if use_default:
+            url_regex = r'https?://[^\s<>"\']+'
+        else:
+            url_regex = (
+                await bot.request_user_input(
+                    "Enter a regex to match the link URL "
+                    "(e.g. https://.*\\.icount\\.co\\.il/.*):"
+                )
+            ).strip()
+
+        filename_template = (
+            await bot.request_user_input(
+                "Filename template. Placeholders: {original}, {sender}, "
+                "{subject}, {date}, {index}.\n"
+                "Send '-' to use the downloaded file's own name."
+            )
+        ).strip()
+        if filename_template in ("", "-"):
+            filename_template = "{original}"
+
+        overwrite = (
+            await bot.request_user_choice(
+                "If a file with that name already exists, overwrite it?",
+                ["No, skip it", "Yes, overwrite"],
+            )
+            == 1
+        )
+
+        return {
+            "vault_dir": vault_dir,
+            "url_regex": url_regex,
             "filename_template": filename_template,
             "overwrite": overwrite,
         }

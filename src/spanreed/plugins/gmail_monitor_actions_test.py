@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from spanreed.plugins.gmail_monitor_actions import (
     DownloadAttachmentAction,
     SaveAttachmentToVaultAction,
+    SaveLinkToVaultAction,
     EmailMatch,
 )
 from spanreed.apis.gmail import EmailMessage, Attachment
@@ -197,3 +198,109 @@ def test_build_filename_falls_back_on_bad_template() -> None:
         "{nonexistent}", "receipt.pdf", _email(), 1
     )
     assert name == "receipt.pdf"
+
+
+@patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+def test_save_link_writes_downloaded_file_to_vault(
+    mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
+) -> None:
+    bot = AsyncMock()
+    mock_bot_cls.for_user = AsyncMock(return_value=bot)
+    obsidian = MagicMock()
+    obsidian.write_binary_file = AsyncMock()
+    mock_obsidian_cls.for_user = AsyncMock(return_value=obsidian)
+
+    action = SaveLinkToVaultAction()
+    action._extract_links_from_email = AsyncMock(  # type: ignore[method-assign]
+        return_value=["https://track.icount.co.il/x"]
+    )
+    action._download_bytes = AsyncMock(  # type: ignore[method-assign]
+        return_value=(b"%PDF-data", "application/pdf", "invoice.pdf")
+    )
+
+    user = mock_user_find_by_id(1)
+    match = EmailMatch(email=_email(), rule_name="Keren")
+    config = {
+        "vault_dir": "Assets/Invoices/Inbox",
+        "filename_template": "{original}",
+        "overwrite": False,
+    }
+
+    asyncio.run(action.execute(match, config, user))
+
+    obsidian.write_binary_file.assert_awaited_once_with(
+        "Assets/Invoices/Inbox/invoice.pdf", b"%PDF-data", overwrite=False
+    )
+
+
+@patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+def test_save_link_infers_pdf_extension_when_missing(
+    mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
+) -> None:
+    bot = AsyncMock()
+    mock_bot_cls.for_user = AsyncMock(return_value=bot)
+    obsidian = MagicMock()
+    obsidian.write_binary_file = AsyncMock()
+    mock_obsidian_cls.for_user = AsyncMock(return_value=obsidian)
+
+    action = SaveLinkToVaultAction()
+    action._extract_links_from_email = AsyncMock(  # type: ignore[method-assign]
+        return_value=["https://track.icount.co.il/redirect"]
+    )
+    # Redirect endpoint gives no filename and no extension.
+    action._download_bytes = AsyncMock(  # type: ignore[method-assign]
+        return_value=(b"%PDF", "application/pdf; charset=binary", "download")
+    )
+
+    user = mock_user_find_by_id(1)
+    match = EmailMatch(email=_email(), rule_name="Keren")
+
+    asyncio.run(action.execute(match, {"vault_dir": "Inbox"}, user))
+
+    obsidian.write_binary_file.assert_awaited_once_with(
+        "Inbox/download.pdf", b"%PDF", overwrite=False
+    )
+
+
+@patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+def test_save_link_no_links_found(
+    mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
+) -> None:
+    bot = AsyncMock()
+    mock_bot_cls.for_user = AsyncMock(return_value=bot)
+    obsidian = MagicMock()
+    obsidian.write_binary_file = AsyncMock()
+    mock_obsidian_cls.for_user = AsyncMock(return_value=obsidian)
+
+    action = SaveLinkToVaultAction()
+    action._extract_links_from_email = AsyncMock(  # type: ignore[method-assign]
+        return_value=[]
+    )
+
+    user = mock_user_find_by_id(1)
+    match = EmailMatch(email=_email(), rule_name="Keren")
+
+    asyncio.run(action.execute(match, {"vault_dir": "Inbox"}, user))
+
+    obsidian.write_binary_file.assert_not_called()
+    bot.send_message.assert_awaited_once()
+
+
+def test_filename_from_content_disposition() -> None:
+    headers = {"content-disposition": 'attachment; filename="invoice-123.pdf"'}
+    assert (
+        SaveLinkToVaultAction._filename_from_headers(headers, "https://x/y")
+        == "invoice-123.pdf"
+    )
+
+
+def test_filename_from_url_basename() -> None:
+    assert (
+        SaveLinkToVaultAction._filename_from_headers(
+            {}, "https://x/files/doc.pdf?token=1"
+        )
+        == "doc.pdf"
+    )
