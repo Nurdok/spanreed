@@ -586,6 +586,22 @@ class SaveLinkToVaultAction(DownloadLinkAction):
                 )
                 continue
 
+            if not self._is_document(data, content_type):
+                # e.g. a session-gated link that returns an HTML page, or the
+                # redirect heuristic having grabbed a favicon/logo. Don't save
+                # the garbage — tell the user to grab it manually.
+                self._logger.warning(
+                    f"Link returned non-document content "
+                    f"({content_type!r}) for {link}"
+                )
+                await bot.send_message(
+                    f"⚠️ The link for “{html.escape(rule_name)}” returned "
+                    f"{html.escape(content_type or 'non-document content')}, "
+                    f"not a file — not saved. Open it manually:\n"
+                    f"{html.escape(link[:150])}"
+                )
+                continue
+
             original = suggested or f"download-{index}"
             # Links often lack a file extension; infer .pdf from the type.
             if "." not in original and "pdf" in content_type.lower():
@@ -677,3 +693,19 @@ class SaveLinkToVaultAction(DownloadLinkAction):
 
         basename = unquote(urlparse(final_url).path.rsplit("/", 1)[-1])
         return basename.split("?")[0]
+
+    @staticmethod
+    def _is_document(data: bytes, content_type: str) -> bool:
+        """Reject obvious non-files: HTML pages and images (e.g. favicons)."""
+        ct = (content_type or "").lower()
+        if ct.startswith("text/html") or ct.startswith("image/"):
+            return False
+        head = data[:32].lstrip()
+        if head[:4] == b"\x00\x00\x01\x00":  # Windows .ico
+            return False
+        if head[:4] == b"\x89PNG" or head[:3] == b"GIF" or head[:2] == b"\xff\xd8":
+            return False  # PNG / GIF / JPEG
+        low = head[:14].lower()
+        if low.startswith(b"<!doctype") or low.startswith(b"<html"):
+            return False
+        return True

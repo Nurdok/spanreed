@@ -304,3 +304,51 @@ def test_filename_from_url_basename() -> None:
         )
         == "doc.pdf"
     )
+
+
+def test_is_document_accepts_pdf() -> None:
+    assert SaveLinkToVaultAction._is_document(b"%PDF-1.7\n...", "application/pdf")
+    # Content-type missing but bytes look like a PDF.
+    assert SaveLinkToVaultAction._is_document(b"%PDF-1.4", "")
+
+
+def test_is_document_rejects_html_and_images() -> None:
+    # HTML page (e.g. greeninvoice's session-gated 404).
+    assert not SaveLinkToVaultAction._is_document(
+        b"<!DOCTYPE html><html>...", "text/html; charset=utf-8"
+    )
+    # A favicon grabbed by the redirect heuristic.
+    assert not SaveLinkToVaultAction._is_document(
+        b"\x00\x00\x01\x00\x02\x00", "image/x-icon"
+    )
+    assert not SaveLinkToVaultAction._is_document(b"\x89PNG\r\n", "image/png")
+
+
+@patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+def test_save_link_does_not_save_non_document(
+    mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
+) -> None:
+    bot = AsyncMock()
+    mock_bot_cls.for_user = AsyncMock(return_value=bot)
+    obsidian = MagicMock()
+    obsidian.write_binary_file = AsyncMock()
+    mock_obsidian_cls.for_user = AsyncMock(return_value=obsidian)
+
+    action = SaveLinkToVaultAction()
+    action._extract_links_from_email = AsyncMock(  # type: ignore[method-assign]
+        return_value=["https://www.greeninvoice.co.il/api/v1/documents/download"]
+    )
+    # The session-gated link resolved to a favicon (icon), not the PDF.
+    action._download_bytes = AsyncMock(  # type: ignore[method-assign]
+        return_value=(b"\x00\x00\x01\x00\x02\x00", "image/x-icon", "download")
+    )
+
+    user = mock_user_find_by_id(1)
+    match = EmailMatch(email=_email(), rule_name="Tom Godas")
+
+    asyncio.run(action.execute(match, {"vault_dir": "Inbox"}, user))
+
+    obsidian.write_binary_file.assert_not_called()
+    bot.send_message.assert_awaited_once()
+    assert "not saved" in bot.send_message.call_args.args[0]
