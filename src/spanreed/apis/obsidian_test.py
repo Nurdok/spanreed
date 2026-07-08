@@ -58,3 +58,14 @@ def test_summarize_request_elides_large_base64_content() -> None:
 def test_summarize_request_leaves_short_content_alone() -> None:
     request = {"method": "read-file", "params": {"content": "short"}}
     assert ObsidianApi._summarize_request(request)["params"]["content"] == "short"
+
+
+def test_delete_file_sends_delete_request() -> None:
+    api = ObsidianApi(mock_user_find_by_id(1))
+    api._send_request = AsyncMock()  # type: ignore[method-assign]
+
+    asyncio.run(api.delete_file("Assets/scans/2026-01-01 Scan.pdf"))
+
+    api._send_request.assert_awaited_once_with(
+        "delete-file", {"filepath": "Assets/scans/2026-01-01 Scan.pdf"}
+    )

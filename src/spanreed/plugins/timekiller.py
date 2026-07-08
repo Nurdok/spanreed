@@ -1,4 +1,5 @@
 import re
+import json
 import asyncio
 import pathlib
 import random
@@ -19,6 +20,7 @@ from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 class TimekillerPlugin(Plugin):
     LAST_ASKED_BOOKS_KEY = "currently-reading-books-last-asked"
+    SKIPPED_SCANS_KEY = "skipped-scans"
 
     @classmethod
     def name(cls) -> str:
@@ -33,7 +35,45 @@ class TimekillerPlugin(Plugin):
             ),
         )
 
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Clear skipped scans",
+                callback=self._clear_skipped_scans_command,
+            ),
+        )
+
         await super().run()
+
+    async def _get_skipped_scans(self, user: User) -> set[str]:
+        raw = await self.get_user_data(user, self.SKIPPED_SCANS_KEY)
+        if not raw:
+            return set()
+        try:
+            return set(json.loads(raw))
+        except (json.JSONDecodeError, TypeError):
+            return set()
+
+    async def _add_skipped_scan(self, user: User, path: str) -> None:
+        skipped = await self._get_skipped_scans(user)
+        skipped.add(path)
+        await self.set_user_data(
+            user, self.SKIPPED_SCANS_KEY, json.dumps(sorted(skipped))
+        )
+
+    async def _clear_skipped_scans(self, user: User) -> None:
+        await self.set_user_data(user, self.SKIPPED_SCANS_KEY, json.dumps([]))
+
+    async def _clear_skipped_scans_command(self, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        skipped = await self._get_skipped_scans(user)
+        if not skipped:
+            await bot.send_message("No skipped scans to clear.")
+            return
+        await self._clear_skipped_scans(user)
+        await bot.send_message(
+            f"Cleared {len(skipped)} skipped scan(s); I'll ask about them again."
+        )
 
     async def run_for_user(self, user: User) -> None:
         bot: TelegramBotApi = await TelegramBotApi.for_user(user)
@@ -47,9 +87,7 @@ class TimekillerPlugin(Plugin):
                     async with bot.user_interaction():
                         await self._kill_time_push(user)
             await asyncio.sleep(
-                datetime.timedelta(
-                    hours=random.randrange(1, 3)
-                ).total_seconds()
+                datetime.timedelta(hours=random.randrange(1, 3)).total_seconds()
             )
 
     async def get_available_time_killers(
@@ -63,8 +101,8 @@ class TimekillerPlugin(Plugin):
             "Scan Processing": self.prompt_for_scan_processing,
         }
 
-        last_asked: datetime.datetime = (
-            datetime.datetime.now() - datetime.timedelta(days=4)
+        last_asked: datetime.datetime = datetime.datetime.now() - datetime.timedelta(
+            days=4
         )
         last_asked_str: str | None = await self.get_user_data(
             user, self.LAST_ASKED_BOOKS_KEY
@@ -74,10 +112,8 @@ class TimekillerPlugin(Plugin):
                 last_asked = datetime.datetime.fromisoformat(last_asked_str)
             except TypeError:
                 raise ValueError(f"{last_asked_str}, {type(last_asked_str)}")
-        if (
-            not push
-            or datetime.datetime.now() - last_asked
-            > datetime.timedelta(days=3)
+        if not push or datetime.datetime.now() - last_asked > datetime.timedelta(
+            days=3
         ):
             timekillers["Books"] = self.prompt_for_currently_reading_books
 
@@ -112,9 +148,7 @@ class TimekillerPlugin(Plugin):
             False,
         )
         choices: list[str] = [name for name in timekillers.keys()]
-        choice: int = await bot.request_user_choice(
-            "What's your poison?", choices
-        )
+        choice: int = await bot.request_user_choice("What's your poison?", choices)
         await timekillers[choices[choice]](user, bot, obsidian)
 
     async def _journal_prompt(
@@ -147,9 +181,7 @@ class TimekillerPlugin(Plugin):
             "What project are you currently working on?",
         ]
 
-        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
-            user
-        )
+        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(user)
         date_str: str = datetime.datetime.today().strftime("%Y-%m-%d")
         note_name: str = f"Daily/{date_str}.md"
 
@@ -170,9 +202,7 @@ class TimekillerPlugin(Plugin):
             await webhook_api.append_to_note(note_name, note_content)
             await bot.send_message("Noted!")
             if (
-                await bot.request_user_choice(
-                    "Another?", ["Yes", "No"], columns=2
-                )
+                await bot.request_user_choice("Another?", ["Yes", "No"], columns=2)
             ) == 1:
                 break
 
@@ -186,8 +216,7 @@ class TimekillerPlugin(Plugin):
 
         mood_choices = ["1", "2", "3", "4", "5", "Cancel"]
         mood_choice: int = await bot.request_user_choice(
-            "How would you rate your mood right now?\n"
-            " (1 - negative, 5 - positive)",
+            "How would you rate your mood right now?\n" " (1 - negative, 5 - positive)",
             mood_choices,
             columns=5,
         )
@@ -307,14 +336,11 @@ class TimekillerPlugin(Plugin):
                 if finish_date_choice == 0:
                     finish_date = datetime.date.today()
                 elif finish_date_choice == 1:
-                    finish_date = datetime.date.today() - datetime.timedelta(
-                        days=1
-                    )
+                    finish_date = datetime.date.today() - datetime.timedelta(days=1)
                 elif finish_date_choice == 2:
                     finish_date = datetime.datetime.strptime(
                         await bot.request_user_input(
-                            "When did you finish it?\n"
-                            "Use the format YYYY-MM-DD."
+                            "When did you finish it?\n" "Use the format YYYY-MM-DD."
                         ),
                         "%Y-%m-%d",
                     ).date()
@@ -340,27 +366,57 @@ class TimekillerPlugin(Plugin):
         )
 
     async def prompt_for_scan_processing(
-        self, _user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+        self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
     ) -> None:
         iso8601_date_pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
         pattern = re.compile(r"\d{4}-\d{2}-\d{2} Scan")
         # TODO: Replace with user config
         base_path: str = "Assets/scans"
         scans = [
-            pathlib.PurePosixPath(path)
-            for path in await obsidian.list_dir(base_path)
+            pathlib.PurePosixPath(path) for path in await obsidian.list_dir(base_path)
         ]
         unprocessed_scans = [
             scan for scan in scans if pattern.search(scan.name) is not None
         ]
+        skipped = await self._get_skipped_scans(user)
         unprocessed_pdfs = [
-            scan for scan in unprocessed_scans if scan.suffix == ".pdf"
+            scan
+            for scan in unprocessed_scans
+            if scan.suffix == ".pdf" and str(scan) not in skipped
         ]
         if not unprocessed_pdfs:
             return
         pdf_file = unprocessed_pdfs[0]
         pdf_bytes: bytes = await obsidian.read_binary_file(str(pdf_file))
         await bot.send_document(pdf_file.name, pdf_bytes)
+
+        action = await bot.request_user_choice(
+            f"What do you want to do with “{pdf_file.name}”?",
+            ["Rename", "Delete", "Skip (don't ask again)", "Cancel"],
+            columns=2,
+        )
+        if action == 3:  # Cancel
+            return
+        if action == 2:  # Skip (don't ask again)
+            await self._add_skipped_scan(user, str(pdf_file))
+            await bot.send_message(
+                f"Okay, I won't ask about “{pdf_file.name}” again. "
+                "Use “Clear skipped scans” to reset."
+            )
+            return
+        if action == 1:  # Delete
+            if (
+                await bot.request_user_choice(
+                    f"Delete “{pdf_file.name}”? It will be moved to the trash.",
+                    ["Yes, delete", "No"],
+                )
+                == 0
+            ):
+                await obsidian.delete_file(str(pdf_file))
+                await bot.send_message(f"Deleted “{pdf_file.name}” (moved to trash).")
+            return
+
+        # action == 0: Rename
         existing_date = pdf_file.stem[:10]
         new_date: str = ""
         # Some errors will require doing the whole interaction again
@@ -393,9 +449,7 @@ class TimekillerPlugin(Plugin):
                 try:
                     await obsidian.move_file(str(pdf_file), str(new_path))
                 except FileExistsError:
-                    await bot.send_message(
-                        f'File "{new_path.name}" already exists.'
-                    )
+                    await bot.send_message(f'File "{new_path.name}" already exists.')
                     if (
                         await bot.request_user_choice(
                             "Do you want to enter a new name?", ["Yes", "No"]
