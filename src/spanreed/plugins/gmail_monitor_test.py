@@ -181,7 +181,7 @@ def test_run_rules_on_existing_no_match_skips_execution(
         return_value=[_email(subject="Unrelated newsletter")]
     )
 
-    # Scope = Inbox + Starred (1); no confirm should be requested.
+    # Scope = Starred inbox emails only (1); no confirm should be requested.
     mock_bot.request_user_choice = AsyncMock(side_effect=[1])
 
     with patch.object(
@@ -191,6 +191,6 @@ def test_run_rules_on_existing_no_match_skips_execution(
         asyncio.run(plugin.run_rules_on_existing(user))
 
         mock_gmail.get_recent_messages.assert_awaited_once_with(
-            query="in:inbox OR is:starred", max_results=200
+            query="in:inbox is:starred", max_results=200
         )
         mock_exec.assert_not_called()

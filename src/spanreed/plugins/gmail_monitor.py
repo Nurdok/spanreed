@@ -1144,12 +1144,15 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         scope = await bot.request_user_choice(
             "Run all enabled rules against which emails?",
-            ["Inbox", "Inbox + Starred", "Cancel"],
+            ["All inbox emails", "Starred inbox emails only", "Cancel"],
         )
-        if scope == 0:  # Inbox
+        if scope == 0:  # All inbox
             query, scope_label = "in:inbox", "inbox"
-        elif scope == 1:  # Inbox + Starred
-            query, scope_label = "in:inbox OR is:starred", "inbox + starred"
+        elif scope == 1:  # Starred AND in inbox (intersection)
+            query, scope_label = (
+                "in:inbox is:starred",
+                "starred inbox",
+            )
         else:  # Cancel
             return
 
