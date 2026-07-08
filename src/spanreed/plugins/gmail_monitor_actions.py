@@ -2,12 +2,14 @@ import abc
 import re
 import html
 import logging
+import pathlib
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import aiohttp
 
 from spanreed.user import User
 from spanreed.apis.gmail import EmailMessage, GmailApi
+from spanreed.apis.obsidian import ObsidianApi
 from spanreed.apis.telegram_bot import TelegramBotApi
 
 
@@ -125,6 +127,116 @@ class DownloadAttachmentAction(EmailActionHandler):
                     f"❌ Failed to send {html.escape(attachment.filename)}: "
                     f"{str(e)}"
                 )
+
+
+class SaveAttachmentToVaultAction(EmailActionHandler):
+    """Save the email's attachments into a folder in the Obsidian vault.
+
+    Config parameters:
+      - ``vault_dir``: destination folder in the vault (e.g. "Receipts").
+        Empty means the vault root.
+      - ``filename_template``: how to name the saved file. Placeholders:
+        ``{original}`` (the attachment's own name), ``{sender}``, ``{subject}``,
+        ``{date}``, ``{index}``. Defaults to ``{original}``. The original
+        extension is appended if the rendered name lacks it.
+      - ``mime_types``: which attachments to save (default ``["application/pdf"]``;
+        ``None`` saves all).
+      - ``overwrite``: overwrite an existing file (default False -> skip).
+    """
+
+    def __init__(self) -> None:
+        self._logger = logging.getLogger(__name__)
+
+    async def execute(
+        self, email_match: EmailMatch, config: Dict[str, Any], user: User
+    ) -> None:
+        bot = await TelegramBotApi.for_user(user)
+        email = email_match.email
+        rule_name = email_match.rule_name
+
+        vault_dir = str(config.get("vault_dir", "")).strip().strip("/")
+        filename_template = config.get("filename_template") or "{original}"
+        mime_types = config.get("mime_types", ["application/pdf"])
+        overwrite = bool(config.get("overwrite", False))
+
+        gmail = await GmailApi.for_user(user)
+        try:
+            attachments = await gmail.get_attachments(email.id, mime_types=mime_types)
+        except Exception as e:
+            self._logger.error(f"Failed to fetch attachments for {email.id}: {e}")
+            await bot.send_message(
+                f"❌ Failed to fetch attachments from "
+                f"{html.escape(email.sender)}: {str(e)}"
+            )
+            return
+
+        if not attachments:
+            await bot.send_message(
+                f"📎 No matching attachment to save from "
+                f"{html.escape(email.sender)}"
+            )
+            return
+
+        obsidian = await ObsidianApi.for_user(user)
+        for index, attachment in enumerate(attachments, start=1):
+            filename = self._build_filename(
+                filename_template, attachment.filename, email, index
+            )
+            filepath = (
+                str(pathlib.PurePosixPath(vault_dir) / filename)
+                if vault_dir
+                else filename
+            )
+            try:
+                await obsidian.write_binary_file(
+                    filepath, attachment.data, overwrite=overwrite
+                )
+            except FileExistsError:
+                await bot.send_message(
+                    f"⚠️ {html.escape(filepath)} already exists; skipped."
+                )
+                continue
+            except Exception as e:
+                self._logger.error(f"Failed to save {filepath}: {e}")
+                await bot.send_message(
+                    f"❌ Failed to save {html.escape(filename)}: {str(e)}"
+                )
+                continue
+
+            await bot.send_message(
+                f"💾 Saved {html.escape(filepath)} " f"(rule: {html.escape(rule_name)})"
+            )
+
+    @staticmethod
+    def _build_filename(
+        template: str, original: str, email: EmailMessage, index: int
+    ) -> str:
+        original = original or f"attachment-{index}"
+        try:
+            rendered = template.format(
+                original=original,
+                sender=(
+                    email.sender.split("@")[0] if "@" in email.sender else email.sender
+                ),
+                subject=re.sub(r"[^\w\-. ]", "_", email.subject)[:50],
+                date=email.date.strftime("%Y-%m-%d"),
+                index=index,
+            )
+        except (KeyError, IndexError, ValueError):
+            # A bad template shouldn't lose the file; fall back to the original.
+            rendered = original
+
+        # Strip path separators and characters illegal on common filesystems.
+        rendered = re.sub(r'[\\/:*?"<>|]', "", rendered).strip()
+        if not rendered:
+            rendered = original
+
+        # Preserve the original extension if the template dropped it.
+        if "." in original:
+            ext = original[original.rfind(".") :]
+            if not rendered.lower().endswith(ext.lower()):
+                rendered += ext
+        return rendered
 
 
 class DownloadLinkAction(EmailActionHandler):

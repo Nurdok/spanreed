@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from spanreed.plugins.gmail_monitor_actions import (
     DownloadAttachmentAction,
+    SaveAttachmentToVaultAction,
     EmailMatch,
 )
 from spanreed.apis.gmail import EmailMessage, Attachment
@@ -76,3 +77,123 @@ def test_download_attachment_notifies_when_none_found(
 
     bot.send_document.assert_not_called()
     bot.send_message.assert_awaited_once()
+
+
+@patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+def test_save_attachment_writes_to_vault(
+    mock_bot_cls: MagicMock,
+    mock_gmail_cls: MagicMock,
+    mock_obsidian_cls: MagicMock,
+) -> None:
+    bot = AsyncMock()
+    mock_bot_cls.for_user = AsyncMock(return_value=bot)
+
+    gmail = MagicMock()
+    gmail.get_attachments = AsyncMock(
+        return_value=[Attachment("receipt.pdf", "application/pdf", b"%PDF-data")]
+    )
+    mock_gmail_cls.for_user = AsyncMock(return_value=gmail)
+
+    obsidian = MagicMock()
+    obsidian.write_binary_file = AsyncMock()
+    mock_obsidian_cls.for_user = AsyncMock(return_value=obsidian)
+
+    user = mock_user_find_by_id(1)
+    match = EmailMatch(email=_email(), rule_name="Receipts")
+    config = {
+        "vault_dir": "Receipts/2026",
+        "mime_types": ["application/pdf"],
+        "filename_template": "{original}",
+        "overwrite": False,
+    }
+
+    asyncio.run(SaveAttachmentToVaultAction().execute(match, config, user))
+
+    obsidian.write_binary_file.assert_awaited_once_with(
+        "Receipts/2026/receipt.pdf", b"%PDF-data", overwrite=False
+    )
+
+
+@patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+def test_save_attachment_skips_on_conflict(
+    mock_bot_cls: MagicMock,
+    mock_gmail_cls: MagicMock,
+    mock_obsidian_cls: MagicMock,
+) -> None:
+    bot = AsyncMock()
+    mock_bot_cls.for_user = AsyncMock(return_value=bot)
+
+    gmail = MagicMock()
+    gmail.get_attachments = AsyncMock(
+        return_value=[Attachment("receipt.pdf", "application/pdf", b"%PDF-data")]
+    )
+    mock_gmail_cls.for_user = AsyncMock(return_value=gmail)
+
+    obsidian = MagicMock()
+    # The file already exists and overwrite is off.
+    obsidian.write_binary_file = AsyncMock(side_effect=FileExistsError)
+    mock_obsidian_cls.for_user = AsyncMock(return_value=obsidian)
+
+    user = mock_user_find_by_id(1)
+    match = EmailMatch(email=_email(), rule_name="Receipts")
+
+    # Must not raise; a skip message is sent instead.
+    asyncio.run(
+        SaveAttachmentToVaultAction().execute(match, {"vault_dir": "Receipts"}, user)
+    )
+
+    bot.send_message.assert_awaited_once()
+    assert "already exists" in bot.send_message.call_args.args[0]
+
+
+@patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+def test_save_attachment_none_found(
+    mock_bot_cls: MagicMock,
+    mock_gmail_cls: MagicMock,
+    mock_obsidian_cls: MagicMock,
+) -> None:
+    bot = AsyncMock()
+    mock_bot_cls.for_user = AsyncMock(return_value=bot)
+
+    gmail = MagicMock()
+    gmail.get_attachments = AsyncMock(return_value=[])
+    mock_gmail_cls.for_user = AsyncMock(return_value=gmail)
+
+    obsidian = MagicMock()
+    obsidian.write_binary_file = AsyncMock()
+    mock_obsidian_cls.for_user = AsyncMock(return_value=obsidian)
+
+    user = mock_user_find_by_id(1)
+    match = EmailMatch(email=_email(), rule_name="Receipts")
+
+    asyncio.run(SaveAttachmentToVaultAction().execute(match, {"vault_dir": "R"}, user))
+
+    obsidian.write_binary_file.assert_not_called()
+    bot.send_message.assert_awaited_once()
+
+
+def test_build_filename_renders_and_preserves_extension() -> None:
+    name = SaveAttachmentToVaultAction._build_filename(
+        "{date}-{original}", "receipt.pdf", _email(), 1
+    )
+    assert name == "2024-01-01-receipt.pdf"
+
+
+def test_build_filename_appends_extension_when_template_omits_it() -> None:
+    name = SaveAttachmentToVaultAction._build_filename(
+        "{index}", "receipt.pdf", _email(), 3
+    )
+    assert name == "3.pdf"
+
+
+def test_build_filename_falls_back_on_bad_template() -> None:
+    name = SaveAttachmentToVaultAction._build_filename(
+        "{nonexistent}", "receipt.pdf", _email(), 1
+    )
+    assert name == "receipt.pdf"

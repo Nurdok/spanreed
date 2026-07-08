@@ -21,6 +21,7 @@ from spanreed.plugins.gmail_monitor_actions import (
     TelegramNotificationAction,
     DownloadLinkAction,
     DownloadAttachmentAction,
+    SaveAttachmentToVaultAction,
     EmailMatch,
 )
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
@@ -105,6 +106,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             "telegram_notification": TelegramNotificationAction(),
             "download_link": DownloadLinkAction(),
             "download_attachment": DownloadAttachmentAction(),
+            "save_attachment_to_vault": SaveAttachmentToVaultAction(),
         }
 
     @classmethod
@@ -387,6 +389,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                     "Send Telegram notification",
                     "Download link from email",
                     "Download attached file",
+                    "Save attachment to vault",
                     "Done",
                 ],
             )
@@ -409,6 +412,12 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 action_config = await self._configure_download_attachment(bot)
                 actions.append(
                     EmailAction(type="download_attachment", config=action_config)
+                )
+
+            elif action_choice == 3:  # Save attachment to vault
+                action_config = await self._configure_save_attachment_to_vault(bot)
+                actions.append(
+                    EmailAction(type="save_attachment_to_vault", config=action_config)
                 )
 
             else:  # Done
@@ -462,6 +471,48 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         if choice == 0:
             return {"mime_types": ["application/pdf"]}
         return {"mime_types": None}
+
+    async def _configure_save_attachment_to_vault(
+        self, bot: TelegramBotApi
+    ) -> Dict[str, Any]:
+        """Configure the save-attachment-to-vault action."""
+        vault_dir = (
+            await bot.request_user_input(
+                "Which folder in your vault should attachments be saved to? "
+                "(e.g. Receipts/2026 — leave blank for the vault root)"
+            )
+        ).strip()
+
+        which = await bot.request_user_choice(
+            "Which attachments should be saved?",
+            ["PDF files only", "All attachments"],
+        )
+        mime_types = ["application/pdf"] if which == 0 else None
+
+        filename_template = (
+            await bot.request_user_input(
+                "Filename template. Placeholders: {original}, {sender}, "
+                "{subject}, {date}, {index}.\n"
+                "Send '-' to keep each attachment's original name."
+            )
+        ).strip()
+        if filename_template in ("", "-"):
+            filename_template = "{original}"
+
+        overwrite = (
+            await bot.request_user_choice(
+                "If a file with that name already exists, overwrite it?",
+                ["No, skip it", "Yes, overwrite"],
+            )
+            == 1
+        )
+
+        return {
+            "vault_dir": vault_dir,
+            "mime_types": mime_types,
+            "filename_template": filename_template,
+            "overwrite": overwrite,
+        }
 
     async def _configure_download_link(
         self, bot: TelegramBotApi

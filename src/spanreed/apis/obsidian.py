@@ -56,9 +56,7 @@ class ObsidianApi:
             bar = "█" * filled + "░" * (10 - filled)
             text = f"⏳ Waiting for Obsidian [{bar}] (attempt {attempt}/{max_attempts})"
             if self._progress_message is None:
-                self._progress_message = await bot.send_message(
-                    text, parse_html=False
-                )
+                self._progress_message = await bot.send_message(text, parse_html=False)
             else:
                 try:
                     await self._progress_message.edit_text(text)
@@ -91,9 +89,7 @@ class ObsidianApi:
                 async with asyncio.timeout(
                     datetime.timedelta(seconds=30).total_seconds()
                 ):
-                    await redis_api.lpush(
-                        request_queue_name, json.dumps(request)
-                    )
+                    await redis_api.lpush(request_queue_name, json.dumps(request))
             except Exception:
                 self._logger.error(f"Failed to send request: {request=}")
                 raise
@@ -109,9 +105,7 @@ class ObsidianApi:
                     response_queue_name: str = (
                         f"obsidian-plugin-tasks:{self._user.id}:{request_id}"
                     )
-                    self._logger.info(
-                        f"Waiting for response on {response_queue_name=}"
-                    )
+                    self._logger.info(f"Waiting for response on {response_queue_name=}")
                     response: dict = json.loads(
                         # Take the value from the tuple returned by `blpop`, we already know the key
                         (await redis_api.blpop(response_queue_name))[1]
@@ -122,9 +116,7 @@ class ObsidianApi:
             except TimeoutError:
                 progress_task.cancel()
                 # Delete the request from the queue
-                await redis_api.lrem(
-                    request_queue_name, 0, json.dumps(request)
-                )
+                await redis_api.lrem(request_queue_name, 0, json.dumps(request))
                 if attempt < max_attempts:
                     self._logger.warning(
                         f"Obsidian API request timed out ({request_id=}), "
@@ -156,9 +148,7 @@ class ObsidianApi:
         self._logger.info(f"Got response: {response=}")
 
         if not response["success"]:
-            msg: str = (
-                f"Obsidian API request failed:\n\t{request=}\n\t{response=}"
-            )
+            msg: str = f"Obsidian API request failed:\n\t{request=}\n\t{response=}"
             bot: TelegramBotApi = await TelegramBotApi.for_user(self._user)
             await bot.send_message(msg)
             await bot.send_message(str(response))
@@ -246,9 +236,7 @@ class ObsidianApi:
         return f"{daily_note_path}/{filename}"
 
     async def query_dataview(self, query: str) -> list[Any] | Any:
-        query_result = await self._send_request(
-            "query-dataview", {"query": query}
-        )
+        query_result = await self._send_request("query-dataview", {"query": query})
         self._logger.info(f"Got query result: {query_result=}")
         result_type = query_result.get("type", None)
         if result_type == "list":
@@ -288,7 +276,26 @@ class ObsidianApi:
         )["content"]
         return base64.b64decode(content_base64)
 
-    async def move_file(self, from_path: str, to_path: str) -> None:
+    async def write_binary_file(
+        self, filepath: str, data: bytes, *, overwrite: bool = False
+    ) -> None:
+        """Write a binary file into the vault (symmetric to read_binary_file).
+
+        Sends the content base64-encoded via the ``write-file`` method. The
+        companion plugin is expected to create any missing parent folders and,
+        when ``overwrite`` is false and the file already exists, fail with a
+        "Destination file already exists" message (which surfaces here as
+        ``FileExistsError``, matching ``move-file``).
+        """
         await self._send_request(
-            "move-file", {"from": from_path, "to": to_path}
+            "write-file",
+            {
+                "filepath": filepath,
+                "format": "binary",
+                "content": base64.b64encode(data).decode("ascii"),
+                "overwrite": overwrite,
+            },
         )
+
+    async def move_file(self, from_path: str, to_path: str) -> None:
+        await self._send_request("move-file", {"from": from_path, "to": to_path})
