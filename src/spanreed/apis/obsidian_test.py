@@ -33,3 +33,28 @@ def test_write_binary_file_defaults_to_no_overwrite() -> None:
     sent = api._send_request.await_args.args
     assert sent[0] == "write-file"
     assert sent[1]["overwrite"] is False
+
+
+def test_summarize_request_elides_large_base64_content() -> None:
+    request = {
+        "request_id": "1",
+        "method": "write-file",
+        "params": {
+            "filepath": "x.pdf",
+            "format": "binary",
+            "content": "A" * 5000,
+            "overwrite": False,
+        },
+    }
+    safe = ObsidianApi._summarize_request(request)
+
+    # The huge payload is replaced; everything else is intact and the original
+    # request is not mutated.
+    assert safe["params"]["content"] == "<5000 base64 chars elided>"
+    assert safe["params"]["filepath"] == "x.pdf"
+    assert request["params"]["content"] == "A" * 5000
+
+
+def test_summarize_request_leaves_short_content_alone() -> None:
+    request = {"method": "read-file", "params": {"content": "short"}}
+    assert ObsidianApi._summarize_request(request)["params"]["content"] == "short"

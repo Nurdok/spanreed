@@ -64,6 +64,19 @@ class ObsidianApi:
                     pass  # telegram raises if text hasn't changed
             await asyncio.sleep(3)
 
+    @staticmethod
+    def _summarize_request(request: dict[str, Any]) -> dict[str, Any]:
+        """Copy of a request with large binary payloads elided, for logging."""
+        import copy
+
+        safe = copy.deepcopy(request)
+        params = safe.get("params")
+        if isinstance(params, dict) and isinstance(params.get("content"), str):
+            content = params["content"]
+            if len(content) > 64:
+                params["content"] = f"<{len(content)} base64 chars elided>"
+        return safe
+
     async def _send_request(
         self,
         method: str,
@@ -148,15 +161,24 @@ class ObsidianApi:
         self._logger.info(f"Got response: {response=}")
 
         if not response["success"]:
-            msg: str = f"Obsidian API request failed:\n\t{request=}\n\t{response=}"
+            # Elide any large base64 payload (e.g. a write-file's `content`)
+            # before building the debug message. Otherwise the message can
+            # exceed Telegram's 4096-char limit, and the resulting "Text is too
+            # long" send error masks the real failure reason.
+            safe_request = self._summarize_request(request)
+            msg: str = (
+                f"Obsidian API request failed:\n\t{safe_request!r}\n\t{response!r}"
+            )
+            if len(msg) > 1500:
+                msg = msg[:1500] + " …(truncated)"
             bot: TelegramBotApi = await TelegramBotApi.for_user(self._user)
             await bot.send_message(msg)
-            await bot.send_message(str(response))
-            if response["result"] == "file not found":
-                raise FileNotFoundError(msg)
-            if "Destination file already exists" in response["result"]:
-                raise FileExistsError(msg)
-            raise RuntimeError(msg)
+            result: Any = response.get("result")
+            if result == "file not found":
+                raise FileNotFoundError(str(result))
+            if isinstance(result, str) and "Destination file already exists" in result:
+                raise FileExistsError(str(result))
+            raise RuntimeError(f"Obsidian request '{method}' failed: {result}")
 
         return response.get("result", None)
 
