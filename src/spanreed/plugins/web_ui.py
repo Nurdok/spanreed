@@ -8,6 +8,7 @@ from quart import Quart, websocket, request
 from spanreed.storage import redis_api
 from spanreed.apis.withings import WithingsApi
 from spanreed.apis.gmail import GmailApi
+from spanreed.apis.googlefit import GoogleFitApi
 
 
 class WebUiPlugin(Plugin[None]):
@@ -112,6 +113,25 @@ class WebUiPlugin(Plugin[None]):
                 GmailApi.handle_oauth_redirect(code, state)
             )
             return "Gmail authenticated successfully. You can close this tab."
+
+        @app.get("/googlefit-oauth")
+        async def googlefit_oauth_redirect() -> str:
+            # Extract the code from the query string.
+            code: str | None = request.args.get("code")
+            if code is None:
+                return "No code provided."
+
+            state: str | None = request.args.get("state")
+            if state is None:
+                return "No state provided."
+
+            # Pass the code to the Google Fit API without blocking the Quart app.
+            await asyncio.create_task(
+                GoogleFitApi.handle_oauth_redirect(code, state)
+            )
+            return (
+                "Google Fit authenticated successfully. You can close this tab."
+            )
 
         # Start the Quart app.
         await app.run_task(debug=False, host="127.0.0.1", port=5000)

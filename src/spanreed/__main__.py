@@ -21,6 +21,7 @@ from spanreed.plugins.timekiller import TimekillerPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
 from spanreed.plugins.hevy import HevyPlugin
+from spanreed.plugins.googlefit import GoogleFitPlugin
 
 
 def setup_logger() -> None:
@@ -56,6 +57,7 @@ def load_plugins() -> List[Plugin]:
         WithingsPlugin(),
         GmailMonitorPlugin(),
         HevyPlugin(),
+        GoogleFitPlugin(),
     ]
 
     return core_plugins + optional_plugins
