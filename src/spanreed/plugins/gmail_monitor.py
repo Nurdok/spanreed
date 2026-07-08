@@ -144,6 +144,14 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             ),
         )
 
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Run rules on inbox",
+                callback=self.run_rules_on_existing,
+            ),
+        )
+
         await super().run()
 
     @classmethod
@@ -967,20 +975,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 await self._mark_emails_processed(user, new_processed_ids)
 
             # Execute actions for matches
-            for match, actions in matches:
-                self._logger.info(
-                    f"Executing {len(actions)} actions for match: {match.rule_name}"
-                )
-
-                for action in actions:
-                    if action.type in self._action_handlers:
-                        try:
-                            handler = self._action_handlers[action.type]
-                            await handler.execute(match, action.config, user)
-                        except Exception as e:
-                            self._logger.error(
-                                f"Error executing action {action.type}: {e}"
-                            )
+            await self._execute_matches(user, matches)
 
             # Update last check time
             await self.set_user_data(
@@ -994,6 +989,89 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         except Exception as e:
             self._logger.exception(f"Error in Gmail monitor for user {user}: {e}")
             raise
+
+    async def _execute_matches(
+        self,
+        user: User,
+        matches: List[tuple[EmailMatch, List[EmailAction]]],
+    ) -> None:
+        """Run each matched rule's actions, isolating handler failures."""
+        for match, actions in matches:
+            self._logger.info(
+                f"Executing {len(actions)} actions for match: {match.rule_name}"
+            )
+            for action in actions:
+                if action.type in self._action_handlers:
+                    try:
+                        handler = self._action_handlers[action.type]
+                        await handler.execute(match, action.config, user)
+                    except Exception as e:
+                        self._logger.error(f"Error executing action {action.type}: {e}")
+
+    async def run_rules_on_existing(self, user: User) -> None:
+        """Run all enabled rules against existing inbox mail (a test/backfill).
+
+        Unlike the background monitor, this ignores the processed-email
+        bookkeeping and doesn't advance ``last_check`` — so it can be re-run to
+        test new rules against mail that's already in the inbox. It executes
+        the real actions (downloads, notifications), gated behind a confirm.
+        """
+        bot = await TelegramBotApi.for_user(user)
+        config = await self.get_config(user)
+
+        enabled_rules = [rule for rule in config.rules if rule.enabled]
+        if not enabled_rules:
+            await bot.send_message("No enabled rules to run.")
+            return
+
+        if not await self._ensure_authenticated(user, bot):
+            return
+
+        scope = await bot.request_user_choice(
+            "Run all enabled rules against which emails?",
+            ["Inbox", "Inbox + Starred", "Cancel"],
+        )
+        if scope == 0:  # Inbox
+            query, scope_label = "in:inbox", "inbox"
+        elif scope == 1:  # Inbox + Starred
+            query, scope_label = "in:inbox OR is:starred", "inbox + starred"
+        else:  # Cancel
+            return
+
+        await bot.send_message(f"Fetching {scope_label} emails…")
+        gmail = await GmailApi.for_user(user)
+        emails = await gmail.get_recent_messages(query=query, max_results=200)
+
+        matches: List[tuple[EmailMatch, List[EmailAction]]] = []
+        for email in emails:
+            for rule in enabled_rules:
+                if rule.filter.matches(email):
+                    matches.append(
+                        (
+                            EmailMatch(email=email, rule_name=rule.name),
+                            rule.actions,
+                        )
+                    )
+
+        if not matches:
+            await bot.send_message(
+                f"No emails in {scope_label} matched any enabled rule "
+                f"({len(emails)} scanned)."
+            )
+            return
+
+        confirm = await bot.request_user_choice(
+            f"{len(matches)} match(es) across {len(emails)} {scope_label} "
+            f"emails. Run their actions now? This will download files and "
+            f"send notifications.",
+            ["Run actions", "Cancel"],
+        )
+        if confirm != 0:  # Cancel
+            return
+
+        await bot.send_message(f"Running actions for {len(matches)} match(es)…")
+        await self._execute_matches(user, matches)
+        await bot.send_message("Done.")
 
     def _extract_all_links_for_debug(self, email_body: str) -> List[str]:
         """Extract all HTTP/HTTPS links from email body for debugging purposes"""
