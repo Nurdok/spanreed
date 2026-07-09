@@ -3,7 +3,7 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from spanreed.plugins.timekiller import TimekillerPlugin
+from spanreed.plugins.timekiller import TimekillerPlugin, UserConfig
 from spanreed.plugin import Plugin
 from spanreed.test_utils import mock_user_find_by_id, patch_telegram_bot
 
@@ -23,6 +23,21 @@ def _plugin_with_store() -> tuple[TimekillerPlugin, dict]:
     plugin.get_user_data = _get  # type: ignore[method-assign]
     plugin.set_user_data = _set  # type: ignore[method-assign]
     return plugin, store
+
+
+def _stub_config(plugin: TimekillerPlugin, config: UserConfig) -> dict:
+    """Back the plugin's config get/set with an in-memory holder."""
+    holder: dict = {"config": config}
+
+    async def _get_config(user: Any) -> UserConfig:
+        return holder["config"]
+
+    async def _set_config(user: Any, config: UserConfig) -> None:
+        holder["config"] = config
+
+    plugin.get_config = _get_config  # type: ignore[method-assign]
+    plugin.set_config = _set_config  # type: ignore[method-assign]
+    return holder
 
 
 def test_skipped_scans_add_get_clear() -> None:
@@ -99,6 +114,67 @@ def test_prompt_delete_moves_to_trash(mock_bot: AsyncMock) -> None:
     asyncio.run(plugin.prompt_for_scan_processing(user, mock_bot, obsidian))
 
     obsidian.delete_file.assert_awaited_once_with("Assets/scans/2026-01-01 Scan.pdf")
+
+
+@patch_telegram_bot("spanreed.plugins.timekiller")
+def test_journal_prompt_appends_under_configured_heading(mock_bot: AsyncMock) -> None:
+    plugin, _ = _plugin_with_store()
+    _stub_config(plugin, UserConfig(journal_heading="Journal"))
+    obsidian = MagicMock()
+    obsidian.append_to_note = AsyncMock()
+
+    # Answer (0) the first prompt, then decline "Another?" (1) to stop.
+    mock_bot.request_user_choice = AsyncMock(side_effect=[0, 1])
+    mock_bot.request_user_input = AsyncMock(return_value="my answer")
+
+    user = mock_user_find_by_id(1)
+    asyncio.run(plugin._journal_prompt(user, mock_bot, obsidian))
+
+    obsidian.append_to_note.assert_awaited_once()
+    _, kwargs = obsidian.append_to_note.call_args
+    assert kwargs["heading"] == "Journal"
+    assert "my answer" in obsidian.append_to_note.call_args.args[1]
+
+
+@patch_telegram_bot("spanreed.plugins.timekiller")
+def test_journal_prompt_no_heading_when_unset(mock_bot: AsyncMock) -> None:
+    plugin, _ = _plugin_with_store()
+    _stub_config(plugin, UserConfig())
+    obsidian = MagicMock()
+    obsidian.append_to_note = AsyncMock()
+
+    mock_bot.request_user_choice = AsyncMock(side_effect=[0, 1])
+    mock_bot.request_user_input = AsyncMock(return_value="my answer")
+
+    user = mock_user_find_by_id(1)
+    asyncio.run(plugin._journal_prompt(user, mock_bot, obsidian))
+
+    _, kwargs = obsidian.append_to_note.call_args
+    assert kwargs["heading"] is None
+
+
+@patch_telegram_bot("spanreed.plugins.timekiller")
+def test_set_journal_heading_command(mock_bot: AsyncMock) -> None:
+    plugin, _ = _plugin_with_store()
+    holder = _stub_config(plugin, UserConfig())
+    mock_bot.request_user_input = AsyncMock(return_value="  Daily Journal  ")
+
+    user = mock_user_find_by_id(1)
+    asyncio.run(plugin._set_journal_heading_command(user))
+
+    assert holder["config"].journal_heading == "Daily Journal"
+
+
+@patch_telegram_bot("spanreed.plugins.timekiller")
+def test_set_journal_heading_command_none_clears(mock_bot: AsyncMock) -> None:
+    plugin, _ = _plugin_with_store()
+    holder = _stub_config(plugin, UserConfig(journal_heading="Journal"))
+    mock_bot.request_user_input = AsyncMock(return_value="none")
+
+    user = mock_user_find_by_id(1)
+    asyncio.run(plugin._set_journal_heading_command(user))
+
+    assert holder["config"].journal_heading is None
 
 
 @patch_telegram_bot("spanreed.plugins.timekiller")

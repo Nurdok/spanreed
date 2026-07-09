@@ -5,6 +5,7 @@ import pathlib
 import random
 import datetime
 import textwrap
+from dataclasses import dataclass
 
 from spanreed.apis.telegram_bot import (
     TelegramBotApi,
@@ -18,6 +19,13 @@ from spanreed.plugin import Plugin
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 
+@dataclass
+class UserConfig:
+    # Heading in the daily note under which journaling answers are added. When
+    # None (the default), answers are appended to the end of the note.
+    journal_heading: str | None = None
+
+
 class TimekillerPlugin(Plugin):
     LAST_ASKED_BOOKS_KEY = "currently-reading-books-last-asked"
     SKIPPED_SCANS_KEY = "skipped-scans"
@@ -25,6 +33,33 @@ class TimekillerPlugin(Plugin):
     @classmethod
     def name(cls) -> str:
         return "Timekiller"
+
+    @classmethod
+    def has_user_config(cls) -> bool:
+        return True
+
+    @classmethod
+    def get_config_class(cls) -> type[UserConfig]:
+        return UserConfig
+
+    @classmethod
+    async def ask_for_user_config(cls, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        heading = (
+            await bot.request_user_input(
+                "Under which heading should journaling answers be added in the"
+                " daily note?\nEnter the heading text (e.g. 'Journal'), or"
+                " 'none' to append them at the end of the note."
+            )
+        ).strip()
+        await cls.set_config(
+            user,
+            UserConfig(
+                journal_heading=None
+                if heading == "" or heading.lower() == "none"
+                else heading
+            ),
+        )
 
     async def run(self) -> None:
         await TelegramBotApi.register_command(
@@ -43,7 +78,39 @@ class TimekillerPlugin(Plugin):
             ),
         )
 
+        await TelegramBotApi.register_command(
+            self,
+            PluginCommand(
+                text="Set journal heading",
+                callback=self._set_journal_heading_command,
+            ),
+        )
+
         await super().run()
+
+    async def _set_journal_heading_command(self, user: User) -> None:
+        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        current: str = config.journal_heading or "(none — appended at the end)"
+        heading = (
+            await bot.request_user_input(
+                f"Current journal heading: {current}\n\n"
+                "Enter a new heading for journaling answers, or 'none' to"
+                " append them at the end of the note:"
+            )
+        ).strip()
+        config.journal_heading = (
+            None if heading == "" or heading.lower() == "none" else heading
+        )
+        await self.set_config(user, config)
+        if config.journal_heading is None:
+            await bot.send_message(
+                "Journaling answers will be appended to the end of the note."
+            )
+        else:
+            await bot.send_message(
+                f"Journaling answers will be added under “{config.journal_heading}”."
+            )
 
     async def _get_skipped_scans(self, user: User) -> set[str]:
         raw = await self.get_user_data(user, self.SKIPPED_SCANS_KEY)
@@ -181,7 +248,7 @@ class TimekillerPlugin(Plugin):
             "What project are you currently working on?",
         ]
 
-        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
         date_str: str = datetime.datetime.today().strftime("%Y-%m-%d")
         note_name: str = f"Daily/{date_str}.md"
 
@@ -199,7 +266,9 @@ class TimekillerPlugin(Plugin):
             prompt_answer: str = await bot.request_user_input(prompt)
             note_content: str = f"\n\n### {prompt}\n{prompt_answer}\n"
             self._logger.info(f"Appending to note {note_name}")
-            await webhook_api.append_to_note(note_name, note_content)
+            await obsidian.append_to_note(
+                note_name, note_content, heading=config.journal_heading
+            )
             await bot.send_message("Noted!")
             if (
                 await bot.request_user_choice("Another?", ["Yes", "No"], columns=2)

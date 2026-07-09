@@ -319,6 +319,20 @@ class ObsidianApi:
             },
         )
 
+    async def append_to_note(
+        self, filepath: str, content: str, heading: str | None = None
+    ) -> None:
+        """Append content to a note, optionally under a specific heading.
+
+        When ``heading`` is given, the content is inserted at the end of that
+        heading's section (the heading is created at the end of the note if it
+        doesn't exist). Otherwise the content is appended to the end of the note.
+        """
+        await self._send_request(
+            "append-to-note",
+            {"filepath": filepath, "content": content, "heading": heading},
+        )
+
     async def move_file(self, from_path: str, to_path: str) -> None:
         await self._send_request("move-file", {"from": from_path, "to": to_path})
 
