@@ -99,7 +99,7 @@ def test_prompt_ignores_skipped_scan(mock_bot: AsyncMock) -> None:
 
 
 @patch_telegram_bot("spanreed.plugins.timekiller")
-def test_prompt_delete_moves_to_trash(mock_bot: AsyncMock) -> None:
+def test_prompt_delete_removes_file(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     obsidian = MagicMock()
     obsidian.list_dir = AsyncMock(return_value=["Assets/scans/2026-01-01 Scan.pdf"])

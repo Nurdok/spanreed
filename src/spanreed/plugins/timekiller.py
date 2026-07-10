@@ -476,13 +476,13 @@ class TimekillerPlugin(Plugin):
         if action == 1:  # Delete
             if (
                 await bot.request_user_choice(
-                    f"Delete “{pdf_file.name}”? It will be moved to the trash.",
+                    f"Permanently delete “{pdf_file.name}”? This cannot be undone.",
                     ["Yes, delete", "No"],
                 )
                 == 0
             ):
                 await obsidian.delete_file(str(pdf_file))
-                await bot.send_message(f"Deleted “{pdf_file.name}” (moved to trash).")
+                await bot.send_message(f"Permanently deleted “{pdf_file.name}”.")
             return
 
         # action == 0: Rename
