@@ -22,6 +22,8 @@ from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
 from spanreed.plugins.hevy import HevyPlugin
 from spanreed.plugins.googlefit import GoogleFitPlugin
+from spanreed.apis.audible import AudiblePlugin
+from spanreed.plugins.book_progress import BookProgressPlugin
 
 
 def setup_logger() -> None:
@@ -58,6 +60,8 @@ def load_plugins() -> List[Plugin]:
         GmailMonitorPlugin(),
         HevyPlugin(),
         GoogleFitPlugin(),
+        AudiblePlugin(),
+        BookProgressPlugin(),
     ]
 
     return core_plugins + optional_plugins
@@ -93,9 +97,7 @@ async def _notify_plugin_failure(plugin: Plugin, error: BaseException) -> None:
     for user in await plugin.get_users():
         try:
             bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-            await bot.send_message(
-                f"Plugin '{plugin.name()}' has crashed: {error}"
-            )
+            await bot.send_message(f"Plugin '{plugin.name()}' has crashed: {error}")
         except Exception:
             logging.exception(
                 f"Failed to notify user {user.id} about "
