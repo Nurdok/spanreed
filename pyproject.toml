@@ -21,6 +21,7 @@ types-requests = "^2.32.0.20240602"
 google-auth = "*"
 google-auth-oauthlib = "*"
 google-api-python-client = "*"
+audible = {version = "^0.10.0", python = ">=3.12,<3.13"}
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"
