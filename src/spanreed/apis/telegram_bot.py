@@ -27,6 +27,7 @@ from telegram.ext import (
     AIORateLimiter,
     ContextTypes,
     CommandHandler,
+    InvalidCallbackData,
     MessageHandler,
     CallbackQueryHandler,
     Application,
@@ -162,6 +163,17 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             return
 
         self._logger.info(f"query.data={query.data}")
+        if isinstance(query.data, InvalidCallbackData):
+            # A button from before the last restart: the arbitrary-callback-
+            # data cache is in-memory, so stale keyboards can't be resolved.
+            self._logger.info("Ignoring callback from a stale keyboard")
+            with contextlib.suppress(Exception):
+                await query.answer(
+                    "This button has expired — please re-run the command.",
+                    show_alert=True,
+                )
+            return
+
         callback_data: CallbackData = cast(CallbackData, query.data)
         cid = callback_data.callback_id
 

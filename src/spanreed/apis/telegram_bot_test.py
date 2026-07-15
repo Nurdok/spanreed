@@ -1,11 +1,36 @@
 import asyncio
 import json
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from spanreed.apis.telegram_bot import TelegramBotApi, OUTBOUND_QUEUE_MAX
+from telegram.ext import InvalidCallbackData
+
+from spanreed.apis.telegram_bot import (
+    TelegramBotApi,
+    TelegramBotPlugin,
+    OUTBOUND_QUEUE_MAX,
+)
+from spanreed.plugin import Plugin
 from spanreed.test_utils import FakeRedis
 from spanreed.user import User
+
+
+def test_stale_callback_data_answered_not_crashed() -> None:
+    """A button press from a pre-restart keyboard yields InvalidCallbackData;
+    the handler must answer the query instead of raising AttributeError."""
+    Plugin.reset_registry()
+    plugin = TelegramBotPlugin()
+
+    update = MagicMock()
+    query = AsyncMock()
+    query.data = InvalidCallbackData()
+    update.callback_query = query
+    context = MagicMock()
+
+    asyncio.run(plugin.handle_callback_query(update, context))
+
+    query.answer.assert_awaited_once()
+    query.delete_message.assert_not_called()
 
 
 @patch("spanreed.apis.telegram_bot.redis_api", new_callable=FakeRedis)
