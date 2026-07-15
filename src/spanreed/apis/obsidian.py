@@ -7,6 +7,8 @@ import datetime
 import dataclasses
 import base64
 
+from telegram import Message
+
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.storage import redis_api
@@ -29,6 +31,7 @@ class ObsidianApi:
     def __init__(self, user: User) -> None:
         self._logger = logging.getLogger(__name__)
         self._user = user
+        self._progress_message: Message | None = None
 
     @classmethod
     async def for_user(cls, user: User) -> "ObsidianApi":
@@ -59,7 +62,7 @@ class ObsidianApi:
                 self._progress_message = await bot.send_message(text, parse_html=False)
             else:
                 try:
-                    await self._progress_message.edit_text(text)
+                    await bot.edit_message_text(self._progress_message, text)
                 except Exception:
                     pass  # telegram raises if text hasn't changed
             await asyncio.sleep(3)
@@ -139,8 +142,9 @@ class ObsidianApi:
                 # Final attempt failed
                 if self._progress_message is not None:
                     try:
-                        await self._progress_message.edit_text(
-                            "❌ Obsidian didn't respond"
+                        bot = await TelegramBotApi.for_user(self._user)
+                        await bot.edit_message_text(
+                            self._progress_message, "❌ Obsidian didn't respond"
                         )
                     except Exception:
                         pass
@@ -154,7 +158,8 @@ class ObsidianApi:
         # Clean up progress message on success
         if self._progress_message is not None:
             try:
-                await self._progress_message.delete()
+                bot = await TelegramBotApi.for_user(self._user)
+                await bot.delete_message(self._progress_message)
             except Exception:
                 pass
 
@@ -171,7 +176,7 @@ class ObsidianApi:
             )
             if len(msg) > 1500:
                 msg = msg[:1500] + " …(truncated)"
-            bot: TelegramBotApi = await TelegramBotApi.for_user(self._user)
+            bot = await TelegramBotApi.for_user(self._user)
             await bot.send_message(msg)
             result: Any = response.get("result")
             if result == "file not found":

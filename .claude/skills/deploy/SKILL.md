@@ -62,7 +62,7 @@ scanner noise AND very chatty Obsidian watchdog DEBUG lines — filter both.
 Note the loop var is `mres`, not `status` (zsh read-only).
 
 ```
-ssh -o BatchMode=yes root@spanreed.ink 'deadline=$((SECONDS+90)); mres=TIMEOUT; while [ $SECONDS -lt $deadline ]; do log=$(journalctl -u spanreed -S -3m --no-pager); if printf "%s" "$log" | grep -qE "ModuleNotFoundError|ImportError"; then mres=FATAL; break; fi; if printf "%s" "$log" | grep -q "Started polling"; then mres=OK; break; fi; sleep 3; done; echo "MONITOR_RESULT=$mres"; echo "SERVICE=$(systemctl is-active spanreed)"; echo "=== startup markers ==="; journalctl -u spanreed -S -3m --no-pager | grep -iE "Running [0-9]+ plugins|Started polling|outbound-message consumer|crashed for user|Outbound delivery deferred|ModuleNotFoundError|ImportError" | tail -40'
+ssh -o BatchMode=yes root@spanreed.ink 'deadline=$((SECONDS+90)); mres=TIMEOUT; while [ $SECONDS -lt $deadline ]; do log=$(journalctl -u spanreed -S -3m --no-pager); if printf "%s" "$log" | grep -qE "ModuleNotFoundError|ImportError"; then mres=FATAL; break; fi; if printf "%s" "$log" | grep -q "Started polling"; then mres=OK; break; fi; sleep 3; done; echo "MONITOR_RESULT=$mres"; echo "SERVICE=$(systemctl is-active spanreed)"; echo "=== startup markers ==="; journalctl -u spanreed -S -3m --no-pager | grep -iE "Running [0-9]+ plugins|Started polling|Started outbound|crashed for user|Outbound delivery deferred|Flood control|ModuleNotFoundError|ImportError" | tail -40'
 ```
 
 Interpret the result — a plain `Traceback` is NOT necessarily a deploy
@@ -72,8 +72,9 @@ the deploy on:
 **Deploy succeeded when all of:**
 - `MONITOR_RESULT=OK` and `SERVICE=active`
 - `Running N plugins` appears and startup reached `Started polling`
-- `Started outbound-message consumer for user ...` (the durable-queue
-  consumers came up)
+- `Started outbound dispatcher for user ...` (the per-user send dispatchers
+  came up; before 2026-07 this marker read `Started outbound-message
+  consumer`)
 - **no** `ModuleNotFoundError` / `ImportError` — especially
   `No module named 'aiolimiter'`, which means `poetry install` didn't take.
 
