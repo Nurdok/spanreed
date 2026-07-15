@@ -37,9 +37,7 @@ class EndPluginRun(Exception):
 
 
 class AsyncContextManager:
-    async def __aenter__(
-        self, *args: Any, **kwargs: Any
-    ) -> "AsyncContextManager":
+    async def __aenter__(self, *args: Any, **kwargs: Any) -> "AsyncContextManager":
         return self
 
     async def __aexit__(self, *args: Any, **kwargs: Any) -> None:
@@ -53,9 +51,7 @@ def patch_telegram_bot(
         f: Callable[..., None],
     ) -> Callable[..., None]:
         def f_with_patched_telegram_bot(*args: list, **kwargs: dict) -> Any:
-            with patch(
-                f"{target_package}.TelegramBotApi", autospec=True
-            ) as mock_bot:
+            with patch(f"{target_package}.TelegramBotApi", autospec=True) as mock_bot:
                 mock_bot.for_user = AsyncMock(return_value=mock_bot)
 
                 mock_bot.user_interaction = MagicMock(AsyncContextManager())
@@ -79,9 +75,7 @@ def patch_obsidian(
         f: Callable[..., None],
     ) -> Callable[..., None]:
         def f_with_patched_obsidian(*args: list, **kwargs: dict) -> Any:
-            with patch(
-                f"{target_package}.ObsidianApi", autospec=True
-            ) as mock_obsidian:
+            with patch(f"{target_package}.ObsidianApi", autospec=True) as mock_obsidian:
                 mock_obsidian.for_user = AsyncMock(return_value=mock_obsidian)
 
                 mock_obsidian.safe_generate_today_note = AsyncMock()
@@ -103,6 +97,56 @@ def patch_obsidian(
         return f_with_patched_obsidian
 
     return patch_obsidian_in_target_package
+
+
+class FakeRedis:
+    """In-memory stand-in for the Redis list ops the outbound queues use.
+
+    Lists are modeled head-first (index 0 == left/head), matching Redis:
+    LPUSH inserts at the head, so the tail is the oldest element.
+    """
+
+    def __init__(self) -> None:
+        self.lists: dict[str, list] = {}
+
+    async def lpush(self, key: str, *values: Any) -> int:
+        lst = self.lists.setdefault(key, [])
+        for value in values:
+            lst.insert(0, value)
+        return len(lst)
+
+    async def rpush(self, key: str, *values: Any) -> int:
+        lst = self.lists.setdefault(key, [])
+        lst.extend(values)
+        return len(lst)
+
+    async def lpop(self, key: str) -> Any | None:
+        lst = self.lists.get(key, [])
+        return lst.pop(0) if lst else None
+
+    async def ltrim(self, key: str, start: int, end: int) -> bool:
+        lst = self.lists.get(key, [])
+        self.lists[key] = lst[start : end + 1]
+        return True
+
+    async def rpoplpush(self, src: str, dst: str) -> Any | None:
+        lst = self.lists.get(src, [])
+        if not lst:
+            return None
+        value = lst.pop()  # tail == oldest
+        self.lists.setdefault(dst, []).insert(0, value)
+        return value
+
+    async def brpoplpush(self, src: str, dst: str, timeout: int = 0) -> Any | None:
+        return await self.rpoplpush(src, dst)
+
+    async def lrem(self, key: str, count: int, value: Any) -> int:
+        lst = self.lists.get(key, [])
+        removed = 0
+        while value in lst and (count == 0 or removed < count):
+            lst.remove(value)
+            removed += 1
+        return removed
 
 
 async def async_return_false(*_args: Any, **_kwargs: Any) -> bool:

@@ -46,9 +46,7 @@ class SpanreedMonitorPlugin(Plugin):
             while True:
                 with suppress(asyncio.TimeoutError, redis.ConnectionError):
                     async with asyncio.timeout(interval.total_seconds()):
-                        _, exception = await redis_api.blpop(
-                            self.EXCEPTION_QUEUE_NAME
-                        )
+                        _, exception = await redis_api.blpop(self.EXCEPTION_QUEUE_NAME)
                         await bot.notify(
                             f"Exception retrieved from storage:\n\n"
                             f"```python\n{str(exception.decode('utf-8'))}\n```",
@@ -60,10 +58,13 @@ class SpanreedMonitorPlugin(Plugin):
         except asyncio.CancelledError:
             self._logger.info("Spanreed Monitor cancelled.")
             # Best-effort immediate send: the process (and the outbound
-            # consumer) is going away, so a queued message wouldn't be
-            # delivered until the next startup.
+            # dispatcher) is going away, so a queued message wouldn't be
+            # delivered until the next startup. The timeout covers the case
+            # where the dispatcher task was already cancelled and the send
+            # would otherwise wait forever.
             with suppress(Exception):
-                await bot.send_message("Spanreed is shutting down.")
+                async with asyncio.timeout(5):
+                    await bot.send_message("Spanreed is shutting down.")
 
     async def _monitor_obsidian_plugin(self, user: User) -> None:
         from spanreed.apis.obsidian import ObsidianPlugin
@@ -93,8 +94,7 @@ class SpanreedMonitorPlugin(Plugin):
             )
             if (
                 time_since_last_watchdog > base_timeout
-                and time_since_last_watchdog_message
-                > datetime.timedelta(minutes=30)
+                and time_since_last_watchdog_message > datetime.timedelta(minutes=30)
             ):
                 await bot.send_message("Obsidian plugin watchdog timeout.")
                 last_watchdog_message = datetime.datetime.now()
@@ -103,41 +103,32 @@ class SpanreedMonitorPlugin(Plugin):
                 timeout -= time_since_last_watchdog
 
             with suppress(asyncio.TimeoutError):
-                self._logger.debug(f"Waiting for event on {queue_name} with timeout {timeout}")
+                self._logger.debug(
+                    f"Waiting for event on {queue_name} with timeout {timeout}"
+                )
                 async with asyncio.timeout(timeout.total_seconds()):
                     _, event_json = await redis_api.blpop(
                         queue_name,
                     )
                     event = json.loads(event_json)
-                    self._logger.info(
-                        f"Obsidian plugin event received: {event}"
-                    )
+                    self._logger.info(f"Obsidian plugin event received: {event}")
                     if event["kind"] == "error":
                         self._logger.info(f"Obsidian plugin error: {event}")
-                        if (
-                            event["message"]
-                            in self.OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST
-                        ):
+                        if event["message"] in self.OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST:
                             continue
                         time_since_last_obsidian_error_message = (
-                            datetime.datetime.now()
-                            - last_obsidian_error_message
+                            datetime.datetime.now() - last_obsidian_error_message
                         )
-                        if (
-                            time_since_last_obsidian_error_message
-                            > datetime.timedelta(minutes=30)
+                        if time_since_last_obsidian_error_message > datetime.timedelta(
+                            minutes=30
                         ):
                             await redis_api.lpush(
                                 self.EXCEPTION_QUEUE_NAME,
                                 f"Obsidian plugin error: {event}",
                             )
-                            last_obsidian_error_message = (
-                                datetime.datetime.now()
-                            )
+                            last_obsidian_error_message = datetime.datetime.now()
                     elif event["kind"] == "watchdog":
-                        self._logger.debug(
-                            "Obsidian plugin watchdog event received."
-                        )
+                        self._logger.debug("Obsidian plugin watchdog event received.")
                         time_since_last_watchdog = datetime.timedelta()
                         last_watchdog_message = datetime.datetime.now()
 
@@ -170,12 +161,8 @@ async def suppress_and_log_exception(
             did_suppress.set(False)
             raise
         did_suppress.set(True)
-        exception_str = "".join(
-            traceback.format_exception(type(e), e, None, limit=3)
-        )
+        exception_str = "".join(traceback.format_exception(type(e), e, None, limit=3))
         logger.exception(f"Suppressed exception")
-        await redis_api.lpush(
-            SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME, exception_str
-        )
+        await redis_api.lpush(SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME, exception_str)
     else:
         did_suppress.set(False)

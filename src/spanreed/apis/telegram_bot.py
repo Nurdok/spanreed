@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator
 
 from spanreed.plugin import Plugin
 from spanreed.storage import redis_api
+from spanreed.apis.telegram_dispatcher import OutboundDispatcher
 from spanreed.user import User
 
 from telegram import (
@@ -20,13 +21,6 @@ from telegram import (
     InlineKeyboardMarkup,
     constants,
     Message,
-)
-from telegram.error import (
-    RetryAfter,
-    TimedOut,
-    NetworkError,
-    BadRequest,
-    Forbidden,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -46,13 +40,13 @@ USER_INTERACTION_LOCKS = "user-interaction-locks"
 USER_INTERACTION_QUEUES = "user-interaction-queue"
 CURRENT_USER_INTERACTION = "current-user-interaction"
 USER_MESSAGE_CALLBACK_ID = "user-message-callback-id"
+OUTBOUND_DISPATCHERS = "outbound-dispatchers"
 
-# Durable outbound notification queue. `notify()` enqueues here; a per-user
-# consumer (started by TelegramBotPlugin) drains it, so notifications survive
-# restarts and Telegram flood-control bans instead of being dropped.
+# Durable outbound notification queue. `notify()` enqueues here; the per-user
+# OutboundDispatcher (see telegram_dispatcher.py) drains it as its
+# low-priority lane, so notifications survive restarts and Telegram
+# flood-control bans instead of being dropped.
 OUTBOUND_QUEUE_MAX = 200  # keep newest N; drop older on overflow
-OUTBOUND_INITIAL_BACKOFF_S = 60
-OUTBOUND_MAX_BACKOFF_S = 30 * 60
 
 
 class CallbackData(NamedTuple):
@@ -103,36 +97,28 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             TelegramBotApi._application_initialized.set()
             TelegramBotApi._application = application
 
-            # Start the durable outbound-message consumer for each user so
-            # queued notifications (see TelegramBotApi.notify) get delivered.
-            await self._start_outbound_consumers()
+            # Start the per-user send dispatcher for each user so queued
+            # notifications (see TelegramBotApi.notify) get delivered.
+            await self._start_dispatchers()
 
             try:
                 # Wait for cancellation so we can perform the cleanup.
                 self._logger.info("Waiting for cancellation...")
                 while True:
-                    await asyncio.sleep(
-                        datetime.timedelta(hours=1).total_seconds()
-                    )
+                    await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
             except asyncio.CancelledError:
-                self._logger.exception(
-                    "Cancellation received. Stopping updater..."
-                )
+                self._logger.exception("Cancellation received. Stopping updater...")
                 await application.updater.stop()
                 self._logger.info("Stopping application...")
                 await application.stop()
                 self._logger.info("Stopped")
                 raise
 
-    async def _start_outbound_consumers(self) -> None:
+    async def _start_dispatchers(self) -> None:
         for user in await self.get_users():
             bot = await TelegramBotApi.for_user(user)
-            task = asyncio.create_task(bot.deliver_outbound_messages())
-            self.background_tasks.add(task)
-            task.add_done_callback(self.background_tasks.discard)
-            self._logger.info(
-                f"Started outbound-message consumer for user {user.id}"
-            )
+            await bot._get_dispatcher()
+            self._logger.info(f"Started outbound dispatcher for user {user.id}")
 
     async def setup_application(
         self,
@@ -147,17 +133,17 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         application = (
             app_builder.token(os.environ["TELEGRAM_API_TOKEN"])
             .arbitrary_callback_data(True)
-            # Pace outbound requests to Telegram's limits (~1 msg/s per chat,
-            # ~30/s overall) so bursts don't trip flood control, and retry the
-            # occasional RetryAfter transparently. This prevents the multi-hour
-            # bans we'd otherwise accumulate by ignoring 429s.
-            .rate_limiter(AIORateLimiter(max_retries=3))
+            # Overall-rate safety net only (~30/s across all chats) for the
+            # rare call that doesn't go through the OutboundDispatcher.
+            # max_retries MUST stay 0: sleeping exactly `retry_after` inside
+            # the limiter synchronizes every blocked send to wake at the ban's
+            # expiry instant, re-tripping a fresh ban (the 23:01 cycle). The
+            # dispatcher owns RetryAfter handling and resumes with jitter.
+            .rate_limiter(AIORateLimiter(max_retries=0))
             .build()
         )
 
-        application.add_handler(
-            CallbackQueryHandler(self.handle_callback_query)
-        )
+        application.add_handler(CallbackQueryHandler(self.handle_callback_query))
         application.add_handler(CommandHandler("do", self.show_command_menu))
         application.add_handler(CommandHandler("start", self.start))
         application.add_handler(
@@ -191,7 +177,14 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         event: asyncio.Event = context.bot_data[CALLBACK_EVENTS][cid]
         event.set()
 
-        await query.delete_message()
+        # Route the delete through the user's send dispatcher; failure just
+        # leaves the keyboard message behind, so don't let it kill the
+        # handler.
+        try:
+            bot = TelegramBotApi(callback_data.user_id)
+            await bot._dispatch("delete_choice_message", query.delete_message)
+        except Exception:
+            self._logger.exception("Failed to delete choice message")
 
     async def get_user_by_telegram_user_id(
         self, telegram_user_id: int, send_message_on_failure: bool = True
@@ -218,17 +211,13 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             )
         raise KeyError(f"User not found for {telegram_user_id=}")
 
-    async def start(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_user is None:
             self._logger.error("No user found in update")
             return
 
         telegram_user_id: int = update.effective_user.id
-        self._logger.info(
-            f"Got a /start command from user {telegram_user_id=}"
-        )
+        self._logger.info(f"Got a /start command from user {telegram_user_id=}")
         existing_user: Optional[User] = None
         with contextlib.suppress(KeyError):
             existing_user = await self.get_user_by_telegram_user_id(
@@ -337,9 +326,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             )
 
             self._logger.info(f"Inside internal task for /do for {user}")
-            self._logger.info(
-                f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}"
-            )
+            self._logger.info(f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}")
             async with suppress_and_log_exception(BaseException):
                 bot = await TelegramBotApi.for_user(user)
 
@@ -348,26 +335,19 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     PLUGIN_COMMANDS, {}
                 ).items():
                     if plugin_canonical_name not in user.plugins:
-                        self._logger.debug(
-                            f"Skipping {plugin_canonical_name=}"
-                        )
+                        self._logger.debug(f"Skipping {plugin_canonical_name=}")
                         continue
 
-                    self._logger.info(
-                        f"Adding commands for {plugin_canonical_name=}"
-                    )
+                    self._logger.info(f"Adding commands for {plugin_canonical_name=}")
 
                     for command in commands:
                         self._logger.info(f"Adding command {command=}")
                         shown_commands.append(command)
 
-                async with bot.user_interaction(
-                    priority=UserInteractionPriority.HIGH
-                ):
+                async with bot.user_interaction(priority=UserInteractionPriority.HIGH):
                     choice = await bot.request_user_choice(
                         "Please choose a command to run:",
-                        [command.text for command in shown_commands]
-                        + ["Cancel"],
+                        [command.text for command in shown_commands] + ["Cancel"],
                     )
                     if choice == len(shown_commands):
                         return
@@ -382,9 +362,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
 
         task = asyncio.create_task(show_command_menu_task())
         self._do_tasks[telegram_user_id] = task
-        task.add_done_callback(
-            lambda _: self._do_tasks.pop(telegram_user_id, None)
-        )
+        task.add_done_callback(lambda _: self._do_tasks.pop(telegram_user_id, None))
 
     async def handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -489,9 +467,7 @@ class TelegramBotApi:
         self._preempted = False
 
     @classmethod
-    async def register_command(
-        cls, plugin: Plugin, command: PluginCommand
-    ) -> None:
+    async def register_command(cls, plugin: Plugin, command: PluginCommand) -> None:
         _logger = logging.getLogger(cls.__name__)
         _logger.info(f"Registering command '{command.text}'")
         app = await cls.get_application()
@@ -516,9 +492,7 @@ class TelegramBotApi:
         _logger.info("Application initialized")
         user_config: UserConfig = await TelegramBotPlugin.get_config(user)
         _logger.info(f"Getting TelegramBotApi for {user=} with {user_config=}")
-        return TelegramBotApi(
-            (await TelegramBotPlugin.get_config(user)).user_id
-        )
+        return TelegramBotApi((await TelegramBotPlugin.get_config(user)).user_id)
 
     @classmethod
     def set_application(cls, application: Application) -> None:
@@ -527,24 +501,62 @@ class TelegramBotApi:
         cls._application = application
         cls._application_initialized.set()
 
+    async def _get_dispatcher(self) -> OutboundDispatcher:
+        """Get (lazily creating and starting) this chat's send dispatcher.
+
+        Stored in ``bot_data`` so the many short-lived TelegramBotApi
+        instances for a user share one dispatcher, and created on first use
+        so users registered after startup get one too.
+        """
+        app = await self.get_application()
+        dispatchers: dict[int, tuple[OutboundDispatcher, asyncio.Task]] = (
+            app.bot_data.setdefault(OUTBOUND_DISPATCHERS, {})
+        )
+        entry = dispatchers.get(self._telegram_user_id)
+        if entry is None:
+            dispatcher = OutboundDispatcher(
+                chat_id=self._telegram_user_id,
+                redis=redis_api,
+                send_text=self._send_text_raw,
+            )
+            # The task reference is kept alive by the bot_data entry.
+            task = asyncio.create_task(dispatcher.run())
+            entry = (dispatcher, task)
+            dispatchers[self._telegram_user_id] = entry
+        return entry[0]
+
+    async def _dispatch(
+        self, description: str, api_call: Callable[[], Awaitable]
+    ) -> object:
+        """Run a Telegram API call through this chat's send dispatcher."""
+        dispatcher = await self._get_dispatcher()
+        return await dispatcher.enqueue(description, api_call)
+
     async def send_document(self, file_name: str, data: bytes) -> Message:
         app: Application = await self.get_application()
+
+        async def api_call() -> Message:
+            return cast(
+                Message,
+                await app.bot.send_document(
+                    chat_id=self._telegram_user_id,
+                    document=data,
+                    filename=file_name,
+                ),
+            )
+
         return cast(
-            Message,
-            await app.bot.send_document(
-                chat_id=self._telegram_user_id,
-                document=data,
-                filename=file_name,
-            ),
+            Message, await self._dispatch(f"send_document {file_name}", api_call)
         )
 
-    async def send_message(
+    async def _send_text_raw(
         self,
         text: str,
-        *,
         parse_html: bool = True,
         parse_markdown: bool = False,
     ) -> Message:
+        """The actual sendMessage API call. Only the dispatcher's own lanes
+        may call this directly; everything else goes through send_message."""
         app: Application = await self.get_application()
         parse_mode = None
         if parse_html:
@@ -560,6 +572,29 @@ class TelegramBotApi:
                     parse_mode=parse_mode,
                 ),
             )
+
+    async def send_message(
+        self,
+        text: str,
+        *,
+        parse_html: bool = True,
+        parse_markdown: bool = False,
+    ) -> Message:
+        return cast(
+            Message,
+            await self._dispatch(
+                "send_message",
+                lambda: self._send_text_raw(text, parse_html, parse_markdown),
+            ),
+        )
+
+    async def delete_message(self, message: Message) -> bool:
+        """Delete a message via the dispatcher (never call message.delete()
+        directly — Message-object methods bypass send pacing)."""
+        return cast(bool, await self._dispatch("delete_message", message.delete))
+
+    async def edit_message_text(self, message: Message, text: str) -> None:
+        await self._dispatch("edit_message_text", lambda: message.edit_text(text))
 
     def _outbound_key(self) -> str:
         return f"outbound-messages:{self._telegram_user_id}"
@@ -593,9 +628,7 @@ class TelegramBotApi:
                 "text": text,
                 "parse_html": parse_html,
                 "parse_markdown": parse_markdown,
-                "enqueued_at": datetime.datetime.now(
-                    datetime.timezone.utc
-                ).isoformat(),
+                "enqueued_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
         )
         key = self._outbound_key()
@@ -605,109 +638,18 @@ class TelegramBotApi:
         # newest and drops the oldest undelivered ones.
         await redis_api.ltrim(key, 0, OUTBOUND_QUEUE_MAX - 1)
 
-    async def deliver_outbound_messages(self) -> None:
-        """Drain the durable outbound queue for this user, forever.
-
-        Started once per user by TelegramBotPlugin. Reserves each message
-        into an inflight list (crash-safe), delivers it, and only then acks
-        by removing it. Backs off on transient failures (flood control,
-        timeouts, network) so a ban doesn't turn into a hammering loop, and
-        drops messages that are permanently undeliverable (bad markup, etc.)
-        so a single poison message can't wedge the queue.
-        """
-        await self._recover_inflight()
-        while True:
-            try:
-                # Reserve the oldest message (queue tail) into the inflight
-                # list atomically, so a crash mid-send can't lose it.
-                raw = await redis_api.brpoplpush(
-                    self._outbound_key(),
-                    self._outbound_inflight_key(),
-                    timeout=30,
-                )
-                if raw is None:
-                    continue
-                await self._deliver_one(raw)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Never let the consumer die (e.g. a Redis blip); back off
-                # briefly and keep going.
-                self._logger.exception(
-                    "Outbound delivery loop error; retrying in 5s."
-                )
-                await asyncio.sleep(5)
-
-    async def _recover_inflight(self) -> None:
-        """Return messages reserved but not acked before a crash to the queue.
-
-        Pushes them back on the right (oldest) end so they keep FIFO priority.
-        """
-        while (
-            item := await redis_api.lpop(self._outbound_inflight_key())
-        ) is not None:
-            await redis_api.rpush(self._outbound_key(), item)
-
-    async def _deliver_one(self, raw: bytes | str) -> None:
-        """Deliver one reserved message, retrying until it sticks or is dropped."""
-        try:
-            message = json.loads(raw)
-            text = message["text"]
-            parse_html = message.get("parse_html", True)
-            parse_markdown = message.get("parse_markdown", False)
-        except (ValueError, KeyError, TypeError):
-            self._logger.exception(
-                f"Dropping malformed outbound entry: {raw!r}"
-            )
-            await redis_api.lrem(self._outbound_inflight_key(), 1, raw)
-            return
-
-        backoff = OUTBOUND_INITIAL_BACKOFF_S
-        while True:
-            try:
-                await self.send_message(
-                    text,
-                    parse_html=parse_html,
-                    parse_markdown=parse_markdown,
-                )
-            except asyncio.CancelledError:
-                raise
-            except (BadRequest, Forbidden):
-                # Permanent (bad markup, message too long, bot blocked):
-                # retrying can't help, so drop it. Caught before the transient
-                # branch because BadRequest is a subclass of NetworkError.
-                self._logger.exception(
-                    f"Dropping undeliverable outbound message: {text!r}"
-                )
-            except (RetryAfter, TimedOut, NetworkError, TimeoutError) as e:
-                # Transient: Telegram is throttling/unreachable. Wait and
-                # retry the *same* message (it stays reserved in inflight).
-                retry_after = getattr(e, "retry_after", None)
-                delay = min(retry_after or backoff, OUTBOUND_MAX_BACKOFF_S)
-                self._logger.warning(
-                    f"Outbound delivery deferred ({e!r}); retrying in {delay}s."
-                )
-                await asyncio.sleep(delay)
-                backoff = min(backoff * 2, OUTBOUND_MAX_BACKOFF_S)
-                continue
-            except Exception:
-                # Any other error (unexpected / non-Telegram): drop rather
-                # than wedge the queue.
-                self._logger.exception(
-                    f"Dropping undeliverable outbound message: {text!r}"
-                )
-            # Delivered or permanently dropped: ack by removing from inflight.
-            await redis_api.lrem(self._outbound_inflight_key(), 1, raw)
-            return
-
     async def send_multiple_messages(
         self, *text: str, delay: int = 1, parse_html: bool = True
     ) -> None:
         app: Application = await self.get_application()
-        for message in text:
+
+        async def typing_action() -> None:
             await app.bot.send_chat_action(
                 self._telegram_user_id, action=constants.ChatAction.TYPING
             )
+
+        for message in text:
+            await self._dispatch("send_chat_action", typing_action)
             await asyncio.sleep(delay)
             await self.send_message(message, parse_html=parse_html)
 
@@ -755,13 +697,19 @@ class TelegramBotApi:
                 keyboard[-1].append(button_to_append)
 
         async def send_message() -> Message:
+            async def api_call() -> Message:
+                return cast(
+                    Message,
+                    await app.bot.send_message(
+                        chat_id=self._telegram_user_id,
+                        text=prompt,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    ),
+                )
+
             return cast(
                 Message,
-                await app.bot.send_message(
-                    chat_id=self._telegram_user_id,
-                    text=prompt,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                ),
+                await self._dispatch("send_choice_prompt", api_call),
             )
 
         # Wait for the user to select a choice.
@@ -814,7 +762,7 @@ class TelegramBotApi:
                         await callback_event.wait()
                         break
                 except asyncio.TimeoutError:
-                    if not await message.delete():
+                    if not await self.delete_message(message):
                         raise RuntimeError("Failed to delete message")
 
                     queues = await self._get_user_interaction_queues()
@@ -822,7 +770,7 @@ class TelegramBotApi:
                         len(queue) for queue in queues.values()
                     )
                     if pending_message is not None:
-                        await pending_message.delete()
+                        await self.delete_message(pending_message)
                     pending_message = await self.send_message(
                         f"You have {pending_interactions + 1} pending interactions, this is the first one:"
                     )
@@ -830,11 +778,15 @@ class TelegramBotApi:
         except asyncio.CancelledError:
             self._logger.info(f"Callback {callback_id} was cancelled")
             if message is not None:
-                if not await message.delete():
-                    self._logger.error("Failed to delete message")
+                # Suppress send failures (e.g. RetryAfter from the
+                # dispatcher during a ban) so they can't mask the
+                # CancelledError we must re-raise.
+                with contextlib.suppress(Exception):
+                    if not await self.delete_message(message):
+                        self._logger.error("Failed to delete message")
             raise
         if pending_message is not None:
-            await pending_message.delete()
+            await self.delete_message(pending_message)
         self._logger.info(f"Callback {callback_id} done")
         return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
 
@@ -851,9 +803,7 @@ class TelegramBotApi:
         app = await self.get_application()
         return app.bot_data.setdefault(  # type: ignore
             USER_INTERACTION_QUEUES, {}
-        ).setdefault(
-            self._telegram_user_id, self._get_default_priority_queue()
-        )
+        ).setdefault(self._telegram_user_id, self._get_default_priority_queue())
 
     async def _get_current_user_interaction(self) -> UserInteraction | None:
         app = await self.get_application()
@@ -900,9 +850,7 @@ class TelegramBotApi:
 
         for priority in UserInteractionPriority:  # high to low
             if interaction_queue[priority]:
-                user_interaction: UserInteraction = interaction_queue[
-                    priority
-                ].pop(0)
+                user_interaction: UserInteraction = interaction_queue[priority].pop(0)
                 self._logger.info(f"Allowing {user_interaction=}")
                 user_interaction.allow_to_run()
                 await self._set_current_user_interaction(user_interaction)
@@ -956,17 +904,13 @@ class TelegramBotApi:
         self, user_interaction: UserInteraction
     ) -> None:
         user_interaction_queues = await self._get_user_interaction_queues()
-        user_interaction_queues[user_interaction.priority].append(
-            user_interaction
-        )
+        user_interaction_queues[user_interaction.priority].append(user_interaction)
 
     async def _remove_from_user_interaction_queue(
         self, user_interaction: UserInteraction
     ) -> None:
         user_interaction_queues = await self._get_user_interaction_queues()
-        user_interaction_queues[user_interaction.priority].remove(
-            user_interaction
-        )
+        user_interaction_queues[user_interaction.priority].remove(user_interaction)
 
     @contextlib.asynccontextmanager
     async def user_interaction(
@@ -996,9 +940,7 @@ class TelegramBotApi:
         async with lock:
             try:
                 asyncio.create_task(
-                    self._try_to_allow_next_user_interaction(
-                        user_interaction.timeout
-                    )
+                    self._try_to_allow_next_user_interaction(user_interaction.timeout)
                 )
                 yield
             except asyncio.CancelledError:
