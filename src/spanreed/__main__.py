@@ -36,6 +36,9 @@ def setup_logger() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+    # The audible library logs entire API response bodies at DEBUG
+    # (~hundreds of KB per library fetch, which book-progress does hourly).
+    logging.getLogger("audible").setLevel(logging.WARNING)
 
 
 def load_plugins() -> List[Plugin]:
