@@ -45,9 +45,15 @@ class UserInteraction:
         self,
         user_id: int,
         priority: UserInteractionPriority,
+        scope: Any | None = None,
     ) -> None:
         self.user_id = user_id
         self.priority = priority
+        # A SurfaceScope (stored opaquely to avoid an import cycle with the
+        # surface module): which surfaces this flow's traffic goes to.
+        # None = broadcast. Sibling tasks (e.g. the vault-RPC progress bar)
+        # look it up via get_current_scope, not task-local state.
+        self.scope = scope
         self.event = asyncio.Event()
         # This is the timeout for the actual interaction, not for waiting in
         # the queue. It is enforced if there's another interaction waiting,
@@ -97,6 +103,7 @@ def reset_state_for_tests() -> None:
     _current_input_prompt.clear()
     _tombstones.clear()
     _user_flow_tasks.clear()
+    _user_flow_origins.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +116,14 @@ def reset_state_for_tests() -> None:
 # would queue forever behind an abandoned open /do menu (HIGH does not
 # preempt HIGH).
 _user_flow_tasks: dict[int, asyncio.Task] = {}
+# Obsidian instance id a flow originated from (None for Telegram flows), so
+# the surface can cancel flows whose origin instance died or toggled off.
+_user_flow_origins: dict[int, str | None] = {}
 
 
-def start_user_flow(user_id: int, coro: Coroutine) -> asyncio.Task:
+def start_user_flow(
+    user_id: int, coro: Coroutine, *, origin_instance: str | None = None
+) -> asyncio.Task:
     """Start a user-initiated flow, cancelling the user's previous one."""
     previous = _user_flow_tasks.get(user_id)
     if previous is not None and not previous.done():
@@ -119,13 +131,55 @@ def start_user_flow(user_id: int, coro: Coroutine) -> asyncio.Task:
         previous.cancel()
     task = asyncio.create_task(coro)
     _user_flow_tasks[user_id] = task
+    _user_flow_origins[user_id] = origin_instance
 
     def _cleanup(_: asyncio.Task) -> None:
         if _user_flow_tasks.get(user_id) is task:
             del _user_flow_tasks[user_id]
+            _user_flow_origins.pop(user_id, None)
 
     task.add_done_callback(_cleanup)
     return task
+
+
+def cancel_user_flow_for_instance(instance_id: str) -> list[int]:
+    """Cancel any flow that originated from the given Obsidian instance.
+
+    Called on toggle-off and on origin-instance presence expiry (design
+    §2.5 step 5) so a dead origin can't squat on the interaction slot,
+    re-prompting hourly into a surface that no longer exists. Returns the
+    affected user ids.
+    """
+    cancelled: list[int] = []
+    for user_id, origin in list(_user_flow_origins.items()):
+        if origin != instance_id:
+            continue
+        task = _user_flow_tasks.get(user_id)
+        if task is not None and not task.done():
+            _logger.info(
+                f"Cancelling user {user_id} flow: origin instance"
+                f" {instance_id} is gone"
+            )
+            task.cancel()
+            cancelled.append(user_id)
+    return cancelled
+
+
+def get_user_flow_origin_instance(user_id: int) -> str | None:
+    return _user_flow_origins.get(user_id)
+
+
+def get_active_flow_origins() -> dict[int, str]:
+    """user_id -> origin instance id, for flows with an Obsidian origin.
+
+    The surface's housekeeping sweep uses this to cancel flows whose origin
+    instance's presence expired.
+    """
+    return {
+        user_id: origin
+        for user_id, origin in _user_flow_origins.items()
+        if origin is not None
+    }
 
 
 def get_user_interaction_lock(user_id: int) -> asyncio.Lock:
@@ -134,6 +188,12 @@ def get_user_interaction_lock(user_id: int) -> asyncio.Lock:
 
 def _get_user_interaction_queues(user_id: int) -> UserInteractionQueues:
     return _queues.setdefault(user_id, {prio: [] for prio in UserInteractionPriority})
+
+
+def get_current_scope(user_id: int) -> Any | None:
+    """The SurfaceScope of the user's currently-running interaction."""
+    current = _current.get(user_id)
+    return current.scope if current is not None else None
 
 
 def has_active_user_interaction(user_id: int) -> bool:
@@ -252,6 +312,7 @@ async def user_interaction(
     *,
     propagate_preemption: bool = True,
     priority: UserInteractionPriority = UserInteractionPriority.NORMAL,
+    scope: Any | None = None,
 ) -> AsyncGenerator[None, None]:
     """Serialize conversations per user: one interaction at a time.
 
@@ -259,7 +320,7 @@ async def user_interaction(
     priority, and preemption semantics — keyed by Spanreed user id.
     """
 
-    interaction = UserInteraction(user_id, priority)
+    interaction = UserInteraction(user_id, priority, scope=scope)
 
     def log(msg: str) -> None:
         _logger.info(msg + f" {interaction=}")
@@ -348,6 +409,14 @@ def create_prompt(user_id: int, kind: PromptKind) -> PendingPrompt:
 
 def get_prompt(interaction_id: str) -> PendingPrompt | None:
     return _pending_prompts.get(interaction_id)
+
+
+def get_pending_prompt_for_user(user_id: int) -> PendingPrompt | None:
+    """The user's currently unanswered prompt, if any (for reconnect sync)."""
+    for prompt in _pending_prompts.values():
+        if prompt.user_id == user_id and not prompt.future.done():
+            return prompt
+    return None
 
 
 def get_current_input_prompt(user_id: int) -> PendingPrompt | None:

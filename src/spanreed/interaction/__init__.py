@@ -22,6 +22,7 @@ from spanreed.interaction.surface import (
     Content,
     MessageHandle,
     PromptSpec,
+    SurfaceScope,
     UserInteractionSurface,
 )
 
@@ -34,6 +35,7 @@ __all__ = [
     "PromptDeliveryError",
     "PromptSpec",
     "SurfaceBusyError",
+    "SurfaceScope",
     "UserInteractionApi",
     "UserInteractionPreempted",
     "UserInteractionPriority",

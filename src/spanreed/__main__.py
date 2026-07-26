@@ -15,6 +15,7 @@ from spanreed.plugins.habit_tracker import HabitTrackerPlugin
 from spanreed.plugins.recurring_payments import RecurringPaymentsPlugin
 from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
+from spanreed.plugins.obsidian_surface import ObsidianSurfacePlugin
 from spanreed.plugins.plugin_manager import PluginManagerPlugin
 from spanreed.plugins.web_ui import WebUiPlugin
 from spanreed.plugins.spanreed_monitor import SpanreedMonitorPlugin
@@ -50,6 +51,7 @@ def load_plugins() -> List[Plugin]:
 
     # TODO: Load optional plugins dynamically.
     optional_plugins: list[Plugin] = [
+        ObsidianSurfacePlugin(),
         ObsidianPlugin(),
         TodoistPlugin(),
         ObsidianWebhookPlugin(),

@@ -1,3 +1,4 @@
+import builtins
 import logging
 from typing import Callable, Any, Coroutine
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -122,6 +123,9 @@ class FakeRedis:
 
     def __init__(self) -> None:
         self.lists: dict[str, list] = {}
+        self.strings: dict[str, Any] = {}
+        self.hashes: dict[str, dict] = {}
+        self.sets: dict[str, set] = {}
 
     async def lpush(self, key: str, *values: Any) -> int:
         lst = self.lists.setdefault(key, [])
@@ -140,7 +144,12 @@ class FakeRedis:
 
     async def ltrim(self, key: str, start: int, end: int) -> bool:
         lst = self.lists.get(key, [])
-        self.lists[key] = lst[start : end + 1]
+        # end == -1 means "through the tail" (Redis semantics); Python's
+        # lst[start:0] would wrongly produce [].
+        if end == -1:
+            self.lists[key] = lst[start:] if start != 0 else lst
+        else:
+            self.lists[key] = lst[start : end + 1]
         return True
 
     async def rpoplpush(self, src: str, dst: str) -> Any | None:
@@ -161,6 +170,83 @@ class FakeRedis:
             lst.remove(value)
             removed += 1
         return removed
+
+    # -- string/hash/set ops used by the Obsidian surface protocol --------
+
+    async def set(self, key: str, value: Any, ex: int | None = None) -> bool:
+        self.strings[key] = value
+        return True
+
+    async def get(self, key: str) -> Any | None:
+        return self.strings.get(key)
+
+    async def exists(self, *keys: str) -> int:
+        return sum(1 for key in keys if key in self.strings)
+
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            for store in (self.strings, self.hashes, self.sets, self.lists):
+                if key in store:
+                    del store[key]
+                    removed += 1
+        return removed
+
+    async def incr(self, key: str) -> int:
+        value = int(self.strings.get(key, 0)) + 1
+        self.strings[key] = value
+        return value
+
+    async def hset(self, key: str, field: str, value: Any) -> int:
+        self.hashes.setdefault(key, {})[field] = value
+        return 1
+
+    async def hget(self, key: str, field: str) -> Any | None:
+        return self.hashes.get(key, {}).get(field)
+
+    async def hgetall(self, key: str) -> dict:
+        return dict(self.hashes.get(key, {}))
+
+    async def hdel(self, key: str, *fields: str) -> int:
+        stored = self.hashes.get(key, {})
+        removed = 0
+        for field in fields:
+            if field in stored:
+                del stored[field]
+                removed += 1
+        return removed
+
+    async def sadd(self, key: str, *members: Any) -> int:
+        target = self.sets.setdefault(key, set())
+        added = len({str(m) for m in members} - target)
+        target.update(str(m) for m in members)
+        return added
+
+    async def smembers(self, key: str) -> "builtins.set":
+        return builtins.set(self.sets.get(key, builtins.set()))
+
+    async def srem(self, key: str, *members: Any) -> int:
+        target = self.sets.setdefault(key, set())
+        removed = len(target & {str(m) for m in members})
+        target -= {str(m) for m in members}
+        return removed
+
+    async def lrange(self, key: str, start: int, end: int) -> list:
+        lst = self.lists.get(key, [])
+        if end == -1:
+            return list(lst[start:])
+        return list(lst[start : end + 1])
+
+    async def blpop(
+        self, keys: list[str] | str, timeout: int = 0
+    ) -> tuple[str, Any] | None:
+        if isinstance(keys, str):
+            keys = [keys]
+        for key in keys:
+            lst = self.lists.get(key, [])
+            if lst:
+                return (key, lst.pop(0))
+        return None
 
 
 async def async_return_false(*_args: Any, **_kwargs: Any) -> bool:

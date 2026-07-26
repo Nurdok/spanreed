@@ -24,6 +24,7 @@ from spanreed.interaction.surface import (
     Content,
     MessageHandle,
     PromptSpec,
+    SurfaceScope,
     UserInteractionSurface,
 )
 from spanreed.user import User
@@ -39,8 +40,16 @@ _PROMPT_REPROMPT_INTERVAL = datetime.timedelta(minutes=60)
 class UserInteractionApi:
     _surfaces: list[UserInteractionSurface] = []
 
-    def __init__(self, user: User):
+    def __init__(self, user: User, exclude: frozenset[str] = frozenset()):
         self._user = user
+        self._exclude = exclude
+
+    def excluding(self, *surface_names: str) -> "UserInteractionApi":
+        """A facade whose sends go to all surfaces except the given ones,
+        overriding any ambient flow scope (design §2.4: Obsidian-health
+        traffic must reach the other surfaces even inside an
+        Obsidian-origin flow)."""
+        return UserInteractionApi(self._user, self._exclude | frozenset(surface_names))
 
     @classmethod
     def register_surface(cls, surface: UserInteractionSurface) -> None:
@@ -66,14 +75,31 @@ class UserInteractionApi:
     @classmethod
     def _ensure_default_surfaces(cls) -> None:
         if not cls._surfaces:
+            from spanreed.interaction.obsidian_surface import ObsidianSurface
             from spanreed.interaction.telegram_surface import TelegramSurface
 
             cls._surfaces.append(TelegramSurface())
+            # Inert until an Obsidian instance registers (never reachable).
+            cls._surfaces.append(ObsidianSurface())
+
+    def _in_scope_surfaces(self) -> list[UserInteractionSurface]:
+        """Effective surfaces per design §2.4 scope algebra.
+
+        An explicit ``excluding()`` facade resolves as broadcast-minus-
+        excluded, overriding the ambient flow scope; otherwise the ambient
+        scope of the user's current interaction applies (None = broadcast).
+        """
+        if self._exclude:
+            return [s for s in self._surfaces if s.name not in self._exclude]
+        scope = engine.get_current_scope(self._user.id)
+        if isinstance(scope, SurfaceScope):
+            return [s for s in self._surfaces if scope.includes(s.name)]
+        return list(self._surfaces)
 
     async def _reachable_surfaces(self) -> list[UserInteractionSurface]:
         return [
             surface
-            for surface in self._surfaces
+            for surface in self._in_scope_surfaces()
             if await surface.is_reachable(self._user)
         ]
 
@@ -261,11 +287,13 @@ class UserInteractionApi:
         *,
         propagate_preemption: bool = True,
         priority: UserInteractionPriority = UserInteractionPriority.NORMAL,
+        scope: SurfaceScope | None = None,
     ) -> contextlib.AbstractAsyncContextManager:
         return engine.user_interaction(
             self._user.id,
             propagate_preemption=propagate_preemption,
             priority=priority,
+            scope=scope,
         )
 
     async def has_active_user_interaction(self) -> bool:
