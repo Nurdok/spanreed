@@ -129,6 +129,8 @@ class ObsidianSurfacePlugin(Plugin):
             await self._handle_answer(user, instance_id, payload)
         elif kind == "invoke-command":
             await self._handle_invoke_command(user, instance_id, payload)
+        elif kind == "cancel-flow":
+            await self._handle_cancel_flow(user, payload)
         elif kind == "sync":
             await self._handle_sync(user, instance_id)
         elif kind == "instance-update":
@@ -198,6 +200,28 @@ class ObsidianSurfacePlugin(Plugin):
 
         # Shared slot with /do: newest user-initiated flow wins (design §2.6).
         engine.start_user_flow(user.id, command_flow(), origin_instance=instance_id)
+
+    async def _handle_cancel_flow(self, user: User, payload: dict) -> None:
+        """The user cleared the conversation while a prompt was up: abort
+        the interaction that owns it.
+
+        Validated against the current pending prompt so a stale click can't
+        abort a newer flow. A user-initiated flow is cancelled outright
+        (same path as /do's cancel-and-replace); a proactive broadcast
+        interaction is preempted, so the plugin's UserInteractionPreempted
+        retry policy applies.
+        """
+        interaction_id = payload.get("interaction_id")
+        pending = engine.get_pending_prompt_for_user(user.id)
+        if pending is None or (
+            interaction_id is not None and pending.interaction_id != interaction_id
+        ):
+            self._logger.info("Stale cancel-flow ignored")
+            return
+        if engine.cancel_current_user_flow(user.id):
+            self._logger.info(f"Cancelled user flow for user {user.id}")
+        elif engine.preempt_current_interaction(user.id):
+            self._logger.info(f"Preempted proactive interaction for user {user.id}")
 
     async def _handle_sync(self, user: User, instance_id: str) -> None:
         """Reconnect sync (design §3.2): authoritative state + seq watermark."""

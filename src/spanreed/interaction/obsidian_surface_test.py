@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from spanreed.interaction import commands, engine
 from spanreed.interaction import obsidian_protocol as protocol
 from spanreed.interaction.commands import PluginCommand
-from spanreed.interaction.engine import PromptKind
+from spanreed.interaction.engine import PromptKind, UserInteractionPriority
+from spanreed.interaction.errors import UserInteractionPreempted
 from spanreed.interaction.obsidian_surface import ObsidianSurface
 from spanreed.interaction.surface import Content, PromptSpec, SurfaceScope
 from spanreed.plugin import Plugin
@@ -326,6 +328,106 @@ def test_toggle_off_cancels_origin_flow() -> None:
         await plugin.handle_event(user, "laptop", "instance-update", {"enabled": False})
         await asyncio.sleep(0.01)
         assert task.cancelled()
+
+    with patcher:
+        asyncio.run(run())
+
+
+def test_cancel_flow_cancels_active_user_flow() -> None:
+    fake, patcher = _patch_redis()
+    plugin = _make_plugin()
+    user = mock_user_find_by_id(USER_ID)
+
+    async def run() -> None:
+        started = asyncio.Event()
+
+        async def flow() -> None:
+            started.set()
+            engine.create_prompt(USER_ID, PromptKind.CHOICE)
+            await asyncio.sleep(30)
+
+        task = engine.start_user_flow(USER_ID, flow(), origin_instance="laptop")
+        await started.wait()
+        await asyncio.sleep(0.01)
+        pending = engine.get_pending_prompt_for_user(USER_ID)
+        assert pending is not None
+
+        await plugin.handle_event(
+            user,
+            "laptop",
+            "cancel-flow",
+            {"interaction_id": pending.interaction_id},
+        )
+        await asyncio.sleep(0.01)
+        assert task.cancelled()
+
+    with patcher:
+        asyncio.run(run())
+
+
+def test_cancel_flow_preempts_proactive_interaction() -> None:
+    fake, patcher = _patch_redis()
+    plugin = _make_plugin()
+    user = mock_user_find_by_id(USER_ID)
+
+    async def run() -> None:
+        preempted = asyncio.Event()
+        started = asyncio.Event()
+
+        async def proactive() -> None:
+            try:
+                async with engine.user_interaction(
+                    USER_ID, priority=UserInteractionPriority.LOW
+                ):
+                    engine.create_prompt(USER_ID, PromptKind.CHOICE)
+                    started.set()
+                    await asyncio.sleep(30)
+            except UserInteractionPreempted:
+                preempted.set()
+
+        task = asyncio.create_task(proactive())
+        await started.wait()
+        pending = engine.get_pending_prompt_for_user(USER_ID)
+        assert pending is not None
+
+        await plugin.handle_event(
+            user,
+            "laptop",
+            "cancel-flow",
+            {"interaction_id": pending.interaction_id},
+        )
+        await asyncio.wait_for(preempted.wait(), timeout=1)
+        await task
+
+    with patcher:
+        asyncio.run(run())
+
+
+def test_cancel_flow_with_stale_interaction_id_is_ignored() -> None:
+    fake, patcher = _patch_redis()
+    plugin = _make_plugin()
+    user = mock_user_find_by_id(USER_ID)
+
+    async def run() -> None:
+        started = asyncio.Event()
+
+        async def flow() -> None:
+            started.set()
+            engine.create_prompt(USER_ID, PromptKind.CHOICE)
+            await asyncio.sleep(30)
+
+        task = engine.start_user_flow(USER_ID, flow())
+        await started.wait()
+        await asyncio.sleep(0.01)
+
+        await plugin.handle_event(
+            user, "laptop", "cancel-flow", {"interaction_id": "stale-id"}
+        )
+        await asyncio.sleep(0.01)
+        assert not task.cancelled()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
     with patcher:
         asyncio.run(run())
