@@ -2,6 +2,8 @@ import asyncio
 import datetime
 import logging
 
+from telegram.error import RetryAfter
+
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
@@ -65,8 +67,22 @@ class GoogleFitPlugin(Plugin):
             # growing through the day (so we overwrite it each hour), and
             # yesterday is refreshed so its final total lands after midnight
             # (the last poll before midnight would otherwise miss the tail).
-            if await self._ensure_authenticated(user, bot):
-                await self._sync(user, days=2, notify=False)
+            try:
+                if await self._ensure_authenticated(user, bot):
+                    await self._sync(user, days=2, notify=False)
+            except asyncio.CancelledError:
+                raise
+            except RetryAfter:
+                # Telegram flood control: let the supervisor's jittered
+                # flood handling own the wake-up time.
+                raise
+            except Exception:
+                # A failed background sync (Obsidian client offline, network
+                # blip) is not worth a crash-restart loop; just try again at
+                # the next regular interval.
+                self._logger.exception(
+                    "Google Fit sync failed; retrying next interval."
+                )
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
 
     async def _ensure_authenticated(self, user: User, bot: TelegramBotApi) -> bool:

@@ -817,6 +817,14 @@ class TelegramBotApi:
             USER_INTERACTION_QUEUES, {}
         ).setdefault(self._telegram_user_id, self._get_default_priority_queue())
 
+    async def has_active_user_interaction(self) -> bool:
+        """Whether a user interaction is currently in progress for this chat.
+
+        Lets background flows (e.g. the Obsidian progress bar) avoid sending
+        unsolicited messages when the user isn't already in a conversation.
+        """
+        return await self._get_current_user_interaction() is not None
+
     async def _get_current_user_interaction(self) -> UserInteraction | None:
         app = await self.get_application()
         return app.bot_data.setdefault(  # type: ignore

@@ -4,12 +4,18 @@ from spanreed.storage import redis_api
 import asyncio
 import logging
 import json
+import random
+import time
 from typing import Generic, TypeVar, Optional, cast
 from spanreed.user import User
 import abc
 from dataclasses import asdict
 
 from telegram.error import RetryAfter
+
+# Indirection so tests can fake the supervisor's uptime clock without
+# patching time.monotonic globally (asyncio uses it internally too).
+_monotonic = time.monotonic
 
 UC = TypeVar("UC")
 
@@ -160,6 +166,16 @@ class Plugin(abc.ABC, Generic[UC]):
     async def run_for_user(self, user: User) -> None:
         pass
 
+    # Crash-restart backoff: first restart after 60s, doubling to a 30-minute
+    # cap. A run that survives >10 minutes resets the backoff.
+    RESTART_BACKOFF_INITIAL_S = 60.0
+    RESTART_BACKOFF_MAX_S = 1800.0
+    RESTART_BACKOFF_RESET_UPTIME_S = 600.0
+    # Random extra sleep added to every flood-control wake, so plugins that
+    # were banned together don't all retry in the same second (a synchronized
+    # multi-plugin burst right after a ban lifts is how the ban re-arms).
+    FLOOD_WAKE_JITTER_RANGE_S = (60.0, 600.0)
+
     async def _run_for_user_supervised(self, user: User) -> None:
         """Run a user's loop, restarting it if it crashes.
 
@@ -169,27 +185,45 @@ class Plugin(abc.ABC, Generic[UC]):
         gathered in `__main__` with `return_exceptions=True` and never
         restarted, so the plugin would stay dead until a full service restart.
         Returning normally is treated as "done" and is not restarted.
+
+        Restarts back off exponentially: a persistent failure (e.g. the
+        Obsidian client being offline for hours) must not turn into a tight
+        crash-retry loop — on 2026-07-21 that produced 1,100+ restart cycles
+        in a day and the Telegram traffic they generated escalated a
+        flood-control ban to 18 hours.
         """
+        crash_delay = self.RESTART_BACKOFF_INITIAL_S
         while True:
+            started = _monotonic()
             try:
                 await self.run_for_user(user)
                 return
             except asyncio.CancelledError:
                 raise
             except RetryAfter as e:
+                # The ban is on the shared bot token, so waiting the full
+                # retry_after is pointless per-plugin (the dispatcher already
+                # fails fast during the ban and reports the remaining time).
+                # Sleep up to an hour, plus jitter so the banned plugins wake
+                # spread out instead of as a synchronized herd.
+                delay = min(e.retry_after, 3600) + random.uniform(
+                    *self.FLOOD_WAKE_JITTER_RANGE_S
+                )
                 self._logger.warning(
                     f"{self.canonical_name()} hit Telegram flood control for"
-                    f" user {user.id}; sleeping {e.retry_after}s before retry."
+                    f" user {user.id} (ban: {e.retry_after}s); sleeping"
+                    f" {delay:.0f}s before retry."
                 )
-                # Cap the sleep so a stale multi-hour ban doesn't wedge the
-                # loop; the rate limiter keeps us from re-tripping it.
-                await asyncio.sleep(min(e.retry_after, 3600))
+                await asyncio.sleep(delay)
             except Exception:
+                if _monotonic() - started > self.RESTART_BACKOFF_RESET_UPTIME_S:
+                    crash_delay = self.RESTART_BACKOFF_INITIAL_S
                 self._logger.exception(
                     f"{self.canonical_name()} crashed for user {user.id};"
-                    f" restarting in 60s."
+                    f" restarting in {crash_delay:.0f}s."
                 )
-                await asyncio.sleep(60)
+                await asyncio.sleep(crash_delay)
+                crash_delay = min(crash_delay * 2, self.RESTART_BACKOFF_MAX_S)
 
     # This currently assumes that user <--> plugin subscription doesn't
     # change during the lifetime of the plugin.

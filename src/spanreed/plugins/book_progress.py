@@ -4,6 +4,8 @@ import difflib
 import re
 from typing import Any
 
+from telegram.error import RetryAfter
+
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.audible import AudibleApi, AudibleBook, AudiblePlugin
@@ -67,7 +69,21 @@ class BookProgressPlugin(Plugin):
 
     async def run_for_user(self, user: User) -> None:
         while True:
-            await self._sync(user)
+            try:
+                await self._sync(user)
+            except asyncio.CancelledError:
+                raise
+            except RetryAfter:
+                # Telegram flood control: let the supervisor's jittered
+                # flood handling own the wake-up time.
+                raise
+            except Exception:
+                # A failed background sync (Obsidian client offline, network
+                # blip) is not worth a crash-restart loop; just try again at
+                # the next regular interval.
+                self._logger.exception(
+                    "Book progress sync failed; retrying next interval."
+                )
             await asyncio.sleep(SYNC_INTERVAL.total_seconds())
 
     async def _sync_now(self, user: User) -> None:

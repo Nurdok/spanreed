@@ -45,10 +45,17 @@ class ObsidianApi:
     ) -> None:
         """Background task that shows a Telegram progress bar after 5s delay.
 
+        Only runs while a user interaction is active. Background syncs
+        (google-fit, audible, ...) must never message the user just because
+        Obsidian is slow or offline — that unsolicited around-the-clock
+        traffic is what repeatedly tripped Telegram flood control.
+
         Sets self._progress_message when the first message is sent.
         """
         await asyncio.sleep(5)
         bot: TelegramBotApi = await TelegramBotApi.for_user(self._user)
+        if not await bot.has_active_user_interaction():
+            return
         start_time = asyncio.get_event_loop().time()
         while True:
             elapsed = (
@@ -58,14 +65,16 @@ class ObsidianApi:
             filled = int(fraction * 10)
             bar = "█" * filled + "░" * (10 - filled)
             text = f"⏳ Waiting for Obsidian [{bar}] (attempt {attempt}/{max_attempts})"
-            if self._progress_message is None:
-                self._progress_message = await bot.send_message(text, parse_html=False)
-            else:
-                try:
+            try:
+                if self._progress_message is None:
+                    self._progress_message = await bot.send_message(
+                        text, parse_html=False
+                    )
+                else:
                     await bot.edit_message_text(self._progress_message, text)
-                except Exception:
-                    pass  # telegram raises if text hasn't changed
-            await asyncio.sleep(3)
+            except Exception:
+                pass  # unchanged text, or a send failed during a ban
+            await asyncio.sleep(5)
 
     @staticmethod
     def _summarize_request(request: dict[str, Any]) -> dict[str, Any]:
@@ -176,8 +185,11 @@ class ObsidianApi:
             )
             if len(msg) > 1500:
                 msg = msg[:1500] + " …(truncated)"
+            # Durable LOW-lane notify, not send_message: this path fires from
+            # background syncs too, and must never raise RetryAfter or add to
+            # interactive send pressure during a flood-control ban.
             bot = await TelegramBotApi.for_user(self._user)
-            await bot.send_message(msg)
+            await bot.notify(msg)
             result: Any = response.get("result")
             if result == "file not found":
                 raise FileNotFoundError(str(result))

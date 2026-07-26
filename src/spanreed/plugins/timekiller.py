@@ -147,7 +147,10 @@ class TimekillerPlugin(Plugin):
 
         while True:
             now: datetime.datetime = datetime.datetime.now()
-            if now.hour > 7 or now.hour < 22:
+            # Quiet hours: only push between 08:00 and 21:59. This used to be
+            # `or`, which is true for every hour of the day, so kill-time
+            # prompts fired all night.
+            if 7 < now.hour < 22:
                 async with suppress_and_log_exception(
                     TimeoutError, UserInteractionPreempted
                 ):
