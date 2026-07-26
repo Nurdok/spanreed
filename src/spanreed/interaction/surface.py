@@ -22,6 +22,25 @@ class Content:
 
 
 @dataclass(frozen=True)
+class SurfaceScope:
+    """Which surfaces a flow's conversational traffic goes to (design §2.4).
+
+    ``None`` scope = broadcast (proactive flows). A user-initiated flow sets
+    ``origin_surface`` (and, for Obsidian, ``origin_instance``) so the whole
+    conversation sticks to where it started. ``notify()`` always ignores
+    scope.
+    """
+
+    origin_surface: str | None = None
+    origin_instance: str | None = None
+
+    def includes(self, surface_name: str) -> bool:
+        if self.origin_surface is None:
+            return True
+        return surface_name == self.origin_surface
+
+
+@dataclass(frozen=True)
 class PromptSpec:
     """Everything a surface needs to render one generation of a prompt."""
 

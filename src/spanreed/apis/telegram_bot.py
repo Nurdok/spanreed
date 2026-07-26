@@ -320,6 +320,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     ) -> None:
         from spanreed.interaction import commands as command_registry
         from spanreed.interaction.api import UserInteractionApi
+        from spanreed.interaction.surface import SurfaceScope
 
         if update.effective_user is None:
             self._logger.error("No user found in update")
@@ -343,7 +344,11 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 shown_commands = command_registry.commands_for_user(user)
                 self._logger.info(f"Showing commands: {shown_commands}")
 
-                async with ui.user_interaction(priority=UserInteractionPriority.HIGH):
+                async with ui.user_interaction(
+                    priority=UserInteractionPriority.HIGH,
+                    # User-initiated: the whole flow sticks to Telegram.
+                    scope=SurfaceScope(origin_surface="telegram"),
+                ):
                     choice = await ui.request_user_choice(
                         "Please choose a command to run:",
                         [command.text for command in shown_commands] + ["Cancel"],
