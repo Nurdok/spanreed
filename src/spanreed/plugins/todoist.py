@@ -1,4 +1,4 @@
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.interaction import UserInteractionApi
 from spanreed.apis.todoist import UserConfig
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -19,7 +19,7 @@ class TodoistPlugin(Plugin[UserConfig]):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         api_token = await bot.request_user_input(
             "Please enter your Todoist API token. "
         )

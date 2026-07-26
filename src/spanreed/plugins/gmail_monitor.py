@@ -9,9 +9,9 @@ from contextlib import suppress
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import (
+from spanreed.interaction import (
     PluginCommand,
-    TelegramBotApi,
+    UserInteractionApi,
     UserInteractionPriority,
     UserInteractionPreempted,
 )
@@ -124,7 +124,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         return UserConfig
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Manage Email Rules",
@@ -132,7 +132,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             ),
         )
 
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Test Email Rule",
@@ -140,7 +140,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             ),
         )
 
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Email Monitor Status",
@@ -148,7 +148,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             ),
         )
 
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Run rules on inbox",
@@ -160,7 +160,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
 
         # Check if app-level Gmail credentials are configured
         if not await GmailApi.is_app_configured():
@@ -178,7 +178,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         await cls._setup_gmail_auth(user, bot)
 
     @classmethod
-    async def _setup_gmail_auth(cls, user: User, bot: TelegramBotApi) -> None:
+    async def _setup_gmail_auth(cls, user: User, bot: UserInteractionApi) -> None:
         gmail = await GmailApi.for_user(user)
 
         if await gmail.is_authenticated():
@@ -201,7 +201,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             await bot.send_message(f"Gmail authentication failed: {str(e)}")
             raise
 
-    async def _ensure_authenticated(self, user: User, bot: TelegramBotApi) -> bool:
+    async def _ensure_authenticated(self, user: User, bot: UserInteractionApi) -> bool:
         """Return True if authenticated; else DM a re-auth link and False.
 
         When the stored token can no longer be refreshed (e.g. Google's 7-day
@@ -233,7 +233,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         return False
 
     async def manage_email_rules(self, user: User) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         config = await self.get_config(user)
 
         while True:
@@ -270,7 +270,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
                 break
 
     async def _add_email_rule(
-        self, user: User, bot: TelegramBotApi, config: UserConfig
+        self, user: User, bot: UserInteractionApi, config: UserConfig
     ) -> None:
         rule_name = await bot.request_user_input("Enter a name for this email rule:")
 
@@ -299,7 +299,9 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
         await bot.send_message(f"Email rule '{rule_name}' added successfully!")
 
-    async def _create_email_filter(self, bot: TelegramBotApi) -> Optional[EmailFilter]:
+    async def _create_email_filter(
+        self, bot: UserInteractionApi
+    ) -> Optional[EmailFilter]:
         await bot.send_message("Let's create the email filter criteria.")
 
         criteria = []
@@ -377,7 +379,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             has_attachments=has_attachments,
         )
 
-    async def _create_email_actions(self, bot: TelegramBotApi) -> List[EmailAction]:
+    async def _create_email_actions(self, bot: UserInteractionApi) -> List[EmailAction]:
         actions = []
 
         await bot.send_message(
@@ -440,7 +442,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         return actions
 
     async def _configure_telegram_notification(
-        self, bot: TelegramBotApi
+        self, bot: UserInteractionApi
     ) -> Dict[str, Any]:
         """Configure Telegram notification action"""
         include_body = (
@@ -471,7 +473,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         }
 
     async def _configure_download_attachment(
-        self, bot: TelegramBotApi
+        self, bot: UserInteractionApi
     ) -> Dict[str, Any]:
         """Configure the download-attachment action."""
         choice = await bot.request_user_choice(
@@ -483,7 +485,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         return {"mime_types": None}
 
     async def _configure_save_attachment_to_vault(
-        self, bot: TelegramBotApi
+        self, bot: UserInteractionApi
     ) -> Dict[str, Any]:
         """Configure the save-attachment-to-vault action."""
         vault_dir = (
@@ -525,7 +527,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         }
 
     async def _configure_save_link_to_vault(
-        self, bot: TelegramBotApi
+        self, bot: UserInteractionApi
     ) -> Dict[str, Any]:
         """Configure the save-linked-file-to-vault action."""
         vault_dir = (
@@ -579,7 +581,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         }
 
     async def _configure_download_link(
-        self, bot: TelegramBotApi
+        self, bot: UserInteractionApi
     ) -> Optional[Dict[str, Any]]:
         """Configure download link action"""
         await bot.send_message(
@@ -686,7 +688,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         }
 
     async def _edit_email_rule(
-        self, user: User, bot: TelegramBotApi, config: UserConfig
+        self, user: User, bot: UserInteractionApi, config: UserConfig
     ) -> None:
         if not config.rules:
             await bot.send_message("No rules to edit!")
@@ -734,7 +736,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         await bot.send_message(f"Rule '{rule.name}' updated successfully!")
 
     async def _delete_email_rule(
-        self, user: User, bot: TelegramBotApi, config: UserConfig
+        self, user: User, bot: UserInteractionApi, config: UserConfig
     ) -> None:
         if not config.rules:
             await bot.send_message("No rules to delete!")
@@ -757,7 +759,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             await bot.send_message(f"Rule '{rule.name}' deleted!")
 
     async def _toggle_email_rule(
-        self, user: User, bot: TelegramBotApi, config: UserConfig
+        self, user: User, bot: UserInteractionApi, config: UserConfig
     ) -> None:
         if not config.rules:
             await bot.send_message("No rules to toggle!")
@@ -781,7 +783,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         await bot.send_message(f"Rule '{rule.name}' {status}!")
 
     async def test_email_rule(self, user: User) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         config = await self.get_config(user)
 
         if not config.rules:
@@ -955,7 +957,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
             await bot.send_message(f"Error testing rule: {str(e)}")
 
     async def show_monitor_status(self, user: User) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         config = await self.get_config(user)
 
         gmail = await GmailApi.for_user(user)
@@ -1033,7 +1035,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
 
     async def _run_monitor_for_user(self, user: User) -> None:
         self._logger.info(f"Running Gmail monitor for user {user}")
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
 
         try:
             config = await self.get_config(user)
@@ -1131,7 +1133,7 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
         test new rules against mail that's already in the inbox. It executes
         the real actions (downloads, notifications), gated behind a confirm.
         """
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         config = await self.get_config(user)
 
         enabled_rules = [rule for rule in config.rules if rule.enabled]

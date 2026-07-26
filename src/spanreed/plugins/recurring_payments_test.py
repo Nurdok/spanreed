@@ -14,7 +14,7 @@ from spanreed.plugin import Plugin
 from spanreed.test_utils import (
     mock_user_find_by_id,
     EndPluginRun,
-    patch_telegram_bot,
+    patch_user_interaction,
 )
 from spanreed.apis.todoist import Task, Comment, Project
 from spanreed.user import User
@@ -29,7 +29,7 @@ def test_name() -> None:
     assert plugin.canonical_name() == "recurring-payments"
 
 
-@patch_telegram_bot("spanreed.plugins.recurring_payments")
+@patch_user_interaction("spanreed.plugins.recurring_payments")
 @patch("spanreed.plugins.recurring_payments.Todoist", autospec=True)
 def test_ask_for_user_config(
     mock_bot: AsyncMock,
@@ -154,7 +154,7 @@ def test_ask_for_user_config(
 @freezegun.freeze_time("2021-01-19")
 @patch("spanreed.plugins.recurring_payments.Todoist", autospec=True)
 @patch("asyncio.sleep", autospec=True)
-@patch_telegram_bot("spanreed.plugins.recurring_payments")
+@patch_user_interaction("spanreed.plugins.recurring_payments")
 def test_run_for_single_recurrence(
     mock_bot: AsyncMock, mock_sleep: AsyncMock, mock_todoist: AsyncMock
 ) -> None:
@@ -182,9 +182,7 @@ def test_run_for_single_recurrence(
     )
     task = MagicMock(name="task", spec=Task)
     # TODO: change to existing task
-    mock_todoist.for_user.return_value.get_tasks_with_label.return_value = [
-        task
-    ]
+    mock_todoist.for_user.return_value.get_tasks_with_label.return_value = [task]
     comment = MagicMock(name="comment", spec=Comment)
     comment.content = textwrap.dedent(
         """\
@@ -213,6 +211,4 @@ def test_run_for_single_recurrence(
     )
 
     mock_bot.request_user_choice.assert_called_once()
-    assert (
-        "add it to the list" in mock_bot.request_user_choice.call_args.args[0]
-    )
+    assert "add it to the list" in mock_bot.request_user_choice.call_args.args[0]

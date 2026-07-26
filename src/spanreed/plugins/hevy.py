@@ -9,7 +9,7 @@ import yaml
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.apis.hevy import HevyApi, Workout, Exercise, WorkoutSet
 from spanreed.apis.obsidian_webhook import (
     ObsidianWebhookApi,
@@ -53,15 +53,14 @@ class HevyPlugin(Plugin):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         api_key = await bot.request_user_input(
             "Please enter your Hevy API key.\n"
             "You can generate one (Hevy Pro required) at "
             "https://hevy.com/settings?developer"
         )
         vault_dir = await bot.request_user_input(
-            "Which folder in your vault should set notes go in? "
-            "(e.g. Fitness/Sets)"
+            "Which folder in your vault should set notes go in? " "(e.g. Fitness/Sets)"
         )
         await cls.set_config(
             user,
@@ -81,34 +80,30 @@ class HevyPlugin(Plugin):
         await self.set_user_data(user, SYNCED_IDS_KEY, json.dumps(sorted(ids)))
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
-            PluginCommand(
-                text="Sync Hevy workouts", callback=self._sync_now
-            ),
+            PluginCommand(text="Sync Hevy workouts", callback=self._sync_now),
         )
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
-            PluginCommand(
-                text="Re-create Hevy data", callback=self._recreate_data
-            ),
+            PluginCommand(text="Re-create Hevy data", callback=self._recreate_data),
         )
         await super().run()
 
     async def run_for_user(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         while True:
             await self._sync(user, bot)
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
 
     async def _sync_now(self, user: User) -> None:
         """Manually triggered sync via the Telegram command."""
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         await bot.notify("Checking Hevy for new workouts…")
         if await self._sync(user, bot) == 0:
             await bot.notify("No new Hevy workouts found.")
 
-    async def _sync(self, user: User, bot: TelegramBotApi) -> int:
+    async def _sync(self, user: User, bot: UserInteractionApi) -> int:
         """Fetch and write any new workouts. Returns the number written."""
         config: UserConfig = await self.get_config(user)
         hevy = await HevyApi.for_user(user)
@@ -151,7 +146,7 @@ class HevyPlugin(Plugin):
         appends, so any notes that already exist should be deleted first to
         avoid stacking a second copy onto them.
         """
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         hevy = await HevyApi.for_user(user)
 
         choice = await bot.request_user_choice(
@@ -167,9 +162,7 @@ class HevyPlugin(Plugin):
             try:
                 target = datetime.date.fromisoformat(date_str.strip())
             except ValueError:
-                await bot.notify(
-                    "That doesn't look like a YYYY-MM-DD date."
-                )
+                await bot.notify("That doesn't look like a YYYY-MM-DD date.")
                 return
             workouts = [
                 w
@@ -177,9 +170,7 @@ class HevyPlugin(Plugin):
                 if self._workout_date(w) == target
             ]
             if not workouts:
-                await bot.notify(
-                    f"No workout found on {target.isoformat()}."
-                )
+                await bot.notify(f"No workout found on {target.isoformat()}.")
                 return
         elif choice == 1:  # A workout ID
             workout_id = (
@@ -189,14 +180,11 @@ class HevyPlugin(Plugin):
                 workouts = [await hevy.get_workout(workout_id)]
             except Exception:
                 self._logger.exception(f"Failed to fetch {workout_id=}")
-                await bot.notify(
-                    f"Couldn't fetch workout `{workout_id}`."
-                )
+                await bot.notify(f"Couldn't fetch workout `{workout_id}`.")
                 return
         elif choice == 2:  # All workouts
             confirm = await bot.request_user_choice(
-                "Re-create notes for ALL workouts? This re-writes every "
-                "set note.",
+                "Re-create notes for ALL workouts? This re-writes every " "set note.",
                 ["Yes", "Cancel"],
             )
             if confirm != 0:
@@ -211,8 +199,7 @@ class HevyPlugin(Plugin):
         await bot.notify(f"Re-creating {len(workouts)} workout(s)…")
         total_sets = await self._recreate(user, workouts)
         await bot.notify(
-            f"Done. Wrote {total_sets} set notes across "
-            f"{len(workouts)} workout(s)."
+            f"Done. Wrote {total_sets} set notes across " f"{len(workouts)} workout(s)."
         )
 
     async def _recreate(self, user: User, workouts: list[Workout]) -> int:
@@ -247,24 +234,17 @@ class HevyPlugin(Plugin):
         seen: dict[str, int] = collections.defaultdict(int)
 
         set_ordinal = 0
-        for exercise_index, exercise in enumerate(
-            workout.exercises, start=1
-        ):
+        for exercise_index, exercise in enumerate(workout.exercises, start=1):
             seen[exercise.title] += 1
             occurrence = seen[exercise.title]
-            suffix = (
-                f" ({occurrence})" if title_counts[exercise.title] > 1 else ""
-            )
+            suffix = f" ({occurrence})" if title_counts[exercise.title] > 1 else ""
             for set_number, workout_set in enumerate(exercise.sets, start=1):
                 set_ordinal += 1
                 filename = (
-                    f"{self._sanitize(exercise.title)}{suffix} "
-                    f"set {set_number}.md"
+                    f"{self._sanitize(exercise.title)}{suffix} " f"set {set_number}.md"
                 )
                 note_path = str(
-                    pathlib.PurePosixPath(config.vault_dir)
-                    / date_str
-                    / filename
+                    pathlib.PurePosixPath(config.vault_dir) / date_str / filename
                 )
                 content = self._render_set_note(
                     workout,
@@ -288,16 +268,12 @@ class HevyPlugin(Plugin):
         if not value:
             return None
         try:
-            return datetime.datetime.fromisoformat(
-                value.replace("Z", "+00:00")
-            )
+            return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return None
 
     def _workout_date(self, workout: Workout) -> datetime.date | None:
-        dt = self._parse_dt(workout.start_time) or self._parse_dt(
-            workout.created_at
-        )
+        dt = self._parse_dt(workout.start_time) or self._parse_dt(workout.created_at)
         return dt.date() if dt else None
 
     @staticmethod
@@ -352,9 +328,7 @@ class HevyPlugin(Plugin):
         ).strip()
 
         weight = (
-            f"{workout_set.weight_kg:g}"
-            if workout_set.weight_kg is not None
-            else "–"
+            f"{workout_set.weight_kg:g}" if workout_set.weight_kg is not None else "–"
         )
         reps = workout_set.reps if workout_set.reps is not None else "–"
         summary = f"{exercise.title} — set {set_number}: {weight} kg × {reps}"

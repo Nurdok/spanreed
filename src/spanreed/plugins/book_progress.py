@@ -4,13 +4,13 @@ import difflib
 import re
 from typing import Any
 
-from telegram.error import RetryAfter
+from spanreed.interaction import SurfaceBusyError
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.audible import AudibleApi, AudibleBook, AudiblePlugin
 from spanreed.apis.obsidian import ObsidianApi, ObsidianPlugin
-from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.interaction import UserInteractionApi, PluginCommand
 
 
 SYNC_INTERVAL = datetime.timedelta(hours=1)
@@ -61,7 +61,7 @@ class BookProgressPlugin(Plugin):
         return [AudiblePlugin, ObsidianPlugin]
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(text="Sync book progress", callback=self._sync_now),
         )
@@ -73,7 +73,7 @@ class BookProgressPlugin(Plugin):
                 await self._sync(user)
             except asyncio.CancelledError:
                 raise
-            except RetryAfter:
+            except SurfaceBusyError:
                 # Telegram flood control: let the supervisor's jittered
                 # flood handling own the wake-up time.
                 raise
@@ -88,7 +88,7 @@ class BookProgressPlugin(Plugin):
 
     async def _sync_now(self, user: User) -> None:
         """Manually triggered sync via the Telegram command."""
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         await bot.notify("Syncing Audible book progress…")
         updated = await self._sync(user)
         if updated == 0:
@@ -175,7 +175,7 @@ class BookProgressPlugin(Plugin):
             await self._snooze_link(user, note_path)
             return None
 
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         async with bot.user_interaction():
             choice = await bot.request_user_choice(
                 f'Which Audible book is "{title}"?',
@@ -222,7 +222,7 @@ class BookProgressPlugin(Plugin):
         if await self.get_user_data(user, f"finish-prompted:{book.asin}"):
             return
 
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         async with bot.user_interaction():
             choice = await bot.request_user_choice(
                 f'Looks like you finished "{book.title}" on Audible.\n'

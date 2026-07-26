@@ -12,7 +12,7 @@ from spanreed.plugins.gmail_monitor import (
 from spanreed.plugins.gmail_monitor_actions import EmailMatch
 from spanreed.apis.gmail import EmailMessage
 from spanreed.plugin import Plugin
-from spanreed.test_utils import mock_user_find_by_id, patch_telegram_bot
+from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
 
 
 def _email(subject: str = "Receipt 123", sender: str = "a@b.com") -> EmailMessage:
@@ -30,7 +30,7 @@ def _email(subject: str = "Receipt 123", sender: str = "a@b.com") -> EmailMessag
 
 
 @patch("spanreed.plugins.gmail_monitor.GmailApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.gmail_monitor")
+@patch_user_interaction("spanreed.plugins.gmail_monitor")
 def test_ensure_authenticated_true_when_authed(
     mock_bot: AsyncMock, mock_gmail: AsyncMock
 ) -> None:
@@ -49,7 +49,7 @@ def test_ensure_authenticated_true_when_authed(
 
 
 @patch("spanreed.plugins.gmail_monitor.GmailApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.gmail_monitor")
+@patch_user_interaction("spanreed.plugins.gmail_monitor")
 def test_ensure_authenticated_prompts_when_token_dead(
     mock_bot: AsyncMock, mock_gmail: AsyncMock
 ) -> None:
@@ -74,7 +74,7 @@ def test_ensure_authenticated_prompts_when_token_dead(
 
 
 @patch("spanreed.plugins.gmail_monitor.GmailApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.gmail_monitor")
+@patch_user_interaction("spanreed.plugins.gmail_monitor")
 def test_ensure_authenticated_no_double_prompt(
     mock_bot: AsyncMock, mock_gmail: AsyncMock
 ) -> None:
@@ -120,7 +120,7 @@ def test_execute_matches_dispatches_and_isolates_failures() -> None:
 
 
 @patch("spanreed.plugins.gmail_monitor.GmailApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.gmail_monitor")
+@patch_user_interaction("spanreed.plugins.gmail_monitor")
 def test_run_rules_on_existing_matches_and_executes(
     mock_bot: AsyncMock, mock_gmail: AsyncMock
 ) -> None:
@@ -160,7 +160,7 @@ def test_run_rules_on_existing_matches_and_executes(
 
 
 @patch("spanreed.plugins.gmail_monitor.GmailApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.gmail_monitor")
+@patch_user_interaction("spanreed.plugins.gmail_monitor")
 def test_run_rules_on_existing_no_match_skips_execution(
     mock_bot: AsyncMock, mock_gmail: AsyncMock
 ) -> None:

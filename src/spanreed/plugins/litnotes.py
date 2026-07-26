@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.google_books import GoogleBooks, Book
-from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.apis.obsidian_webhook import (
     ObsidianWebhookApi,
     ObsidianWebhookPlugin,
@@ -49,15 +49,13 @@ class LitNotesPlugin(Plugin):
         return UserConfig
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
-            PluginCommand(
-                text="Add book note", callback=self._ask_for_book_note
-            ),
+            PluginCommand(text="Add book note", callback=self._ask_for_book_note),
         )
 
     async def _ask_for_book_note(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         async with bot.user_interaction():
             self._logger.info("Asking for book")
@@ -67,11 +65,9 @@ class LitNotesPlugin(Plugin):
             recommended_by: List[str] = await self._ask_for_recommendation(bot)
             free_text: str = await self._ask_for_free_text(bot)
 
-            await self._add_note_for_book(
-                user, bot, book, recommended_by, free_text
-            )
+            await self._add_note_for_book(user, bot, book, recommended_by, free_text)
 
-    async def _ask_for_free_text(self, bot: TelegramBotApi) -> str:
+    async def _ask_for_free_text(self, bot: UserInteractionApi) -> str:
         choice = await bot.request_user_choice(
             "Any free text to add to the note?", ["Yes", "No"]
         )
@@ -79,7 +75,7 @@ class LitNotesPlugin(Plugin):
             return await bot.request_user_input("Enter free text:")
         return ""
 
-    async def _ask_for_recommendation(self, bot: TelegramBotApi) -> List[str]:
+    async def _ask_for_recommendation(self, bot: UserInteractionApi) -> List[str]:
         self._logger.info("Asking for recommendation")
         recommended_by: list[str] = []
         while True:
@@ -94,12 +90,10 @@ class LitNotesPlugin(Plugin):
             if choice == 1:
                 break
 
-            recommended_by.append(
-                await bot.request_user_input("Who recommended it?")
-            )
+            recommended_by.append(await bot.request_user_input("Who recommended it?"))
         return recommended_by
 
-    async def _ask_for_book(self, bot: TelegramBotApi) -> Optional[Book]:
+    async def _ask_for_book(self, bot: UserInteractionApi) -> Optional[Book]:
         google_books_api: GoogleBooks = GoogleBooks("")
         book_query = await bot.request_user_input(
             "Which book do you want to add a note for?"
@@ -107,16 +101,13 @@ class LitNotesPlugin(Plugin):
         books: List[Book] = await google_books_api.get_books(query=book_query)
 
         if not books:
-            await bot.send_message(
-                "No books found. This incident will be reported."
-            )
+            await bot.send_message("No books found. This incident will be reported.")
             return None
 
         if len(books) == 1:
             book = books[0]
             choice = await bot.request_user_choice(
-                f"Found one book: {_format_book(book)}.\n"
-                "Is this the one you meant?",
+                f"Found one book: {_format_book(book)}.\n" "Is this the one you meant?",
                 ["Yes", "No"],
             )
             if choice == 0:
@@ -152,7 +143,7 @@ class LitNotesPlugin(Plugin):
     async def _add_note_for_book(
         self,
         user: User,
-        bot: TelegramBotApi,
+        bot: UserInteractionApi,
         book: Book,
         recommended_by: List[str],
         free_text: str,
@@ -181,14 +172,12 @@ class LitNotesPlugin(Plugin):
                 user, bot, user_config, note_title, note_content
             )
         else:
-            await self._send_obsidian_uri(
-                bot, user_config, note_title, note_content
-            )
+            await self._send_obsidian_uri(bot, user_config, note_title, note_content)
 
     async def _create_note_with_obsidian_webhook(
         self,
         user: User,
-        bot: TelegramBotApi,
+        bot: UserInteractionApi,
         user_config: UserConfig,
         note_title: str,
         note_content: str,
@@ -198,8 +187,7 @@ class LitNotesPlugin(Plugin):
         await webhook.append_to_note(
             str(
                 (
-                    pathlib.PurePosixPath(user_config.file_location)
-                    / note_title
+                    pathlib.PurePosixPath(user_config.file_location) / note_title
                 ).with_suffix(".md")
             ),
             note_content,
@@ -209,7 +197,7 @@ class LitNotesPlugin(Plugin):
 
     async def _send_obsidian_uri(
         self,
-        bot: TelegramBotApi,
+        bot: UserInteractionApi,
         user_config: UserConfig,
         note_title: str,
         note_content: str,
@@ -217,14 +205,11 @@ class LitNotesPlugin(Plugin):
         def e(text: str) -> str:
             return urllib.parse.quote(text, safe="")
 
-        obsidian_uri = (
-            "https://amir.rachum.com/fwdr?url="
-            + base64.urlsafe_b64encode(
-                f"obsidian://new?vault={e(user_config.vault)}"
-                f"&file={e(user_config.file_location)}{e(note_title)}"
-                f"&content={e(note_content)}".encode()
-            ).decode("utf-8")
-        )
+        obsidian_uri = "https://amir.rachum.com/fwdr?url=" + base64.urlsafe_b64encode(
+            f"obsidian://new?vault={e(user_config.vault)}"
+            f"&file={e(user_config.file_location)}{e(note_title)}"
+            f"&content={e(note_content)}".encode()
+        ).decode("utf-8")
         message = (
             f'<b><a href="{obsidian_uri}">'
             f"Click here to create the note in Obsidian</a></b>"
@@ -237,7 +222,7 @@ class LitNotesPlugin(Plugin):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         # No need to acquire the user interaction lock here, since we're
         # being called by a method that has it already.

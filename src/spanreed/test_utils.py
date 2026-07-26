@@ -44,14 +44,22 @@ class AsyncContextManager:
         pass
 
 
-def patch_telegram_bot(
+def patch_user_interaction(
     target_package: str,
 ) -> Callable[[Callable[..., None]], Callable[..., None]]:
-    def patch_telegram_bot_in_target_package(
+    """Patch the module's ``UserInteractionApi`` with a mock facade.
+
+    Successor of the old ``patch_telegram_bot`` helper: same shape, but
+    plugins now talk to the surface-agnostic interaction facade.
+    """
+
+    def patch_user_interaction_in_target_package(
         f: Callable[..., None],
     ) -> Callable[..., None]:
-        def f_with_patched_telegram_bot(*args: list, **kwargs: dict) -> Any:
-            with patch(f"{target_package}.TelegramBotApi", autospec=True) as mock_bot:
+        def f_with_patched_user_interaction(*args: list, **kwargs: dict) -> Any:
+            with patch(
+                f"{target_package}.UserInteractionApi", autospec=True
+            ) as mock_bot:
                 mock_bot.for_user = AsyncMock(return_value=mock_bot)
 
                 mock_bot.user_interaction = MagicMock(AsyncContextManager())
@@ -59,13 +67,19 @@ def patch_telegram_bot(
                 mock_bot.request_user_input = AsyncMock()
                 mock_bot.send_message = AsyncMock()
                 mock_bot.send_multiple_messages = AsyncMock()
+                mock_bot.send_document = AsyncMock()
+                mock_bot.edit_message_text = AsyncMock()
+                mock_bot.delete_message = AsyncMock()
+                mock_bot.notify = AsyncMock()
+                mock_bot.register_command = AsyncMock()
+                mock_bot.has_active_user_interaction = AsyncMock(return_value=False)
 
                 args = (mock_bot,) + args
                 return f(*args, **kwargs)
 
-        return f_with_patched_telegram_bot
+        return f_with_patched_user_interaction
 
-    return patch_telegram_bot_in_target_package
+    return patch_user_interaction_in_target_package
 
 
 def patch_obsidian(

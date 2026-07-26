@@ -7,12 +7,12 @@ import datetime
 import dataclasses
 import base64
 
-from telegram import Message
+from spanreed.interaction import MessageHandle
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.storage import redis_api
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.interaction import UserInteractionApi
 
 from typing import Any
 
@@ -31,7 +31,7 @@ class ObsidianApi:
     def __init__(self, user: User) -> None:
         self._logger = logging.getLogger(__name__)
         self._user = user
-        self._progress_message: Message | None = None
+        self._progress_message: MessageHandle | None = None
 
     @classmethod
     async def for_user(cls, user: User) -> "ObsidianApi":
@@ -53,7 +53,7 @@ class ObsidianApi:
         Sets self._progress_message when the first message is sent.
         """
         await asyncio.sleep(5)
-        bot: TelegramBotApi = await TelegramBotApi.for_user(self._user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(self._user)
         if not await bot.has_active_user_interaction():
             return
         start_time = asyncio.get_event_loop().time()
@@ -151,7 +151,7 @@ class ObsidianApi:
                 # Final attempt failed
                 if self._progress_message is not None:
                     try:
-                        bot = await TelegramBotApi.for_user(self._user)
+                        bot = await UserInteractionApi.for_user(self._user)
                         await bot.edit_message_text(
                             self._progress_message, "❌ Obsidian didn't respond"
                         )
@@ -167,7 +167,7 @@ class ObsidianApi:
         # Clean up progress message on success
         if self._progress_message is not None:
             try:
-                bot = await TelegramBotApi.for_user(self._user)
+                bot = await UserInteractionApi.for_user(self._user)
                 await bot.delete_message(self._progress_message)
             except Exception:
                 pass
@@ -188,7 +188,7 @@ class ObsidianApi:
             # Durable LOW-lane notify, not send_message: this path fires from
             # background syncs too, and must never raise RetryAfter or add to
             # interactive send pressure during a flood-control ban.
-            bot = await TelegramBotApi.for_user(self._user)
+            bot = await UserInteractionApi.for_user(self._user)
             await bot.notify(msg)
             result: Any = response.get("result")
             if result == "file not found":

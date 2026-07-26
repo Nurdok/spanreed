@@ -4,13 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 from contextlib import suppress
 
-import telegram.error
+from spanreed.interaction import SurfaceBusyError
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import (
+from spanreed.interaction import (
     PluginCommand,
-    TelegramBotApi,
+    UserInteractionApi,
     UserInteractionPriority,
     UserInteractionPreempted,
 )
@@ -49,7 +49,7 @@ def time_until_end_of_day() -> datetime.timedelta:
 class HabitTrackerPlugin(Plugin):
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Track Habits",
@@ -57,7 +57,7 @@ class HabitTrackerPlugin(Plugin):
             ),
         )
 
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Add Habit",
@@ -65,7 +65,7 @@ class HabitTrackerPlugin(Plugin):
             ),
         )
 
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Remove Habit",
@@ -89,7 +89,7 @@ class HabitTrackerPlugin(Plugin):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         daily_note_path: str = await bot.request_user_input(
             "What is the path to your daily notes?"
@@ -125,7 +125,7 @@ class HabitTrackerPlugin(Plugin):
     async def get_habit_tracker_property_value(
         self,
         obsidian: ObsidianApi,
-        bot: TelegramBotApi,
+        bot: UserInteractionApi,
         property_name: str,
         daily_note_path: str,
     ) -> Any:
@@ -147,7 +147,7 @@ class HabitTrackerPlugin(Plugin):
     async def get_done_habits(self, user: User) -> list[str]:
         config: UserConfig = await self.get_config(user)
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         property_value: Any = await self.get_habit_tracker_property_value(
             obsidian,
             bot,
@@ -171,9 +171,7 @@ class HabitTrackerPlugin(Plugin):
     async def get_habits_to_poll(self, user: User) -> list[Habit]:
         config: UserConfig = await self.get_config(user)
         done_habits: list[str] = await self.get_done_habits(user)
-        return [
-            habit for habit in config.habits if habit.name not in done_habits
-        ]
+        return [habit for habit in config.habits if habit.name not in done_habits]
 
     async def mark_habit_as_done(self, user: User, habit_name: str) -> None:
         config: UserConfig = await self.get_config(user)
@@ -185,7 +183,7 @@ class HabitTrackerPlugin(Plugin):
         )
 
     async def poll_user_for_all_habits(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         self._logger.info(f"Running periodic check for user {user}")
         async with suppress_and_log_exception(ObsidianApiTimeoutError):
@@ -210,16 +208,14 @@ class HabitTrackerPlugin(Plugin):
                 habits.remove(habit)
 
     async def add_habit(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         config: UserConfig = await self.get_config(user)
 
         habit_name: str = await bot.request_user_input(
             "What is the name of the habit you want to add?"
         )
 
-        if any(
-            habit.name.lower() == habit_name.lower() for habit in config.habits
-        ):
+        if any(habit.name.lower() == habit_name.lower() for habit in config.habits):
             await bot.send_message(f"Habit '{habit_name}' already exists!")
             return
 
@@ -234,16 +230,14 @@ class HabitTrackerPlugin(Plugin):
         await bot.send_message(f"Added habit: {habit_name}")
 
     async def remove_habit(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         config: UserConfig = await self.get_config(user)
 
         if not config.habits:
             await bot.send_message("You don't have any habits to remove!")
             return
 
-        habit_choices: list[str] = [habit.name for habit in config.habits] + [
-            "Cancel"
-        ]
+        habit_choices: list[str] = [habit.name for habit in config.habits] + ["Cancel"]
         choice: int = await bot.request_user_choice(
             "Which habit would you like to remove?",
             habit_choices,
@@ -260,7 +254,7 @@ class HabitTrackerPlugin(Plugin):
 
     async def run_for_user(self, user: User) -> None:
         self._logger.info(f"Running for user {user}")
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         while True:
             self._logger.info(f"Polling user {user}")
@@ -287,9 +281,9 @@ class HabitTrackerPlugin(Plugin):
                                 datetime.timedelta(hours=4).total_seconds()
                             )
                 self._logger.info("Passed midnight, re-asking")
-            except telegram.error.RetryAfter as e:
+            except SurfaceBusyError as e:
                 self._logger.warning(
-                    f"Telegram flood control, sleeping for {e.retry_after}s"
+                    f"Surface flood control, sleeping for {e.retry_after}s"
                 )
                 await asyncio.sleep(e.retry_after)
             except Exception:

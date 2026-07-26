@@ -7,7 +7,7 @@ import audible
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.interaction import UserInteractionApi
 
 
 MARKETPLACE_LOCALE = "us"
@@ -75,7 +75,7 @@ class AudibleApi:
         they land on after logging in (an error page whose URL contains
         the authorization code).
         """
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         loop = asyncio.get_running_loop()
 
         def login_url_callback(login_url: str) -> str:
@@ -94,7 +94,7 @@ class AudibleApi:
 
     @staticmethod
     async def _request_redirect_url_from_user(
-        bot: TelegramBotApi, login_url: str
+        bot: UserInteractionApi, login_url: str
     ) -> str:
         await bot.send_message(
             f'<b><a href="{login_url}">Click here to log in to Amazon</a></b>'

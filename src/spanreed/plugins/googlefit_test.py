@@ -6,7 +6,7 @@ from spanreed.plugins.googlefit import GoogleFitPlugin
 from spanreed.plugin import Plugin
 from spanreed.test_utils import (
     mock_user_find_by_id,
-    patch_telegram_bot,
+    patch_user_interaction,
     patch_obsidian,
 )
 
@@ -21,7 +21,7 @@ def test_name() -> None:
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
 @patch_obsidian("spanreed.plugins.googlefit")
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_sync_writes_steps_to_empty_note(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,
@@ -52,7 +52,7 @@ def test_sync_writes_steps_to_empty_note(
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
 @patch_obsidian("spanreed.plugins.googlefit")
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_sync_overwrites_when_value_changed(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,
@@ -83,7 +83,7 @@ def test_sync_overwrites_when_value_changed(
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
 @patch_obsidian("spanreed.plugins.googlefit")
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_sync_skips_when_value_unchanged(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,
@@ -111,7 +111,7 @@ def test_sync_skips_when_value_unchanged(
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
 @patch_obsidian("spanreed.plugins.googlefit")
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_sync_silent_when_notify_false(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,
@@ -142,7 +142,7 @@ def test_sync_silent_when_notify_false(
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
 @patch_obsidian("spanreed.plugins.googlefit")
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_sync_no_data_is_noop(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,
@@ -167,7 +167,7 @@ def test_sync_no_data_is_noop(
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
 @patch_obsidian("spanreed.plugins.googlefit")
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_sync_skips_missing_daily_note(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,
@@ -195,7 +195,7 @@ def test_sync_skips_missing_daily_note(
 
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_ensure_authenticated_true_when_authed(
     mock_bot: AsyncMock, mock_fit: AsyncMock
 ) -> None:
@@ -214,7 +214,7 @@ def test_ensure_authenticated_true_when_authed(
 
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_ensure_authenticated_prompts_when_token_dead(
     mock_bot: AsyncMock, mock_fit: AsyncMock
 ) -> None:
@@ -239,7 +239,7 @@ def test_ensure_authenticated_prompts_when_token_dead(
 
 
 @patch("spanreed.plugins.googlefit.GoogleFitApi", autospec=True)
-@patch_telegram_bot("spanreed.plugins.googlefit")
+@patch_user_interaction("spanreed.plugins.googlefit")
 def test_ensure_authenticated_no_double_prompt(
     mock_bot: AsyncMock, mock_fit: AsyncMock
 ) -> None:

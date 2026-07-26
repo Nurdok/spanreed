@@ -27,7 +27,7 @@ def _email() -> EmailMessage:
 
 
 @patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_download_attachment_sends_pdf(
     mock_bot_cls: MagicMock, mock_gmail_cls: MagicMock
 ) -> None:
@@ -56,7 +56,7 @@ def test_download_attachment_sends_pdf(
 
 
 @patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_download_attachment_notifies_when_none_found(
     mock_bot_cls: MagicMock, mock_gmail_cls: MagicMock
 ) -> None:
@@ -82,7 +82,7 @@ def test_download_attachment_notifies_when_none_found(
 
 @patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
 @patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_save_attachment_writes_to_vault(
     mock_bot_cls: MagicMock,
     mock_gmail_cls: MagicMock,
@@ -119,7 +119,7 @@ def test_save_attachment_writes_to_vault(
 
 @patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
 @patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_save_attachment_skips_on_conflict(
     mock_bot_cls: MagicMock,
     mock_gmail_cls: MagicMock,
@@ -153,7 +153,7 @@ def test_save_attachment_skips_on_conflict(
 
 @patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
 @patch("spanreed.plugins.gmail_monitor_actions.GmailApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_save_attachment_none_found(
     mock_bot_cls: MagicMock,
     mock_gmail_cls: MagicMock,
@@ -201,7 +201,7 @@ def test_build_filename_falls_back_on_bad_template() -> None:
 
 
 @patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_save_link_writes_downloaded_file_to_vault(
     mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
 ) -> None:
@@ -235,7 +235,7 @@ def test_save_link_writes_downloaded_file_to_vault(
 
 
 @patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_save_link_infers_pdf_extension_when_missing(
     mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
 ) -> None:
@@ -265,7 +265,7 @@ def test_save_link_infers_pdf_extension_when_missing(
 
 
 @patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_save_link_no_links_found(
     mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
 ) -> None:
@@ -325,7 +325,7 @@ def test_is_document_rejects_html_and_images() -> None:
 
 
 @patch("spanreed.plugins.gmail_monitor_actions.ObsidianApi", autospec=True)
-@patch("spanreed.plugins.gmail_monitor_actions.TelegramBotApi", autospec=True)
+@patch("spanreed.plugins.gmail_monitor_actions.UserInteractionApi", autospec=True)
 def test_save_link_does_not_save_non_document(
     mock_bot_cls: MagicMock, mock_obsidian_cls: MagicMock
 ) -> None:

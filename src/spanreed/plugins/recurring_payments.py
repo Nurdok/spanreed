@@ -13,7 +13,7 @@ import jinja2
 
 from spanreed.apis.todoist import Todoist, Task, Project, Comment
 from spanreed.plugins.todoist import TodoistPlugin
-from spanreed.apis.telegram_bot import TelegramBotApi, UserInteractionPriority
+from spanreed.interaction import UserInteractionApi, UserInteractionPriority
 from spanreed.apis.obsidian_webhook import (
     ObsidianWebhookApi,
     ObsidianWebhookPlugin,
@@ -40,7 +40,7 @@ class RecurrenceInfo:
         return tz
 
     @staticmethod
-    async def ask_for_timezone(bot: TelegramBotApi) -> str:
+    async def ask_for_timezone(bot: UserInteractionApi) -> str:
         timezones = [
             "Africa/Abidjan",
             "America/New_York",
@@ -53,19 +53,15 @@ class RecurrenceInfo:
         # pytz.all_timezones
 
         return timezones[
-            await bot.request_user_choice(
-                "Please choose your timezone:", timezones
-            )
+            await bot.request_user_choice("Please choose your timezone:", timezones)
         ]
 
     @staticmethod
-    async def ask_for_frequency(bot: TelegramBotApi) -> int:
+    async def ask_for_frequency(bot: UserInteractionApi) -> int:
         frequencies: dict[str, int] = {
             "Weekly": dateutil.rrule.WEEKLY,
         }
-        frequency_choices = sorted(
-            frequencies.keys(), key=lambda x: frequencies[x]
-        )
+        frequency_choices = sorted(frequencies.keys(), key=lambda x: frequencies[x])
 
         return frequencies[
             frequency_choices[
@@ -94,7 +90,7 @@ class RecurrenceInfo:
         return sorted(weekdays.keys(), key=lambda x: weekdays[x].weekday)
 
     @staticmethod
-    async def ask_for_week_start_day(bot: TelegramBotApi) -> int:
+    async def ask_for_week_start_day(bot: UserInteractionApi) -> int:
         return RecurrenceInfo.get_weekdays()[
             RecurrenceInfo.get_weekday_choices()[
                 await bot.request_user_choice(
@@ -105,7 +101,7 @@ class RecurrenceInfo:
         ].weekday
 
     @staticmethod
-    async def ask_for_week_day(bot: TelegramBotApi) -> int:
+    async def ask_for_week_day(bot: UserInteractionApi) -> int:
         return RecurrenceInfo.get_weekdays()[
             RecurrenceInfo.get_weekday_choices()[
                 await bot.request_user_choice(
@@ -116,19 +112,15 @@ class RecurrenceInfo:
         ].weekday
 
     @staticmethod
-    async def ask_for_hour(bot: TelegramBotApi) -> int:
+    async def ask_for_hour(bot: UserInteractionApi) -> int:
         return int(
-            await bot.request_user_input(
-                "Please enter the hour of the day (0-23):"
-            )
+            await bot.request_user_input("Please enter the hour of the day (0-23):")
         )
 
     @staticmethod
-    async def ask_for_minute(bot: TelegramBotApi) -> int:
+    async def ask_for_minute(bot: UserInteractionApi) -> int:
         return int(
-            await bot.request_user_input(
-                "Please enter the minute of the day (0-59):"
-            )
+            await bot.request_user_input("Please enter the minute of the day (0-59):")
         )
 
 
@@ -139,19 +131,19 @@ class ObsidianLog:
     note_content_template: str
 
     @staticmethod
-    async def ask_for_note_title(bot: TelegramBotApi) -> str:
+    async def ask_for_note_title(bot: UserInteractionApi) -> str:
         return await bot.request_user_input(
             "Please enter the name of the note you'd like to log to:"
         )
 
     @staticmethod
-    async def ask_for_file_location(bot: TelegramBotApi) -> str:
+    async def ask_for_file_location(bot: UserInteractionApi) -> str:
         return await bot.request_user_input(
             "Please enter the directory path of the note you'd like to log to:"
         )
 
     @staticmethod
-    async def ask_for_note_content_template(bot: TelegramBotApi) -> str:
+    async def ask_for_note_content_template(bot: UserInteractionApi) -> str:
         return await bot.request_user_input(
             "Please enter the template of the note content.\n"
             "You can use the following optional placeholders:\n"
@@ -177,14 +169,14 @@ class RecurringPayment:
             self.obsidian_log = ObsidianLog(**self.obsidian_log)
 
     @staticmethod
-    async def ask_for_todoist_label(bot: TelegramBotApi) -> str:
+    async def ask_for_todoist_label(bot: UserInteractionApi) -> str:
         return await bot.request_user_input(
             "Please enter a unique label of the Todoist task where you'd"
             " like to keep track of payments:"
         )
 
     @staticmethod
-    async def ask_for_date_format(bot: TelegramBotApi) -> str:
+    async def ask_for_date_format(bot: UserInteractionApi) -> str:
         date_format = "%Y-%m-%d"
         if (
             await bot.request_user_choice(
@@ -193,13 +185,11 @@ class RecurringPayment:
                 ["Keep as-is", "Change it"],
             )
         ) == 1:
-            date_format = await bot.request_user_input(
-                "Please enter the date format:"
-            )
+            date_format = await bot.request_user_input("Please enter the date format:")
         return date_format
 
     @staticmethod
-    async def ask_for_todoist_task_template(bot: TelegramBotApi) -> str:
+    async def ask_for_todoist_task_template(bot: UserInteractionApi) -> str:
         return await bot.request_user_input(
             "Please enter a template for the Todoist task name.\n"
             "You can use the following optional placeholders:\n"
@@ -213,7 +203,7 @@ class RecurringPayment:
 
     @staticmethod
     async def ask_for_todoist_project_id(
-        bot: TelegramBotApi, todoist: Todoist
+        bot: UserInteractionApi, todoist: Todoist
     ) -> str:
         projects: list[Project] = await todoist.get_projects()
         todoist_project = await bot.request_user_choice(
@@ -223,7 +213,7 @@ class RecurringPayment:
         return projects[todoist_project].id
 
     @staticmethod
-    async def ask_for_recurrence_cost(bot: TelegramBotApi) -> float:
+    async def ask_for_recurrence_cost(bot: UserInteractionApi) -> float:
         return float(
             await bot.request_user_input(
                 "Please enter the cost of a single recurrence (you"
@@ -232,7 +222,7 @@ class RecurringPayment:
         )
 
     @staticmethod
-    async def ask_for_verify_recurrence(bot: TelegramBotApi) -> bool:
+    async def ask_for_verify_recurrence(bot: UserInteractionApi) -> bool:
         return (
             True
             if await bot.request_user_choice(
@@ -245,12 +235,12 @@ class RecurringPayment:
 
     @staticmethod
     async def ask_for_new_recurrence(
-        user: User, bot: TelegramBotApi, todoist: Todoist
+        user: User, bot: UserInteractionApi, todoist: Todoist
     ) -> "RecurringPayment":
         todoist_label = await RecurringPayment.ask_for_todoist_label(bot)
         date_format = await RecurringPayment.ask_for_date_format(bot)
-        todoist_task_template = (
-            await RecurringPayment.ask_for_todoist_task_template(bot)
+        todoist_task_template = await RecurringPayment.ask_for_todoist_task_template(
+            bot
         )
         todoist_project_id = await RecurringPayment.ask_for_todoist_project_id(
             bot, todoist
@@ -264,9 +254,7 @@ class RecurringPayment:
         hour = await RecurrenceInfo.ask_for_hour(bot)
         minute = await RecurrenceInfo.ask_for_minute(bot)
 
-        verify_recurrence = await RecurringPayment.ask_for_verify_recurrence(
-            bot
-        )
+        verify_recurrence = await RecurringPayment.ask_for_verify_recurrence(bot)
 
         obsidian_log: Optional[ObsidianLog] = None
         if (
@@ -316,9 +304,7 @@ class UserConfig:
     def __post_init__(self) -> None:
         for index, recurring_payment in enumerate(self.recurring_payments):
             if isinstance(recurring_payment, dict):
-                self.recurring_payments[index] = RecurringPayment(
-                    **recurring_payment
-                )
+                self.recurring_payments[index] = RecurringPayment(**recurring_payment)
 
 
 class RecurringPaymentsPlugin(Plugin[UserConfig]):
@@ -336,13 +322,11 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         recurring_payments: list[RecurringPayment] = []
         logger = logging.getLogger(__name__)
         while True:
-            logger.info(
-                "Asking for recurring payment. Current: %s", recurring_payments
-            )
+            logger.info("Asking for recurring payment. Current: %s", recurring_payments)
             if recurring_payments:
                 choice = await bot.request_user_choice(
                     f"You currently have {len(recurring_payments)} recurring "
@@ -353,7 +337,9 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                     break
 
             todoist: Todoist = await Todoist.for_user(user)
-            recurring_payments.append(await RecurringPayment.ask_for_new_recurrence(user, bot, todoist))
+            recurring_payments.append(
+                await RecurringPayment.ask_for_new_recurrence(user, bot, todoist)
+            )
 
         self = await cls.get_plugin_by_class(cls)
         self._logger.info("Setting config")
@@ -389,9 +375,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
         todoist_api: Todoist = await Todoist.for_user(user)
 
         def now() -> datetime.datetime:
-            return datetime.datetime.now(
-                tz=recurring_payment.recurrence_info.tzinfo
-            )
+            return datetime.datetime.now(tz=recurring_payment.recurrence_info.tzinfo)
 
         self._logger.info(f"{now()=}")
         recurrence = self.get_recurrence(recurring_payment.recurrence_info)
@@ -415,10 +399,8 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
             if len(tasks) == 1:
                 self._logger.info("Found existing task")
                 (task,) = tasks
-                comment: Comment = (
-                    await todoist_api.get_first_comment_with_yaml(
-                        task, create=True
-                    )
+                comment: Comment = await todoist_api.get_first_comment_with_yaml(
+                    task, create=True
                 )
                 desc_split = comment.content.split("---")
                 self._logger.info(desc_split)
@@ -443,7 +425,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
 
             if date_str not in dates:
                 if recurring_payment.verify_recurrence:
-                    bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+                    bot: UserInteractionApi = await UserInteractionApi.for_user(user)
                     async with bot.user_interaction(
                         propagate_preemption=True,
                         priority=UserInteractionPriority.HIGH,
@@ -481,9 +463,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                     ]
                 )
 
-                self._logger.info(
-                    f"{new_task_content=}\n{new_comment_content=}"
-                )
+                self._logger.info(f"{new_task_content=}\n{new_comment_content=}")
 
                 if task is None:
                     self._logger.info("Creating new task")
@@ -509,9 +489,7 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
                     )
 
                 await todoist_api.set_due_date_to_today(task)
-                await self.add_to_obsidian_log(
-                    user, recurring_payment, date_str
-                )
+                await self.add_to_obsidian_log(user, recurring_payment, date_str)
 
     async def add_to_obsidian_log(
         self, user: User, recurring_payment: RecurringPayment, date_str: str
@@ -520,15 +498,11 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
             return
         obsidian_log: ObsidianLog = recurring_payment.obsidian_log
 
-        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(
-            user
+        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(user)
+        note_content: str = jinja2.Template(obsidian_log.note_content_template).render(
+            date=date_str
         )
-        note_content: str = jinja2.Template(
-            obsidian_log.note_content_template
-        ).render(date=date_str)
-        self._logger.info(
-            f'Added event log to note: "{obsidian_log.note_title}"'
-        )
+        self._logger.info(f'Added event log to note: "{obsidian_log.note_title}"')
         await webhook_api.append_to_note(
             note_path=str(
                 (
@@ -546,9 +520,5 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
         self._logger.info(f"Starting recurring payments for user {user}")
         async with asyncio.TaskGroup() as tg:
             for recurring_payment in user_config.recurring_payments:
-                tg.create_task(
-                    self.run_for_single_recurrence(user, recurring_payment)
-                )
-        self._logger.info(
-            f"Unexpected end of recurring payments for user {user}"
-        )
+                tg.create_task(self.run_for_single_recurrence(user, recurring_payment))
+        self._logger.info(f"Unexpected end of recurring payments for user {user}")

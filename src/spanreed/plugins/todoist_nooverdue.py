@@ -4,7 +4,8 @@ from spanreed.apis.todoist import Todoist
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.user import User
 from spanreed.plugin import Plugin
-from spanreed.apis.telegram_bot import TelegramBotApi, TelegramBotPlugin
+from spanreed.interaction import UserInteractionApi
+from spanreed.apis.telegram_bot import TelegramBotPlugin
 from typing import List, Type
 
 
@@ -37,12 +38,8 @@ class TodoistNoOverduePlugin(Plugin[None]):
         self, user: User, todoist_api: Todoist
     ) -> None:
         # TODO: Make the tag name configurable per user.
-        tasks = await todoist_api.get_overdue_tasks_with_label(
-            "spanreed/no-overdue"
-        )
-        self._logger.info(
-            f"Found {len(tasks)} overdue tasks for user {user.id}"
-        )
+        tasks = await todoist_api.get_overdue_tasks_with_label("spanreed/no-overdue")
+        self._logger.info(f"Found {len(tasks)} overdue tasks for user {user.id}")
         for task in tasks:
             await todoist_api.set_due_date_to_today(task)
 
@@ -52,7 +49,5 @@ class TodoistNoOverduePlugin(Plugin[None]):
         self._logger.info(f"{TelegramBotPlugin=}")
         if tasks and await TelegramBotPlugin.is_registered(user):
             self._logger.info(f"Sending Telegram message for user {user.id}")
-            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
-            await bot.send_message(
-                f"Updated {len(tasks)} overdue tasks to today."
-            )
+            bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+            await bot.send_message(f"Updated {len(tasks)} overdue tasks to today.")

@@ -66,6 +66,21 @@ def test_flood_control_sleep_is_capped_and_jittered() -> None:
     assert 3600 + lo <= sleeps[0] <= 3600 + hi
 
 
+def test_surface_busy_error_treated_as_flood_control() -> None:
+    # The surface-neutral translation of RetryAfter (what migrated plugins
+    # and the facade actually raise) must take the same flood path.
+    from spanreed.interaction import SurfaceBusyError
+
+    plugin = _make_plugin()
+    ban = SurfaceBusyError(26000)
+
+    sleeps = _run_supervised_capturing_sleeps(plugin, [ban, None])
+
+    assert len(sleeps) == 1
+    lo, hi = Plugin.FLOOD_WAKE_JITTER_RANGE_S
+    assert 3600 + lo <= sleeps[0] <= 3600 + hi
+
+
 def test_flood_control_jitter_desynchronizes_plugins() -> None:
     # Two plugins hitting the same ban must not pick the same wake time.
     plugin = _make_plugin()

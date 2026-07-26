@@ -1,4 +1,4 @@
-from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.plugin import Plugin
 from spanreed.user import User
 
@@ -17,7 +17,7 @@ class PluginManagerPlugin(Plugin):
         return False
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Manage plugins",
@@ -27,7 +27,7 @@ class PluginManagerPlugin(Plugin):
 
     async def _manage_plugins(self, user: User) -> None:
         self._logger.info(f"Managing plugins for user {user.id}")
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         while True:
             plugins = await Plugin.get_plugins_for_user(user)
@@ -36,8 +36,7 @@ class PluginManagerPlugin(Plugin):
             else:
                 await bot.send_message(
                     f"You are currently using these plugins,"
-                    f" {user.name}: \n"
-                    + "\n".join(f"- {p.name()}" for p in plugins)
+                    f" {user.name}: \n" + "\n".join(f"- {p.name()}" for p in plugins)
                 )
 
             choice = await bot.request_user_choice(
@@ -59,14 +58,13 @@ class PluginManagerPlugin(Plugin):
                 break
 
     async def _register_to_new_plugin(
-        self, bot: TelegramBotApi, user: User
+        self, bot: UserInteractionApi, user: User
     ) -> None:
         # Filter out plugins that the user is already using.
         plugins: List[Plugin] = [
             plugin
             for plugin in await Plugin.get_all_plugins()
-            if user.plugins is None
-            or plugin.canonical_name() not in user.plugins
+            if user.plugins is None or plugin.canonical_name() not in user.plugins
         ]
 
         if not plugins:
@@ -85,7 +83,7 @@ class PluginManagerPlugin(Plugin):
         await plugin.register_user(user)
 
     async def _unregister_from_an_existing_plugin(
-        self, bot: TelegramBotApi, user: User
+        self, bot: UserInteractionApi, user: User
     ) -> None:
         if not user.plugins:
             await bot.send_message("There are no plugins to unregister from.")
@@ -106,7 +104,7 @@ class PluginManagerPlugin(Plugin):
         await plugin.unregister_user(user)
 
     async def _reconfigure_existing_plugin(
-        self, bot: TelegramBotApi, user: User
+        self, bot: UserInteractionApi, user: User
     ) -> None:
         plugins = [
             plugin
@@ -118,10 +116,12 @@ class PluginManagerPlugin(Plugin):
             await bot.send_message("There are no plugins to reconfigure.")
             return
 
-        if (choice := await bot.request_user_choice(
-            "Which plugin do you want to reconfigure?",
-            [p.name() for p in plugins] + ["Cancel"],
-        )) == len(plugins):
+        if (
+            choice := await bot.request_user_choice(
+                "Which plugin do you want to reconfigure?",
+                [p.name() for p in plugins] + ["Cancel"],
+            )
+        ) == len(plugins):
             return
 
         plugin = plugins[choice]
