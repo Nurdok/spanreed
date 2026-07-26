@@ -331,6 +331,35 @@ def test_toggle_off_cancels_origin_flow() -> None:
         asyncio.run(run())
 
 
+def test_sync_publishes_command_list_and_replies_with_fresh_version() -> None:
+    # A brand-new instance syncs before any registry change has fired for
+    # its user; the sync itself must create the palette read-model.
+    fake, patcher = _patch_redis()
+    plugin = _make_plugin()
+    user = mock_user_find_by_id(USER_ID)
+    user.plugins = ["habit-tracker"]
+    commands.register_command(
+        "habit-tracker", PluginCommand(text="Track Habits", callback=AsyncMock())
+    )
+
+    async def run() -> None:
+        await _register_instance(fake, "laptop")
+        assert protocol.command_list_key(USER_ID) not in fake.strings
+        with patch("spanreed.plugins.obsidian_surface.redis_api", new=fake):
+            await plugin.handle_event(user, "laptop", "sync", {})
+        stored = json.loads(fake.strings[protocol.command_list_key(USER_ID)])
+        envelopes = _envelopes(fake, "laptop")
+        assert [e["kind"] for e in envelopes] == [
+            "commands-updated",
+            "sync-reply",
+        ]
+        reply = envelopes[-1]["payload"]
+        assert reply["command_list_version"] == stored["version"]
+
+    with patcher:
+        asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # Command-list publishing
 # ---------------------------------------------------------------------------
