@@ -3,7 +3,7 @@ import datetime
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.apis.withings import (
     WithingsApi,
     UserConfig,
@@ -38,7 +38,7 @@ class WithingsPlugin(Plugin):
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
         logging.info("Asking for Withings user config.")
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         auth: AuthenticationFlow
         async with WithingsApi.start_authentication(user) as auth:
@@ -54,7 +54,7 @@ class WithingsPlugin(Plugin):
             await WithingsPlugin.set_config(user, auth.get_user_config())
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(text="Sync Withings data", callback=self._sync_now),
         )
@@ -67,7 +67,7 @@ class WithingsPlugin(Plugin):
 
     async def _sync_now(self, user: User) -> None:
         """Manually triggered sync via the Telegram command."""
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         choice = await bot.request_user_choice(
             "Sync Withings data for…",
             ["Today", "The last week", "Cancel"],
@@ -89,7 +89,7 @@ class WithingsPlugin(Plugin):
         Existing property values are left untouched. Returns the number of
         measurement values newly written.
         """
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         withings = await WithingsApi.for_user(user)
         obsidian = await ObsidianApi.for_user(user)
 
@@ -111,22 +111,14 @@ class WithingsPlugin(Plugin):
             for measurement_type, value in measurements_by_date[date].items():
                 name = MEASUREMENT_TYPE_TO_STR[measurement_type]
                 try:
-                    existing_value = await obsidian.get_property(
-                        daily_note, name
-                    )
+                    existing_value = await obsidian.get_property(daily_note, name)
                     if existing_value is not None:
                         continue
-                    await obsidian.set_value_of_property(
-                        daily_note, name, value
-                    )
+                    await obsidian.set_value_of_property(daily_note, name, value)
                 except FileNotFoundError:
-                    await bot.notify(
-                        f"No daily note for {date.isoformat()}; skipping."
-                    )
+                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
                     break
 
                 written += 1
-                await bot.notify(
-                    f"Logged {name} for {date.isoformat()}: {value}."
-                )
+                await bot.notify(f"Logged {name} for {date.isoformat()}: {value}.")
         return written

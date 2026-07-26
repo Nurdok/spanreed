@@ -2,11 +2,11 @@ import asyncio
 import datetime
 import logging
 
-from telegram.error import RetryAfter
+from spanreed.interaction import SurfaceBusyError
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.telegram_bot import TelegramBotApi, PluginCommand
+from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.apis.googlefit import GoogleFitApi, GoogleFitAuthenticationFlow
 from spanreed.apis.obsidian import ObsidianApi
 
@@ -29,7 +29,7 @@ class GoogleFitPlugin(Plugin):
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
         logging.info("Asking for Google Fit user config.")
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         if not await GoogleFitApi.is_app_configured():
             await bot.send_message(
@@ -54,14 +54,14 @@ class GoogleFitPlugin(Plugin):
         await bot.send_message("Google Fit authenticated successfully.")
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(text="Sync steps", callback=self._sync_now),
         )
         await super().run()
 
     async def run_for_user(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         while True:
             # Sync a 2-day rolling window silently: today's count keeps
             # growing through the day (so we overwrite it each hour), and
@@ -72,7 +72,7 @@ class GoogleFitPlugin(Plugin):
                     await self._sync(user, days=2, notify=False)
             except asyncio.CancelledError:
                 raise
-            except RetryAfter:
+            except SurfaceBusyError:
                 # Telegram flood control: let the supervisor's jittered
                 # flood handling own the wake-up time.
                 raise
@@ -85,7 +85,7 @@ class GoogleFitPlugin(Plugin):
                 )
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
 
-    async def _ensure_authenticated(self, user: User, bot: TelegramBotApi) -> bool:
+    async def _ensure_authenticated(self, user: User, bot: UserInteractionApi) -> bool:
         """Return True if authenticated; else DM a re-auth link and False.
 
         When a refresh token dies (e.g. Google's 7-day expiry for OAuth apps
@@ -119,7 +119,7 @@ class GoogleFitPlugin(Plugin):
 
     async def _sync_now(self, user: User) -> None:
         """Manually triggered sync via the Telegram command."""
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         choice = await bot.request_user_choice(
             "Sync steps for…",
             ["Today", "The last week", "Cancel"],
@@ -144,7 +144,7 @@ class GoogleFitPlugin(Plugin):
         untouched. When ``notify`` is false (the hourly background sync) no
         Telegram messages are sent. Returns the number of days written.
         """
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         fit = await GoogleFitApi.for_user(user)
         obsidian = await ObsidianApi.for_user(user)
 

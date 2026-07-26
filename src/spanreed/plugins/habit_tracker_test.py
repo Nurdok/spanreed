@@ -9,7 +9,7 @@ from spanreed.plugins.habit_tracker import (
     Habit,
 )
 from spanreed.test_utils import (
-    patch_telegram_bot,
+    patch_user_interaction,
     mock_user_find_by_id,
     patch_obsidian,
     AsyncContextManager,
@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch, AsyncMock, call
 
 @patch.object(HabitTrackerPlugin, "get_config")
 @patch_obsidian("spanreed.plugins.habit_tracker")
-@patch_telegram_bot("spanreed.plugins.habit_tracker")
+@patch_user_interaction("spanreed.plugins.habit_tracker")
 def test_run_for_user(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,
@@ -64,7 +64,7 @@ def test_run_for_user(
 @patch.object(asyncio, "timeout")
 @patch.object(HabitTrackerPlugin, "get_config")
 @patch_obsidian("spanreed.plugins.habit_tracker")
-@patch_telegram_bot("spanreed.plugins.habit_tracker")
+@patch_user_interaction("spanreed.plugins.habit_tracker")
 def test_run_for_user_passed_midnight(
     mock_bot: AsyncMock,
     mock_obsidian: AsyncMock,

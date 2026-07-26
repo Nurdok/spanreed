@@ -10,7 +10,7 @@ import aiohttp
 from spanreed.user import User
 from spanreed.apis.gmail import EmailMessage, GmailApi
 from spanreed.apis.obsidian import ObsidianApi
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.interaction import UserInteractionApi
 
 
 @dataclass
@@ -31,7 +31,7 @@ class TelegramNotificationAction(EmailActionHandler):
     async def execute(
         self, email_match: EmailMatch, config: Dict[str, Any], user: User
     ) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
 
         email = email_match.email
         rule_name = email_match.rule_name
@@ -86,7 +86,7 @@ class DownloadAttachmentAction(EmailActionHandler):
     async def execute(
         self, email_match: EmailMatch, config: Dict[str, Any], user: User
     ) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         email = email_match.email
         rule_name = email_match.rule_name
 
@@ -150,7 +150,7 @@ class SaveAttachmentToVaultAction(EmailActionHandler):
     async def execute(
         self, email_match: EmailMatch, config: Dict[str, Any], user: User
     ) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         email = email_match.email
         rule_name = email_match.rule_name
 
@@ -246,7 +246,7 @@ class DownloadLinkAction(EmailActionHandler):
     async def execute(
         self, email_match: EmailMatch, config: Dict[str, Any], user: User
     ) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         email = email_match.email
         rule_name = email_match.rule_name
 
@@ -336,7 +336,7 @@ class DownloadLinkAction(EmailActionHandler):
 
     async def _download_and_send_file(
         self,
-        bot: TelegramBotApi,
+        bot: UserInteractionApi,
         url: str,
         email: EmailMessage,
         rule_name: str,
@@ -554,7 +554,7 @@ class SaveLinkToVaultAction(DownloadLinkAction):
     async def execute(
         self, email_match: EmailMatch, config: Dict[str, Any], user: User
     ) -> None:
-        bot = await TelegramBotApi.for_user(user)
+        bot = await UserInteractionApi.for_user(user)
         email = email_match.email
         rule_name = email_match.rule_name
 

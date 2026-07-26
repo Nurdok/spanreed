@@ -14,7 +14,7 @@ from spanreed.test_utils import (
     mock_user_find_by_id,
     patch_obsidian,
     patch_redis,
-    patch_telegram_bot,
+    patch_user_interaction,
 )
 
 
@@ -75,7 +75,7 @@ def test_find_match_candidates_no_match() -> None:
 
 @patch("spanreed.plugins.book_progress.AudibleApi", autospec=True)
 @patch_obsidian("spanreed.plugins.book_progress")
-@patch_telegram_bot("spanreed.plugins.book_progress")
+@patch_user_interaction("spanreed.plugins.book_progress")
 @patch_redis
 def test_sync_updates_progress_for_linked_note(
     mock_redis: Any,
@@ -107,7 +107,7 @@ def test_sync_updates_progress_for_linked_note(
 
 @patch("spanreed.plugins.book_progress.AudibleApi", autospec=True)
 @patch_obsidian("spanreed.plugins.book_progress")
-@patch_telegram_bot("spanreed.plugins.book_progress")
+@patch_user_interaction("spanreed.plugins.book_progress")
 @patch_redis
 def test_sync_skips_unchanged_progress(
     mock_redis: Any,
@@ -136,7 +136,7 @@ def test_sync_skips_unchanged_progress(
 
 @patch("spanreed.plugins.book_progress.AudibleApi", autospec=True)
 @patch_obsidian("spanreed.plugins.book_progress")
-@patch_telegram_bot("spanreed.plugins.book_progress")
+@patch_user_interaction("spanreed.plugins.book_progress")
 @patch_redis
 def test_unlinked_note_verification_persists_asin(
     mock_redis: Any,
@@ -176,7 +176,7 @@ def test_unlinked_note_verification_persists_asin(
 
 @patch("spanreed.plugins.book_progress.AudibleApi", autospec=True)
 @patch_obsidian("spanreed.plugins.book_progress")
-@patch_telegram_bot("spanreed.plugins.book_progress")
+@patch_user_interaction("spanreed.plugins.book_progress")
 @patch_redis
 def test_not_on_audible_choice_is_remembered(
     mock_redis: Any,
@@ -213,7 +213,7 @@ def test_not_on_audible_choice_is_remembered(
 
 @patch("spanreed.plugins.book_progress.AudibleApi", autospec=True)
 @patch_obsidian("spanreed.plugins.book_progress")
-@patch_telegram_bot("spanreed.plugins.book_progress")
+@patch_user_interaction("spanreed.plugins.book_progress")
 @patch_redis
 def test_finished_book_prompts_and_marks_read(
     mock_redis: Any,
@@ -253,7 +253,7 @@ def test_finished_book_prompts_and_marks_read(
 
 @patch("spanreed.plugins.book_progress.AudibleApi", autospec=True)
 @patch_obsidian("spanreed.plugins.book_progress")
-@patch_telegram_bot("spanreed.plugins.book_progress")
+@patch_user_interaction("spanreed.plugins.book_progress")
 @patch_redis
 def test_finish_prompt_only_happens_once(
     mock_redis: Any,

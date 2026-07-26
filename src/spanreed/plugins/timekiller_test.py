@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from spanreed.plugins.timekiller import TimekillerPlugin, UserConfig
 from spanreed.plugin import Plugin
-from spanreed.test_utils import mock_user_find_by_id, patch_telegram_bot
+from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
 
 
 def _plugin_with_store() -> tuple[TimekillerPlugin, dict]:
@@ -57,7 +57,7 @@ def test_skipped_scans_add_get_clear() -> None:
     assert asyncio.run(plugin._get_skipped_scans(user)) == set()
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_clear_skipped_scans_command_reports_count(mock_bot: AsyncMock) -> None:
     plugin, store = _plugin_with_store()
     store[TimekillerPlugin.SKIPPED_SCANS_KEY] = json.dumps(["a", "b"])
@@ -70,7 +70,7 @@ def test_clear_skipped_scans_command_reports_count(mock_bot: AsyncMock) -> None:
     assert asyncio.run(plugin._get_skipped_scans(user)) == set()
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_clear_skipped_scans_command_when_empty(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     user = mock_user_find_by_id(1)
@@ -80,7 +80,7 @@ def test_clear_skipped_scans_command_when_empty(mock_bot: AsyncMock) -> None:
     mock_bot.send_message.assert_awaited_once_with("No skipped scans to clear.")
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_prompt_ignores_skipped_scan(mock_bot: AsyncMock) -> None:
     plugin, store = _plugin_with_store()
     store[TimekillerPlugin.SKIPPED_SCANS_KEY] = json.dumps(
@@ -98,7 +98,7 @@ def test_prompt_ignores_skipped_scan(mock_bot: AsyncMock) -> None:
     mock_bot.send_document.assert_not_called()
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_prompt_delete_removes_file(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     obsidian = MagicMock()
@@ -116,7 +116,7 @@ def test_prompt_delete_removes_file(mock_bot: AsyncMock) -> None:
     obsidian.delete_file.assert_awaited_once_with("Assets/scans/2026-01-01 Scan.pdf")
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_journal_prompt_appends_under_configured_heading(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     _stub_config(plugin, UserConfig(journal_heading="Journal"))
@@ -136,7 +136,7 @@ def test_journal_prompt_appends_under_configured_heading(mock_bot: AsyncMock) ->
     assert "my answer" in obsidian.append_to_note.call_args.args[1]
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_journal_prompt_no_heading_when_unset(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     _stub_config(plugin, UserConfig())
@@ -153,7 +153,7 @@ def test_journal_prompt_no_heading_when_unset(mock_bot: AsyncMock) -> None:
     assert kwargs["heading"] is None
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_set_journal_heading_command(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     holder = _stub_config(plugin, UserConfig())
@@ -165,7 +165,7 @@ def test_set_journal_heading_command(mock_bot: AsyncMock) -> None:
     assert holder["config"].journal_heading == "Daily Journal"
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_set_journal_heading_command_none_clears(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     holder = _stub_config(plugin, UserConfig(journal_heading="Journal"))
@@ -177,7 +177,7 @@ def test_set_journal_heading_command_none_clears(mock_bot: AsyncMock) -> None:
     assert holder["config"].journal_heading is None
 
 
-@patch_telegram_bot("spanreed.plugins.timekiller")
+@patch_user_interaction("spanreed.plugins.timekiller")
 def test_prompt_skip_adds_to_skiplist(mock_bot: AsyncMock) -> None:
     plugin, _ = _plugin_with_store()
     obsidian = MagicMock()

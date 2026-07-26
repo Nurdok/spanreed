@@ -7,8 +7,8 @@ import datetime
 import textwrap
 from dataclasses import dataclass
 
-from spanreed.apis.telegram_bot import (
-    TelegramBotApi,
+from spanreed.interaction import (
+    UserInteractionApi,
     PluginCommand,
     UserInteractionPreempted,
 )
@@ -44,7 +44,7 @@ class TimekillerPlugin(Plugin):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         heading = (
             await bot.request_user_input(
                 "Under which heading should journaling answers be added in the"
@@ -55,14 +55,14 @@ class TimekillerPlugin(Plugin):
         await cls.set_config(
             user,
             UserConfig(
-                journal_heading=None
-                if heading == "" or heading.lower() == "none"
-                else heading
+                journal_heading=(
+                    None if heading == "" or heading.lower() == "none" else heading
+                )
             ),
         )
 
     async def run(self) -> None:
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Kill time",
@@ -70,7 +70,7 @@ class TimekillerPlugin(Plugin):
             ),
         )
 
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Clear skipped scans",
@@ -78,7 +78,7 @@ class TimekillerPlugin(Plugin):
             ),
         )
 
-        await TelegramBotApi.register_command(
+        await UserInteractionApi.register_command(
             self,
             PluginCommand(
                 text="Set journal heading",
@@ -89,7 +89,7 @@ class TimekillerPlugin(Plugin):
         await super().run()
 
     async def _set_journal_heading_command(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         config: UserConfig = await self.get_config(user)
         current: str = config.journal_heading or "(none — appended at the end)"
         heading = (
@@ -132,7 +132,7 @@ class TimekillerPlugin(Plugin):
         await self.set_user_data(user, self.SKIPPED_SCANS_KEY, json.dumps([]))
 
     async def _clear_skipped_scans_command(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         skipped = await self._get_skipped_scans(user)
         if not skipped:
             await bot.send_message("No skipped scans to clear.")
@@ -143,7 +143,7 @@ class TimekillerPlugin(Plugin):
         )
 
     async def run_for_user(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         while True:
             now: datetime.datetime = datetime.datetime.now()
@@ -200,7 +200,7 @@ class TimekillerPlugin(Plugin):
         Skips questions about what killtime activity to do to reduce friction.
         """
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         timekillers: dict = await self.get_available_time_killers(
             user,
             obsidian,
@@ -211,7 +211,7 @@ class TimekillerPlugin(Plugin):
 
     async def _kill_time(self, user: User) -> None:
         obsidian: ObsidianApi = await ObsidianApi.for_user(user)
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         timekillers: dict = await self.get_available_time_killers(
             user,
             obsidian,
@@ -222,7 +222,7 @@ class TimekillerPlugin(Plugin):
         await timekillers[choices[choice]](user, bot, obsidian)
 
     async def _journal_prompt(
-        self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+        self, user: User, bot: UserInteractionApi, obsidian: ObsidianApi
     ) -> None:
         prompts: list[str] = [
             "What are you doing right now?",
@@ -279,7 +279,7 @@ class TimekillerPlugin(Plugin):
                 break
 
     async def _poll_for_metrics(
-        self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+        self, user: User, bot: UserInteractionApi, obsidian: ObsidianApi
     ) -> None:
         daily_note: str = await obsidian.get_daily_note("Daily")
         if await obsidian.get_property(daily_note, "mood") is not None:
@@ -352,7 +352,7 @@ class TimekillerPlugin(Plugin):
         await bot.send_message("Noted!")
 
     async def prompt_for_currently_reading_books(
-        self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+        self, user: User, bot: UserInteractionApi, obsidian: ObsidianApi
     ) -> None:
         books = await obsidian.query_dataview(
             """
@@ -438,7 +438,7 @@ class TimekillerPlugin(Plugin):
         )
 
     async def prompt_for_scan_processing(
-        self, user: User, bot: TelegramBotApi, obsidian: ObsidianApi
+        self, user: User, bot: UserInteractionApi, obsidian: ObsidianApi
     ) -> None:
         iso8601_date_pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
         pattern = re.compile(r"\d{4}-\d{2}-\d{2} Scan")

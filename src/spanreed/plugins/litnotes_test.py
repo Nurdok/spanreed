@@ -15,7 +15,7 @@ from spanreed.apis.obsidian_webhook import ObsidianWebhookPlugin
 from spanreed.test_utils import (
     patch_redis,
     mock_user_find_by_id,
-    patch_telegram_bot,
+    patch_user_interaction,
     async_return_false,
     async_return_true,
 )
@@ -45,7 +45,7 @@ def test_get_users(mock_redis: MagicMock) -> None:
         assert set(u.id for u in users) == {4, 7}
 
 
-@patch_telegram_bot("spanreed.plugins.litnotes")
+@patch_user_interaction("spanreed.plugins.litnotes")
 def test_ask_for_user_config(mock_bot: AsyncMock) -> None:
     Plugin.reset_registry()
     plugin = LitNotesPlugin()
@@ -87,7 +87,7 @@ def test_ask_for_user_config(mock_bot: AsyncMock) -> None:
 @patch.object(ObsidianWebhookPlugin, "is_registered", async_return_false)
 @patch.object(GoogleBooks, "get_books")
 @patch.object(LitNotesPlugin, "get_config")
-@patch_telegram_bot("spanreed.plugins.litnotes")
+@patch_user_interaction("spanreed.plugins.litnotes")
 def test_ask_for_book_note(
     mock_bot: AsyncMock, mock_get_config: AsyncMock, mock_gbooks: AsyncMock
 ) -> None:
@@ -180,7 +180,7 @@ def test_ask_for_book_note(
 @patch("spanreed.plugins.litnotes.ObsidianWebhookApi", autospec=True)
 @patch.object(GoogleBooks, "get_books")
 @patch.object(LitNotesPlugin, "get_config")
-@patch_telegram_bot("spanreed.plugins.litnotes")
+@patch_user_interaction("spanreed.plugins.litnotes")
 def test_ask_for_book_note_with_webhooks(
     mock_bot: AsyncMock,
     mock_get_config: AsyncMock,

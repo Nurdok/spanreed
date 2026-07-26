@@ -13,6 +13,8 @@ from dataclasses import asdict
 
 from telegram.error import RetryAfter
 
+from spanreed.interaction.errors import SurfaceBusyError
+
 # Indirection so tests can fake the supervisor's uptime clock without
 # patching time.monotonic globally (asyncio uses it internally too).
 _monotonic = time.monotonic
@@ -76,10 +78,7 @@ class Plugin(abc.ABC, Generic[UC]):
 
     @classmethod
     async def set_config(cls, user: User, config: UC) -> None:
-        if (
-            cls.get_config_class() is None
-            or type(config) != cls.get_config_class()
-        ):
+        if cls.get_config_class() is None or type(config) != cls.get_config_class():
             raise NotImplementedError(
                 "This plugin does not have user config, or the passed "
                 "config is of the wrong type."
@@ -124,9 +123,9 @@ class Plugin(abc.ABC, Generic[UC]):
 
     async def register_user(self, user: User) -> None:
         self._logger.info(f"Registering user {user.id} to plugin")
-        from spanreed.apis.telegram_bot import TelegramBotApi
+        from spanreed.interaction import UserInteractionApi
 
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
         unregistered_plugins: list[Plugin] = [
             plugin
@@ -200,7 +199,10 @@ class Plugin(abc.ABC, Generic[UC]):
                 return
             except asyncio.CancelledError:
                 raise
-            except RetryAfter as e:
+            except (RetryAfter, SurfaceBusyError) as e:
+                # Flood control, either raw from Telegram internals or
+                # translated to the surface-neutral SurfaceBusyError by the
+                # interaction facade (plugins only ever see the latter).
                 # The ban is on the shared bot token, so waiting the full
                 # retry_after is pointless per-plugin (the dispatcher already
                 # fails fast during the ban and reports the remaining time).
@@ -234,8 +236,7 @@ class Plugin(abc.ABC, Generic[UC]):
         async with asyncio.TaskGroup() as tg:
             for user in await self.get_users():
                 self._logger.info(
-                    f"Running plugin {self.canonical_name()} for user"
-                    f" {user.id}"
+                    f"Running plugin {self.canonical_name()} for user" f" {user.id}"
                 )
                 tg.create_task(self._run_for_user_supervised(user))
 
@@ -245,12 +246,9 @@ class Plugin(abc.ABC, Generic[UC]):
 
     @classmethod
     def register(cls, plugin: "Plugin") -> None:
-        if plugin.canonical_name() in [
-            p.canonical_name() for p in cls._plugins
-        ]:
+        if plugin.canonical_name() in [p.canonical_name() for p in cls._plugins]:
             raise ValueError(
-                f"Plugin with name {plugin.canonical_name()} already"
-                " registered."
+                f"Plugin with name {plugin.canonical_name()} already" " registered."
             )
         cls._plugins.append(plugin)
 

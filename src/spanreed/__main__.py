@@ -5,7 +5,8 @@ from typing import List
 
 from spanreed.plugin import Plugin
 
-from spanreed.apis.telegram_bot import TelegramBotApi, TelegramBotPlugin
+from spanreed.interaction import UserInteractionApi
+from spanreed.apis.telegram_bot import TelegramBotPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.obsidian_webhook import ObsidianWebhookPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
@@ -99,7 +100,7 @@ async def run_all_tasks() -> None:
 async def _notify_plugin_failure(plugin: Plugin, error: BaseException) -> None:
     for user in await plugin.get_users():
         try:
-            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+            bot: UserInteractionApi = await UserInteractionApi.for_user(user)
             await bot.send_message(f"Plugin '{plugin.name()}' has crashed: {error}")
         except Exception:
             logging.exception(

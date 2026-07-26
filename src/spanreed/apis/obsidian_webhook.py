@@ -5,7 +5,7 @@ import aiohttp
 from spanreed.plugin import Plugin
 from dataclasses import dataclass
 from spanreed.user import User
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.interaction import UserInteractionApi
 
 
 @dataclass
@@ -28,7 +28,7 @@ class ObsidianWebhookPlugin(Plugin):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         webhook_url = await bot.request_user_input(
             "Please enter your Obsidian webhook URL:"
         )
@@ -54,11 +54,8 @@ class ObsidianWebhookApi:
                 },
                 data=content,
             ) as response:
-                self._logger.info(
-                    f"{response.url=} resulted in {response.status=}"
-                )
+                self._logger.info(f"{response.url=} resulted in {response.status=}")
                 if response.status != 200:
                     self._logger.error(
-                        f"Failed to append to note {note_path}: "
-                        f"{response.status=}"
+                        f"Failed to append to note {note_path}: " f"{response.status=}"
                     )

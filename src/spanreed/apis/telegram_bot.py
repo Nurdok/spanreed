@@ -3,21 +3,29 @@ import contextlib
 import datetime
 import json
 import os
-from enum import auto, IntEnum
 import logging
 import uuid
 from typing import NamedTuple, Optional, Callable, cast, Awaitable, Coroutine
 from dataclasses import dataclass
-from collections.abc import AsyncGenerator
 
 from spanreed.plugin import Plugin
 from spanreed.storage import redis_api
 from spanreed.apis.telegram_dispatcher import OutboundDispatcher
+from spanreed.interaction import engine
+from spanreed.interaction.commands import PluginCommand
+
+# Backward-compatible re-exports: the interaction machinery moved to
+# spanreed.interaction; import it from there (spanreed.interaction) in new
+# code.
+from spanreed.interaction.engine import (  # noqa: F401
+    UserInteraction,
+    UserInteractionPriority,
+)
+from spanreed.interaction.errors import UserInteractionPreempted  # noqa: F401
 from spanreed.user import User
 
 from telegram import (
     Update,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     constants,
     Message,
@@ -34,13 +42,7 @@ from telegram.ext import (
     filters,
 )
 
-CALLBACK_EVENTS = "callback-events"
-CALLBACK_EVENT_RESULTS = "callback-event-results"
 PLUGIN_COMMANDS = "plugin-commands"
-USER_INTERACTION_LOCKS = "user-interaction-locks"
-USER_INTERACTION_QUEUES = "user-interaction-queue"
-CURRENT_USER_INTERACTION = "current-user-interaction"
-USER_MESSAGE_CALLBACK_ID = "user-message-callback-id"
 OUTBOUND_DISPATCHERS = "outbound-dispatchers"
 
 # Durable outbound notification queue. `notify()` enqueues here; the per-user
@@ -51,14 +53,10 @@ OUTBOUND_QUEUE_MAX = 200  # keep newest N; drop older on overflow
 
 
 class CallbackData(NamedTuple):
-    callback_id: int
+    # The engine's prompt interaction id (uuid hex).
+    callback_id: str
     user_id: int
     position: int
-
-
-class PluginCommand(NamedTuple):
-    text: str
-    callback: Callable
 
 
 @dataclass
@@ -175,19 +173,25 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             return
 
         callback_data: CallbackData = cast(CallbackData, query.data)
-        cid = callback_data.callback_id
 
-        # Mark the index of the selected button.
         self._logger.info(
-            f"Marking callback {cid} event result as {callback_data.position}"
+            f"Resolving prompt {callback_data.callback_id} with"
+            f" {callback_data.position}"
         )
-        results = context.bot_data.setdefault(CALLBACK_EVENT_RESULTS, {})
-        results[cid] = callback_data.position
-
-        self._logger.info(f"Setting event {cid} as done")
-        # Notify the waiting coroutine that we received the user's choice.
-        event: asyncio.Event = context.bot_data[CALLBACK_EVENTS][cid]
-        event.set()
+        resolution = engine.resolve_prompt(
+            callback_data.callback_id, callback_data.position
+        )
+        if resolution == engine.PromptResolution.ALREADY_ANSWERED:
+            with contextlib.suppress(Exception):
+                await query.answer("This prompt was already answered.")
+        elif resolution == engine.PromptResolution.UNKNOWN:
+            # A prompt from before the last restart.
+            with contextlib.suppress(Exception):
+                await query.answer(
+                    "This prompt has expired — please re-run the command.",
+                    show_alert=True,
+                )
+            return
 
         # Route the delete through the user's send dispatcher; failure just
         # leaves the keyboard message behind, so don't let it kill the
@@ -224,6 +228,8 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         raise KeyError(f"User not found for {telegram_user_id=}")
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from spanreed.interaction.api import UserInteractionApi
+
         if update.effective_user is None:
             self._logger.error("No user found in update")
             return
@@ -237,9 +243,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                 send_message_on_failure=False,
             )
         if existing_user is not None:
-            bot = await TelegramBotApi.for_user(existing_user)
-            async with bot.user_interaction():
-                await bot.send_multiple_messages(
+            ui = await UserInteractionApi.for_user(existing_user)
+            async with ui.user_interaction():
+                await ui.send_multiple_messages(
                     "Eh, this is awkward.",
                     f"We already know each other, {existing_user.name}...",
                     "To be honest, I'm a little bit offended.",
@@ -264,17 +270,15 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             for plugin in required_plugins:
                 await plugin.register_user(user)
 
-            bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+            ui = await UserInteractionApi.for_user(user)
 
-            async with bot.user_interaction():
-                await bot.send_multiple_messages(
+            async with ui.user_interaction():
+                await ui.send_multiple_messages(
                     "Howdy partner!",
                     "I'm Spanreed, your <i>personal</i> personal assistant.",
                     "Let's set you up in the system.",
                 )
-                name = await bot.request_user_input(
-                    "How do you want me to address you?"
-                )
+                name = await ui.request_user_input("How do you want me to address you?")
                 await user.set_name(name)
                 insulting_names = [
                     "master",
@@ -285,13 +289,13 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     "boss",
                 ]
                 if name.lower() in insulting_names:
-                    await bot.send_message(
+                    await ui.send_message(
                         f"A bit degrading, but okay, <i>{name}</i>.\n"
                     )
                 else:
-                    await bot.send_message(f"Cool. Cool cool cool.")
+                    await ui.send_message(f"Cool. Cool cool cool.")
                 await asyncio.sleep(1)
-                await bot.send_multiple_messages(
+                await ui.send_multiple_messages(
                     "To get started, you can use the /do command,\n"
                     "It will show you a list of commands you can use.\n",
                     "Since you're new here, there won't be many commands to "
@@ -317,6 +321,8 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     async def show_command_menu(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        from spanreed.interaction.api import UserInteractionApi
+
         app: Application = context.application
         commands: dict[str, PluginCommand] = app.bot_data.setdefault(
             PLUGIN_COMMANDS, {}
@@ -340,7 +346,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             self._logger.info(f"Inside internal task for /do for {user}")
             self._logger.info(f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}")
             async with suppress_and_log_exception(BaseException):
-                bot = await TelegramBotApi.for_user(user)
+                ui = await UserInteractionApi.for_user(user)
 
                 shown_commands = []
                 for plugin_canonical_name, commands in app.bot_data.setdefault(
@@ -356,8 +362,8 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                         self._logger.info(f"Adding command {command=}")
                         shown_commands.append(command)
 
-                async with bot.user_interaction(priority=UserInteractionPriority.HIGH):
-                    choice = await bot.request_user_choice(
+                async with ui.user_interaction(priority=UserInteractionPriority.HIGH):
+                    choice = await ui.request_user_choice(
                         "Please choose a command to run:",
                         [command.text for command in shown_commands] + ["Cancel"],
                     )
@@ -384,6 +390,11 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             return
 
         self._logger.info(f"Received message: {update.message.text=}")
+        message_text = update.message.text
+        if message_text is None:
+            # Non-text message (sticker, photo, ...): nothing to route.
+            self._logger.info("Ignoring non-text message")
+            return
         # Get the user's Telegram ID and find the corresponding user.
 
         if update.effective_user is None:
@@ -397,86 +408,31 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         # See if there's a plugin that is waiting for a message from this user.
         # If so, notify it.
         bot = await TelegramBotApi.for_user(user)
-        callback_id: Optional[int] = context.application.bot_data.setdefault(
-            USER_MESSAGE_CALLBACK_ID, {}
-        ).get(telegram_user_id, None)
-        if callback_id is None:
-            self._logger.info("No callback ID found")
+        pending = engine.get_current_input_prompt(user.id)
+        if pending is None:
+            self._logger.info("No pending input prompt found")
             await bot.send_message("Unexpected message, ignoring...")
             return
 
-        self._logger.info(f"Found callback ID {callback_id}")
-        context.application.bot_data.setdefault(CALLBACK_EVENT_RESULTS, {})[
-            callback_id
-        ] = update.message.text
-        # Notify the waiting coroutine that we received the user's message.
-        context.bot_data[CALLBACK_EVENTS][callback_id].set()
+        self._logger.info(f"Found pending input prompt {pending.interaction_id}")
+        engine.resolve_prompt(pending.interaction_id, message_text)
         return
 
 
-class UserInteractionPreempted(Exception):
-    pass
-
-
-class UserInteractionPriority(IntEnum):
-    HIGH = auto()
-    NORMAL = auto()
-    LOW = auto()
-
-
-class UserInteraction:
-    def __init__(
-        self,
-        user_id: int,
-        priority: UserInteractionPriority,
-    ) -> None:
-        self.user_id = user_id
-        self.priority = priority
-        self.event = asyncio.Event()
-        # This is the timeout for the actual interaction, not for waiting in the queue.
-        # It is enforced if there's another interaction waiting, regardless of priority.
-        self.timeout = datetime.timedelta(hours=1)
-        self.start_time: Optional[datetime.datetime] = None
-        task: asyncio.Task | None = asyncio.current_task()
-        if task is None:
-            raise RuntimeError("No current task")
-        self.task: asyncio.Task = task
-        self.preempted = False
-        self.running = False
-
-    def __repr__(self) -> str:
-        return self.__str__()
-
-    def __str__(self) -> str:
-        coro = self.task.get_coro()
-        task_name = coro.cr_code.co_qualname if coro is not None else "unknown"
-        return f"UserInteraction<{task_name} @ {self.priority.name}>"
-
-    def allow_to_run(self) -> None:
-        self.event.set()
-
-    async def wait_to_run(self) -> None:
-        await self.event.wait()
-        self.running = True
-        self.start_time = datetime.datetime.now()
-
-    def preempt(self) -> None:
-        self.preempted = True
-        self.task.cancel()
-
-
-UserInteractionQueues = dict[UserInteractionPriority, list[UserInteraction]]
-
-
 class TelegramBotApi:
+    """Telegram delivery layer: application lifecycle + paced sends.
+
+    The user-interaction machinery (queues, priorities, prompts) lives in
+    ``spanreed.interaction``; plugins use ``UserInteractionApi`` and never
+    this class directly.
+    """
+
     _application: Application
     _application_initialized = asyncio.Event()
 
     def __init__(self, telegram_user_id: int):
         self._logger = logging.getLogger(TelegramBotApi.__name__)
         self._telegram_user_id = telegram_user_id
-        self._have_interaction_lock = False
-        self._preempted = False
 
     @classmethod
     async def register_command(cls, plugin: Plugin, command: PluginCommand) -> None:
@@ -600,6 +556,25 @@ class TelegramBotApi:
             ),
         )
 
+    async def send_prompt_with_keyboard(
+        self, text: str, reply_markup: InlineKeyboardMarkup
+    ) -> Message:
+        """Send a choice prompt with an inline keyboard (used by the
+        Telegram interaction surface)."""
+        app: Application = await self.get_application()
+
+        async def api_call() -> Message:
+            return cast(
+                Message,
+                await app.bot.send_message(
+                    chat_id=self._telegram_user_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                ),
+            )
+
+        return cast(Message, await self._dispatch("send_choice_prompt", api_call))
+
     async def delete_message(self, message: Message) -> bool:
         """Delete a message via the dispatcher (never call message.delete()
         directly — Message-object methods bypass send pacing)."""
@@ -664,314 +639,3 @@ class TelegramBotApi:
             await self._dispatch("send_chat_action", typing_action)
             await asyncio.sleep(delay)
             await self.send_message(message, parse_html=parse_html)
-
-    @classmethod
-    async def init_callback(cls) -> tuple[int, asyncio.Event]:
-        callback_id = uuid.uuid4().int
-        app = await cls.get_application()
-        event = asyncio.Event()
-        app.bot_data.setdefault(CALLBACK_EVENTS, {})[callback_id] = event
-        return callback_id, event
-
-    async def request_user_choice(
-        self,
-        prompt: str,
-        choices: list[str] | list[str | list[str]],
-        *,
-        columns: int = 1,
-    ) -> int:
-        app = await self.get_application()
-
-        # Generate a random callback ID to avoid collisions.
-        callback_id, callback_event = await self.init_callback()
-
-        def make_callback_data(position: int) -> CallbackData:
-            return CallbackData(callback_id, self._telegram_user_id, position)
-
-        # Set up the keyboard.
-        keyboard: list[list[InlineKeyboardButton]] = [[]]
-
-        for i, choice in enumerate(choices):
-            if isinstance(choice, list):
-                keyboard.append([])
-                for j, choice_str in enumerate(choice):
-                    button_to_append = InlineKeyboardButton(
-                        choice_str, callback_data=make_callback_data(i)
-                    )
-                    keyboard[-1].append(button_to_append)
-                keyboard.append([])
-            elif isinstance(choice, str):
-                button_to_append = InlineKeyboardButton(
-                    choice, callback_data=make_callback_data(i)
-                )
-                if len(keyboard[-1]) == columns:
-                    keyboard.append([])
-                keyboard[-1].append(button_to_append)
-
-        async def send_message() -> Message:
-            async def api_call() -> Message:
-                return cast(
-                    Message,
-                    await app.bot.send_message(
-                        chat_id=self._telegram_user_id,
-                        text=prompt,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                    ),
-                )
-
-            return cast(
-                Message,
-                await self._dispatch("send_choice_prompt", api_call),
-            )
-
-        # Wait for the user to select a choice.
-        interaction_result: int | str = await self.wait_for_user_interaction(
-            callback_id, callback_event, send_message
-        )
-        if not isinstance(interaction_result, int):
-            raise ValueError("Expected integer from user")
-        return interaction_result
-
-    async def request_user_input(self, prompt: str) -> str:
-        app: Application = await self.get_application()
-
-        # Generate a random callback ID to avoid collisions.
-        callback_id, callback_event = await self.init_callback()
-
-        app.bot_data.setdefault(USER_MESSAGE_CALLBACK_ID, {})[
-            self._telegram_user_id
-        ] = callback_id
-
-        async def send_message() -> Message:
-            return await self.send_message(prompt)
-
-        interaction_result: int | str = await self.wait_for_user_interaction(
-            callback_id, callback_event, send_message
-        )
-        if not isinstance(interaction_result, str):
-            raise ValueError("Expected string from user")
-        return interaction_result
-
-    async def wait_for_user_interaction(
-        self,
-        callback_id: int,
-        callback_event: asyncio.Event,
-        send_message_fn: Callable[[], Awaitable[Message]],
-    ) -> int | str:
-        app: Application = await self.get_application()
-
-        # Wait for the user to select a choice.
-        self._logger.info(f"Waiting for callback {callback_id} to be done")
-        message: Message | None = None
-        pending_message: Message | None = None
-        try:
-            while True:
-                message = await send_message_fn()
-                try:
-                    async with asyncio.timeout(
-                        datetime.timedelta(minutes=60).total_seconds()
-                    ):
-                        await callback_event.wait()
-                        break
-                except asyncio.TimeoutError:
-                    if not await self.delete_message(message):
-                        raise RuntimeError("Failed to delete message")
-
-                    queues = await self._get_user_interaction_queues()
-                    pending_interactions: int = sum(
-                        len(queue) for queue in queues.values()
-                    )
-                    if pending_message is not None:
-                        await self.delete_message(pending_message)
-                    pending_message = await self.send_message(
-                        f"You have {pending_interactions + 1} pending interactions, this is the first one:"
-                    )
-
-        except asyncio.CancelledError:
-            self._logger.info(f"Callback {callback_id} was cancelled")
-            if message is not None:
-                # Suppress send failures (e.g. RetryAfter from the
-                # dispatcher during a ban) so they can't mask the
-                # CancelledError we must re-raise.
-                with contextlib.suppress(Exception):
-                    if not await self.delete_message(message):
-                        self._logger.error("Failed to delete message")
-            raise
-        if pending_message is not None:
-            await self.delete_message(pending_message)
-        self._logger.info(f"Callback {callback_id} done")
-        return app.bot_data[CALLBACK_EVENT_RESULTS][callback_id]  # type: ignore
-
-    async def get_user_interaction_lock(self) -> asyncio.Lock:
-        app = await self.get_application()
-        return app.bot_data.setdefault(USER_INTERACTION_LOCKS, {}).setdefault(  # type: ignore
-            self._telegram_user_id, asyncio.Lock()
-        )
-
-    def _get_default_priority_queue(self) -> UserInteractionQueues:
-        return {prio: [] for prio in UserInteractionPriority}
-
-    async def _get_user_interaction_queues(self) -> UserInteractionQueues:
-        app = await self.get_application()
-        return app.bot_data.setdefault(  # type: ignore
-            USER_INTERACTION_QUEUES, {}
-        ).setdefault(self._telegram_user_id, self._get_default_priority_queue())
-
-    async def has_active_user_interaction(self) -> bool:
-        """Whether a user interaction is currently in progress for this chat.
-
-        Lets background flows (e.g. the Obsidian progress bar) avoid sending
-        unsolicited messages when the user isn't already in a conversation.
-        """
-        return await self._get_current_user_interaction() is not None
-
-    async def _get_current_user_interaction(self) -> UserInteraction | None:
-        app = await self.get_application()
-        return app.bot_data.setdefault(  # type: ignore
-            CURRENT_USER_INTERACTION, {}
-        ).setdefault(self._telegram_user_id, None)
-
-    async def _set_current_user_interaction(
-        self,
-        user_interaction: UserInteraction,
-    ) -> None:
-        app = await self.get_application()
-        if (
-            app.bot_data.setdefault(CURRENT_USER_INTERACTION, {}).setdefault(
-                self._telegram_user_id, None
-            )
-        ) is not None:
-            raise RuntimeError("User interaction already set")
-
-        app.bot_data[CURRENT_USER_INTERACTION][
-            self._telegram_user_id
-        ] = user_interaction
-
-    async def _clear_current_user_interaction(self) -> None:
-        self._logger.info(
-            f"Clearing current user interaction {await self._get_current_user_interaction()=}"
-        )
-        app = await self.get_application()
-        app.bot_data[CURRENT_USER_INTERACTION][self._telegram_user_id] = None
-
-    async def _try_to_allow_next_user_interaction(
-        self, delay: datetime.timedelta | None = None
-    ) -> None:
-        if delay is not None:
-            await asyncio.sleep(delay.total_seconds())
-        self._logger.info("Trying to allow next user interaction")
-        await self._preempt_user_interaction_if_needed()
-        if (await self._get_current_user_interaction()) is not None:
-            return
-
-        interaction_queue: UserInteractionQueues = (
-            await self._get_user_interaction_queues()
-        )
-
-        for priority in UserInteractionPriority:  # high to low
-            if interaction_queue[priority]:
-                user_interaction: UserInteraction = interaction_queue[priority].pop(0)
-                self._logger.info(f"Allowing {user_interaction=}")
-                user_interaction.allow_to_run()
-                await self._set_current_user_interaction(user_interaction)
-                return
-
-        self._logger.info("No user interaction to allow")
-
-    async def _preempt_user_interaction_if_needed(self) -> None:
-        self._logger.info("Checking if we need to preempt user interaction")
-        current_interaction: UserInteraction | None = (
-            await self._get_current_user_interaction()
-        )
-        if current_interaction is None:
-            self._logger.info("No current user interaction, so not preempting")
-            return
-
-        current_interaction_timed_out = (
-            current_interaction.start_time is not None
-            and (
-                datetime.datetime.now() - current_interaction.start_time
-            ).total_seconds()
-            > current_interaction.timeout.total_seconds()
-        )
-
-        user_interaction_queues = await self._get_user_interaction_queues()
-        # TODO: correct order
-        for possible_priority in UserInteractionPriority:  # high to low
-            if (
-                possible_priority >= current_interaction.priority
-                # if the current interaction has timed out, we can preempt it in favor of lower priority ones
-                and not current_interaction_timed_out
-            ):  # >= means lower or equal priority, since higher priority is lower number
-                return
-            if not user_interaction_queues[possible_priority]:
-                continue
-
-            self._logger.info(f"Preempting {current_interaction=}")
-            if current_interaction.running:
-                current_interaction.preempt()
-            else:
-                # If this task was preempted before starting to run, re-add it
-                # to the queue instead of cancelling it.
-                await self._add_to_user_interaction_queue(current_interaction)
-            return
-
-        self._logger.info(
-            "There are awaiting user interactions, but the current one is higher priority"
-        )
-
-    async def _add_to_user_interaction_queue(
-        self, user_interaction: UserInteraction
-    ) -> None:
-        user_interaction_queues = await self._get_user_interaction_queues()
-        user_interaction_queues[user_interaction.priority].append(user_interaction)
-
-    async def _remove_from_user_interaction_queue(
-        self, user_interaction: UserInteraction
-    ) -> None:
-        user_interaction_queues = await self._get_user_interaction_queues()
-        user_interaction_queues[user_interaction.priority].remove(user_interaction)
-
-    @contextlib.asynccontextmanager
-    async def user_interaction(
-        self,
-        *,
-        propagate_preemption: bool = True,
-        priority: UserInteractionPriority = UserInteractionPriority.NORMAL,
-    ) -> AsyncGenerator[None, None]:
-        def log(msg: str) -> None:
-            self._logger.info(msg + f" {user_interaction=}")
-
-        user_interaction = UserInteraction(self._telegram_user_id, priority)
-        await self._add_to_user_interaction_queue(user_interaction)
-
-        try:
-            # TODO: Need to mark somehow where to return any user input.
-            log("Waiting in queue for user interaction")
-            lock: asyncio.Lock = await self.get_user_interaction_lock()
-            await self._try_to_allow_next_user_interaction()
-            # Wait for our turn in the queue.
-            await user_interaction.wait_to_run()
-        except asyncio.CancelledError:
-            self._logger.info("User interaction was cancelled")
-            await self._remove_from_user_interaction_queue(user_interaction)
-            raise
-        log("Got user interaction permission")
-        async with lock:
-            try:
-                asyncio.create_task(
-                    self._try_to_allow_next_user_interaction(user_interaction.timeout)
-                )
-                yield
-            except asyncio.CancelledError:
-                if user_interaction.preempted:
-                    log("User interaction was preempted")
-                    if propagate_preemption:
-                        user_interaction.task.uncancel()
-                        raise UserInteractionPreempted()
-                raise
-            finally:
-                await self._clear_current_user_interaction()
-                log("Yielded user interaction")
-                self._have_interaction_lock = False
-                await self._try_to_allow_next_user_interaction()

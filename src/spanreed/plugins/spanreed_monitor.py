@@ -10,7 +10,7 @@ from typing import AsyncGenerator
 
 import redis
 
-from spanreed.apis.telegram_bot import TelegramBotApi
+from spanreed.interaction import UserInteractionApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
 from spanreed.storage import redis_api
@@ -35,7 +35,7 @@ class SpanreedMonitorPlugin(Plugin):
             group.create_task(self._monitor_obsidian_plugin(user))
 
     async def _monitor_exceptions(self, user: User) -> None:
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         # Durable: delivered once the bot can send, even if it's flood-limited
         # at startup.
         await bot.notify("Spanreed is starting up.")
@@ -80,7 +80,7 @@ class SpanreedMonitorPlugin(Plugin):
             return
 
         queue_name = f"{self.OBSIDIAN_PLUGIN_MONITOR_QUEUE_NAME}:{user.id}"
-        bot: TelegramBotApi = await TelegramBotApi.for_user(user)
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         base_timeout = datetime.timedelta(minutes=1)
         time_since_last_watchdog = datetime.timedelta()
         last_watchdog_message = datetime.datetime.now()
