@@ -20,7 +20,7 @@ import datetime
 import enum
 import logging
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Coroutine
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Optional
@@ -96,6 +96,36 @@ def reset_state_for_tests() -> None:
     _pending_prompts.clear()
     _current_input_prompt.clear()
     _tombstones.clear()
+    _user_flow_tasks.clear()
+
+
+# ---------------------------------------------------------------------------
+# User-initiated flows (/do, palette commands)
+# ---------------------------------------------------------------------------
+
+# One user-initiated flow at a time per user, newest wins — shared across
+# surfaces (design §2.6): a palette invocation cancels an in-progress /do
+# flow and vice versa. Without cross-surface cancel, a HIGH palette command
+# would queue forever behind an abandoned open /do menu (HIGH does not
+# preempt HIGH).
+_user_flow_tasks: dict[int, asyncio.Task] = {}
+
+
+def start_user_flow(user_id: int, coro: Coroutine) -> asyncio.Task:
+    """Start a user-initiated flow, cancelling the user's previous one."""
+    previous = _user_flow_tasks.get(user_id)
+    if previous is not None and not previous.done():
+        _logger.info(f"Cancelling previous user flow for user {user_id}")
+        previous.cancel()
+    task = asyncio.create_task(coro)
+    _user_flow_tasks[user_id] = task
+
+    def _cleanup(_: asyncio.Task) -> None:
+        if _user_flow_tasks.get(user_id) is task:
+            del _user_flow_tasks[user_id]
+
+    task.add_done_callback(_cleanup)
+    return task
 
 
 def get_user_interaction_lock(user_id: int) -> asyncio.Lock:

@@ -36,9 +36,7 @@ class I2cBus:
                 data,
             )
 
-    async def write_byte_data(
-        self, i2c_addr: int, register: int, data: int
-    ) -> None:
+    async def write_byte_data(self, i2c_addr: int, register: int, data: int) -> None:
         """Write bytes to a given register."""
         await self.ensure_bus_connection()
         assert self.smbus is not None

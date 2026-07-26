@@ -57,9 +57,7 @@ class TodoistIndicator:
         while True:
             if self._due_tasks or self._inbox_tasks:
                 due_line = f"Due tasks: {len(self._due_tasks)}"
-                await lcd.write_text_line(
-                    format_line_with_tick(due_line), line=1
-                )
+                await lcd.write_text_line(format_line_with_tick(due_line), line=1)
 
                 inbox_line = f"Inbox tasks: {len(self._inbox_tasks)}"
                 await lcd.write_text_line(inbox_line, trim=True, line=2)
@@ -114,9 +112,7 @@ class TodoistIndicator:
 
 
 async def main() -> None:
-    ind = TodoistIndicator(
-        RPi(), Todoist(UserConfig(os.environ["TODOIST_API_TOKEN"]))
-    )
+    ind = TodoistIndicator(RPi(), Todoist(UserConfig(os.environ["TODOIST_API_TOKEN"])))
     # await ind.calibrate_servo()
     await ind.run()
 

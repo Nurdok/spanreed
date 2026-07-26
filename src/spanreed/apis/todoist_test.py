@@ -28,9 +28,7 @@ def _pages(*pages: list) -> object:
     return gen()
 
 
-def _task(
-    task_id: str = "1", content: str = "c", due: object = None
-) -> object:
+def _task(task_id: str = "1", content: str = "c", due: object = None) -> object:
     return SimpleNamespace(id=task_id, content=content, due=due)
 
 
@@ -134,9 +132,7 @@ def test_get_first_comment_with_yaml_finds_yaml_comment() -> None:
 
 def test_set_due_date_to_today_recurring_keeps_recurrence() -> None:
     td = _todoist()
-    task = _task(
-        "5", due=SimpleNamespace(is_recurring=True, string="every week")
-    )
+    task = _task("5", due=SimpleNamespace(is_recurring=True, string="every week"))
     td._api.update_task.return_value = task
 
     asyncio.run(td.set_due_date_to_today(task))

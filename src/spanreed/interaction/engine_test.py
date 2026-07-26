@@ -142,6 +142,61 @@ def test_cancellation_while_queued_cleans_up() -> None:
 
 
 # ---------------------------------------------------------------------------
+# User-initiated flow slot: cancel-and-replace, newest wins
+# ---------------------------------------------------------------------------
+
+
+def test_user_flow_cancel_and_replace() -> None:
+    events: list[str] = []
+
+    async def flow(name: str) -> None:
+        try:
+            events.append(f"{name}-start")
+            await asyncio.sleep(30)
+            events.append(f"{name}-done")
+        except asyncio.CancelledError:
+            events.append(f"{name}-cancelled")
+            raise
+
+    async def run() -> None:
+        first = engine.start_user_flow(USER_ID, flow("first"))
+        await asyncio.sleep(0.01)
+        second = engine.start_user_flow(USER_ID, flow("second"))
+        await asyncio.sleep(0.01)
+        assert first.cancelled()
+        second.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await second
+
+    asyncio.run(run())
+    assert events == [
+        "first-start",
+        "first-cancelled",
+        "second-start",
+        "second-cancelled",
+    ]
+
+
+def test_user_flows_are_per_user() -> None:
+    async def flow() -> None:
+        await asyncio.sleep(30)
+
+    async def run() -> None:
+        task_a = engine.start_user_flow(1, flow())
+        task_b = engine.start_user_flow(2, flow())
+        await asyncio.sleep(0.01)
+        # Different users' flows coexist.
+        assert not task_a.cancelled() and not task_b.cancelled()
+        task_a.cancel()
+        task_b.cancel()
+        for task in (task_a, task_b):
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
 # Pending prompts: first answer wins, tombstones
 # ---------------------------------------------------------------------------
 

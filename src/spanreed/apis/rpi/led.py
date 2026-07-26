@@ -49,15 +49,11 @@ class RgbLed:
             hex_color = hex_color[2:]
         hex_color = hex_color.zfill(6)
         print(f"Setting color: {hex_color!r}")
-        self.set_rgb_color(
-            *tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
-        )
+        self.set_rgb_color(*tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4)))
 
     def set_rgb_color(self, red: int, green: int, blue: int) -> None:
         for pwm, value in zip(self._rgb_pwms, (red, green, blue)):
-            print(
-                f"Setting value: {self.get_duty_cycle_for_numeric_color(value)}"
-            )
+            print(f"Setting value: {self.get_duty_cycle_for_numeric_color(value)}")
             pwm.ChangeDutyCycle(self.get_duty_cycle_for_numeric_color(value))
 
     def turn_off(self) -> None:
