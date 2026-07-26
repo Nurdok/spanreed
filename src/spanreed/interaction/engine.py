@@ -169,6 +169,28 @@ def get_user_flow_origin_instance(user_id: int) -> str | None:
     return _user_flow_origins.get(user_id)
 
 
+def cancel_current_user_flow(user_id: int) -> bool:
+    """Cancel the user's active user-initiated flow, if any."""
+    task = _user_flow_tasks.get(user_id)
+    if task is not None and not task.done():
+        task.cancel()
+        return True
+    return False
+
+
+def preempt_current_interaction(user_id: int) -> bool:
+    """Preempt the user's currently-running interaction, if any.
+
+    Uses the preemption path (not a bare cancel) so a proactive flow sees
+    ``UserInteractionPreempted`` and applies its own retry policy.
+    """
+    current = _current.get(user_id)
+    if current is not None and current.running:
+        current.preempt()
+        return True
+    return False
+
+
 def get_active_flow_origins() -> dict[int, str]:
     """user_id -> origin instance id, for flows with an Obsidian origin.
 
