@@ -157,10 +157,20 @@ class Plugin(abc.ABC, Generic[UC]):
 
         await redis_api.sadd(f"user:{user.id}:plugins", self.canonical_name())
         await redis_api.sadd(self._get_user_list_key(), user.id)
+        self._notify_user_commands_changed(user)
 
     async def unregister_user(self, user: User) -> None:
         await redis_api.srem(f"user:{user.id}:plugins", self.canonical_name())
         await redis_api.srem(self._get_user_list_key(), user.id)
+        self._notify_user_commands_changed(user)
+
+    def _notify_user_commands_changed(self, user: User) -> None:
+        # The user's effective command set changed at runtime; without this
+        # trigger a plugin registered via the plugin manager would never
+        # reach the (phase 3+) Obsidian palette until the next restart.
+        from spanreed.interaction import commands
+
+        commands.notify_user_plugins_changed(user)
 
     async def run_for_user(self, user: User) -> None:
         pass

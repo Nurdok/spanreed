@@ -12,7 +12,6 @@ from spanreed.plugin import Plugin
 from spanreed.storage import redis_api
 from spanreed.apis.telegram_dispatcher import OutboundDispatcher
 from spanreed.interaction import engine
-from spanreed.interaction.commands import PluginCommand
 
 # Backward-compatible re-exports: the interaction machinery moved to
 # spanreed.interaction; import it from there (spanreed.interaction) in new
@@ -42,7 +41,6 @@ from telegram.ext import (
     filters,
 )
 
-PLUGIN_COMMANDS = "plugin-commands"
 OUTBOUND_DISPATCHERS = "outbound-dispatchers"
 
 # Durable outbound notification queue. `notify()` enqueues here; the per-user
@@ -68,7 +66,6 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     def __init__(self) -> None:
         super().__init__()
         self.background_tasks: set[asyncio.Task] = set()
-        self._do_tasks: dict[int, asyncio.Task] = {}
 
     @classmethod
     def name(cls) -> str:
@@ -321,12 +318,8 @@ class TelegramBotPlugin(Plugin[UserConfig]):
     async def show_command_menu(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        from spanreed.interaction import commands as command_registry
         from spanreed.interaction.api import UserInteractionApi
-
-        app: Application = context.application
-        commands: dict[str, PluginCommand] = app.bot_data.setdefault(
-            PLUGIN_COMMANDS, {}
-        )
 
         if update.effective_user is None:
             self._logger.error("No user found in update")
@@ -344,23 +337,11 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             )
 
             self._logger.info(f"Inside internal task for /do for {user}")
-            self._logger.info(f"Current commands: {app.bot_data[PLUGIN_COMMANDS]}")
             async with suppress_and_log_exception(BaseException):
                 ui = await UserInteractionApi.for_user(user)
 
-                shown_commands = []
-                for plugin_canonical_name, commands in app.bot_data.setdefault(
-                    PLUGIN_COMMANDS, {}
-                ).items():
-                    if plugin_canonical_name not in user.plugins:
-                        self._logger.debug(f"Skipping {plugin_canonical_name=}")
-                        continue
-
-                    self._logger.info(f"Adding commands for {plugin_canonical_name=}")
-
-                    for command in commands:
-                        self._logger.info(f"Adding command {command=}")
-                        shown_commands.append(command)
+                shown_commands = command_registry.commands_for_user(user)
+                self._logger.info(f"Showing commands: {shown_commands}")
 
                 async with ui.user_interaction(priority=UserInteractionPriority.HIGH):
                     choice = await ui.request_user_choice(
@@ -375,12 +356,9 @@ class TelegramBotPlugin(Plugin[UserConfig]):
                     )
                     await chosen_command.callback(user)
 
-        if telegram_user_id in self._do_tasks:
-            self._do_tasks[telegram_user_id].cancel()
-
-        task = asyncio.create_task(show_command_menu_task())
-        self._do_tasks[telegram_user_id] = task
-        task.add_done_callback(lambda _: self._do_tasks.pop(telegram_user_id, None))
+        # One user-initiated flow at a time, newest wins — shared with the
+        # (phase 3+) palette invocation path.
+        engine.start_user_flow(user.id, show_command_menu_task())
 
     async def handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -433,18 +411,6 @@ class TelegramBotApi:
     def __init__(self, telegram_user_id: int):
         self._logger = logging.getLogger(TelegramBotApi.__name__)
         self._telegram_user_id = telegram_user_id
-
-    @classmethod
-    async def register_command(cls, plugin: Plugin, command: PluginCommand) -> None:
-        _logger = logging.getLogger(cls.__name__)
-        _logger.info(f"Registering command '{command.text}'")
-        app = await cls.get_application()
-        app.bot_data.setdefault(PLUGIN_COMMANDS, {}).setdefault(
-            plugin.canonical_name(), []
-        ).append(command)
-        _logger.info(
-            f"These plugins have registered commands: {', '.join(name for name in app.bot_data[PLUGIN_COMMANDS])}"
-        )
 
     @classmethod
     async def get_application(cls) -> Application:

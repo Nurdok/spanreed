@@ -122,9 +122,7 @@ class Lcd:
             FunctionSetFlag.TWO_LINE,
             FunctionSetFlag.FIVE_BY_EIGHT_DOTS,
         )
-        await self._send_command(
-            Command.DISPLAY_CONTROL, DisplayControlFlag.DISPLAY_ON
-        )
+        await self._send_command(Command.DISPLAY_CONTROL, DisplayControlFlag.DISPLAY_ON)
         await self._send_command(Command.CLEAR_DISPLAY)
         await self._send_command(Command.ENTRY_MODE_SET, EntryModeSetFlag.LEFT)
         await asyncio.sleep(1)
@@ -173,9 +171,7 @@ class Lcd:
     async def write_text_line(
         self, text: str, line: int = 1, trim: bool = False
     ) -> None:
-        line_flag = (
-            SetDdramAddrFlag.LINE_1 if line == 1 else SetDdramAddrFlag.LINE_2
-        )
+        line_flag = SetDdramAddrFlag.LINE_1 if line == 1 else SetDdramAddrFlag.LINE_2
         await self._send_command(Command.SET_DDRAM_ADDR, line_flag)
 
         text_ascii = text.encode("ascii")

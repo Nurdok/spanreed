@@ -74,9 +74,7 @@ class WebUiPlugin(Plugin[None]):
 
             # Send the logs to the client.
             while True:
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True
-                )
+                message = await pubsub.get_message(ignore_subscribe_messages=True)
                 if message is not None:
                     await websocket.send(message["data"].decode("utf-8"))
 
@@ -92,9 +90,7 @@ class WebUiPlugin(Plugin[None]):
                 return "No state provided."
 
             # Pass the code to the Withings API without blocking the Quart app.
-            await asyncio.create_task(
-                WithingsApi.handle_oauth_redirect(code, state)
-            )
+            await asyncio.create_task(WithingsApi.handle_oauth_redirect(code, state))
             return "Authenticated successfully. You can close this tab."
 
         @app.get("/gmail-oauth")
@@ -109,9 +105,7 @@ class WebUiPlugin(Plugin[None]):
                 return "No state provided."
 
             # Pass the code to the Gmail API without blocking the Quart app.
-            await asyncio.create_task(
-                GmailApi.handle_oauth_redirect(code, state)
-            )
+            await asyncio.create_task(GmailApi.handle_oauth_redirect(code, state))
             return "Gmail authenticated successfully. You can close this tab."
 
         @app.get("/googlefit-oauth")
@@ -126,12 +120,8 @@ class WebUiPlugin(Plugin[None]):
                 return "No state provided."
 
             # Pass the code to the Google Fit API without blocking the Quart app.
-            await asyncio.create_task(
-                GoogleFitApi.handle_oauth_redirect(code, state)
-            )
-            return (
-                "Google Fit authenticated successfully. You can close this tab."
-            )
+            await asyncio.create_task(GoogleFitApi.handle_oauth_redirect(code, state))
+            return "Google Fit authenticated successfully. You can close this tab."
 
         # Start the Quart app.
         await app.run_task(debug=False, host="127.0.0.1", port=5000)

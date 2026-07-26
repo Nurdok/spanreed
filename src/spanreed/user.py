@@ -39,9 +39,7 @@ class User:
 
     @classmethod
     async def get_user_name(cls, user_id: int) -> str:
-        return cast(bytes, await redis_api.get(f"user:{user_id}:name")).decode(
-            "utf-8"
-        )
+        return cast(bytes, await redis_api.get(f"user:{user_id}:name")).decode("utf-8")
 
     @classmethod
     async def find_by_id(cls, user_id: int) -> "User":

@@ -12,9 +12,7 @@ class RPi:
     def get_led(self, gpio_pin: int) -> "Led":
         return Led(gpio_pin)
 
-    def get_rgb_led(
-        self, red_pin: int, green_pin: int, blue_pin: int
-    ) -> "RgbLed":
+    def get_rgb_led(self, red_pin: int, green_pin: int, blue_pin: int) -> "RgbLed":
         return RgbLed(red_pin, green_pin, blue_pin)
 
     async def get_lcd(self, bus_port: int) -> "Lcd":

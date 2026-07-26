@@ -75,9 +75,7 @@ class Workout:
             end_time=data.get("end_time", ""),
             updated_at=data.get("updated_at", ""),
             created_at=data.get("created_at", ""),
-            exercises=[
-                Exercise.from_json(e) for e in data.get("exercises", [])
-            ],
+            exercises=[Exercise.from_json(e) for e in data.get("exercises", [])],
         )
 
 

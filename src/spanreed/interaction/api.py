@@ -13,7 +13,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
-from spanreed.interaction import engine
+from spanreed.interaction import commands, engine
 from spanreed.interaction.engine import (
     PendingPrompt,
     PromptKind,
@@ -81,13 +81,10 @@ class UserInteractionApi:
 
     @classmethod
     async def register_command(cls, plugin: "Plugin", command: Any) -> None:
-        # Phase 1 shim: the command registry still lives in the Telegram
-        # application's bot_data (and retains its await-on-init), because
-        # /do reads it there. Phase 2 replaces this with the surface-neutral
-        # CommandRegistry and rewrites /do in the same deployable unit.
-        from spanreed.apis.telegram_bot import TelegramBotApi
-
-        await TelegramBotApi.register_command(plugin, command)
+        # Unlike the pre-phase-2 shim, this no longer awaits Telegram app
+        # initialization — plugin startup no longer serializes behind
+        # polling init (deliberate phase-2 behavior change, design §5).
+        commands.register_command(plugin.canonical_name(), command)
 
     # -- sending ----------------------------------------------------------
 

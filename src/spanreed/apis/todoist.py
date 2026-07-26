@@ -83,9 +83,7 @@ class Todoist:
             await self._wrapped_api_call(
                 self._api.move_task, task.id, project_id=project_id
             )
-        return await self._wrapped_api_call(
-            self._api.update_task, task.id, **kwargs
-        )
+        return await self._wrapped_api_call(self._api.update_task, task.id, **kwargs)
 
     async def add_comment(self, task: Task, **kwargs: Any) -> Comment:
         # The new API's add_comment takes the content positionally and the
@@ -119,9 +117,7 @@ class Todoist:
             )
             return comment
 
-        raise RuntimeError(
-            f"No yaml comment found for task {format_task(task)}"
-        )
+        raise RuntimeError(f"No yaml comment found for task {format_task(task)}")
 
     async def _get_inbox_project(self) -> Project:
         projects = await self._collect(self._api.get_projects)

@@ -35,9 +35,7 @@ def test_run_for_user() -> None:
 
     with patch(
         "spanreed.plugins.todoist_nooverdue.Todoist", autospec=True
-    ) as mock_todoist, patch(
-        "asyncio.sleep", autospec=True
-    ) as mock_sleep, patch(
+    ) as mock_todoist, patch("asyncio.sleep", autospec=True) as mock_sleep, patch(
         "spanreed.plugins.todoist_nooverdue.TelegramBotPlugin",
         autospec=True,
     ) as mock_telegram_bot_plugin:

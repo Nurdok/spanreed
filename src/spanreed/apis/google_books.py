@@ -92,9 +92,7 @@ class GoogleBooks:
                     title=full_title,
                     authors=list(volume_info.get("authors", ["Unknown"])),
                     publisher=volume_info.get("publisher", "Unknown"),
-                    publication_date=parse_date(
-                        volume_info.get("publishedDate", None)
-                    ),
+                    publication_date=parse_date(volume_info.get("publishedDate", None)),
                     description=volume_info.get("description", ""),
                     thumbnail_url=volume_info.get("imageLinks", {}).get(
                         "thumbnail", ""
