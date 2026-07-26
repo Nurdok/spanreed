@@ -201,21 +201,17 @@ class ObsidianSurfacePlugin(Plugin):
 
     async def _handle_sync(self, user: User, instance_id: str) -> None:
         """Reconnect sync (design §3.2): authoritative state + seq watermark."""
+        # Publish the command list first: a brand-new instance syncs before
+        # any registry change has ever fired for this user, so without this
+        # the read-model key stays empty until the next server restart and
+        # the palette never populates.
+        command_list_version = await publish_command_list(user)
+
         pending_payload: dict | None = None
         pending = engine.get_pending_prompt_for_user(user.id)
         if pending is not None and self._prompt_targets_instance(user, instance_id):
             obsidian_state = pending.surface_state.get(ObsidianSurface.name, {})
             pending_payload = obsidian_state.get("payload")
-
-        command_list_version: str | None = None
-        raw = await redis_api.get(protocol.command_list_key(user.id))
-        if raw is not None:
-            try:
-                command_list_version = json.loads(
-                    raw.decode() if isinstance(raw, bytes) else raw
-                )["version"]
-            except (ValueError, KeyError, TypeError):
-                pass
 
         await self._surface.send_feedback(
             user.id,
@@ -245,6 +241,10 @@ class ObsidianSurfacePlugin(Plugin):
     ) -> None:
         # The client writes its registration hash directly; this event just
         # makes the server react immediately (R6).
+        if payload.get("enabled") is True:
+            # A (re-)enabled instance needs the palette read-model to exist
+            # even if no registry change ever fired for this user.
+            await publish_command_list(user)
         if payload.get("enabled") is False:
             cancelled = engine.cancel_user_flow_for_instance(instance_id)
             if cancelled:
