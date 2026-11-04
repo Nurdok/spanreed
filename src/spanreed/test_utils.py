@@ -126,6 +126,7 @@ class FakeRedis:
         self.strings: dict[str, Any] = {}
         self.hashes: dict[str, dict] = {}
         self.sets: dict[str, set] = {}
+        self.expirations: dict[str, int] = {}
 
     async def lpush(self, key: str, *values: Any) -> int:
         lst = self.lists.setdefault(key, [])
@@ -197,9 +198,26 @@ class FakeRedis:
         self.strings[key] = value
         return value
 
-    async def hset(self, key: str, field: str, value: Any) -> int:
-        self.hashes.setdefault(key, {})[field] = value
-        return 1
+    async def hset(
+        self,
+        key: str,
+        field: str | None = None,
+        value: Any = None,
+        mapping: dict | None = None,
+    ) -> int:
+        stored = self.hashes.setdefault(key, {})
+        written = 0
+        if field is not None:
+            stored[field] = value
+            written += 1
+        if mapping:
+            stored.update(mapping)
+            written += len(mapping)
+        return written
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        self.expirations[key] = seconds
+        return True
 
     async def hget(self, key: str, field: str) -> Any | None:
         return self.hashes.get(key, {}).get(field)
@@ -246,6 +264,17 @@ class FakeRedis:
             lst = self.lists.get(key, [])
             if lst:
                 return (key, lst.pop(0))
+        return None
+
+    async def brpop(
+        self, keys: list[str] | str, timeout: int = 0
+    ) -> tuple[str, Any] | None:
+        if isinstance(keys, str):
+            keys = [keys]
+        for key in keys:
+            lst = self.lists.get(key, [])
+            if lst:
+                return (key, lst.pop())  # tail == oldest
         return None
 
 

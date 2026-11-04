@@ -9,6 +9,7 @@ from spanreed.storage import redis_api
 from spanreed.apis.withings import WithingsApi
 from spanreed.apis.gmail import GmailApi
 from spanreed.apis.googlefit import GoogleFitApi
+from spanreed.apis.health_connect import HealthConnectApi
 
 
 class WebUiPlugin(Plugin[None]):
@@ -122,6 +123,23 @@ class WebUiPlugin(Plugin[None]):
             # Pass the code to the Google Fit API without blocking the Quart app.
             await asyncio.create_task(GoogleFitApi.handle_oauth_redirect(code, state))
             return "Google Fit authenticated successfully. You can close this tab."
+
+        @app.post("/health-connect")
+        async def health_connect_webhook() -> tuple[str, int]:
+            # Pushed by the Health Connect bridge app on the user's phone.
+            # Only authenticates and queues; the plugin drains the queue.
+            auth: str = request.headers.get("Authorization", "")
+            token: str = (
+                auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
+            )
+            raw: str | bytes = await request.get_data()
+            body: str = (
+                raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+            )
+            status: int = await HealthConnectApi.handle_webhook(token, body)
+            return {401: "Unauthorized", 400: "Bad Request"}.get(
+                status, "Accepted"
+            ), status
 
         # Start the Quart app.
         await app.run_task(debug=False, host="127.0.0.1", port=5000)

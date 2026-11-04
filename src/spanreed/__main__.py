@@ -24,6 +24,7 @@ from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
 from spanreed.plugins.hevy import HevyPlugin
 from spanreed.plugins.googlefit import GoogleFitPlugin
+from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.apis.audible import AudiblePlugin
 from spanreed.plugins.book_progress import BookProgressPlugin
 
@@ -66,6 +67,7 @@ def load_plugins() -> List[Plugin]:
         GmailMonitorPlugin(),
         HevyPlugin(),
         GoogleFitPlugin(),
+        HealthConnectPlugin(),
         AudiblePlugin(),
         BookProgressPlugin(),
     ]
