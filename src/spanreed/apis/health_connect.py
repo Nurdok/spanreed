@@ -1,17 +1,17 @@
-"""Ingress for Android Health Connect data.
+"""Receive Android Health Connect data.
 
-Health Connect is an on-device store with no cloud API, so the data has to be
-*pushed* to us. A bridge app on the phone (``health-connect-webhook``) reads
-Health Connect in the background and POSTs new records as JSON to the
-``/health-connect`` route served by the Web UI plugin.
+Health Connect is a store on the phone. It has no cloud API. A bridge app on
+the phone (``health-connect-webhook``) reads Health Connect in the background
+and POSTs new records as JSON to the ``/health-connect`` route of the Web UI
+plugin.
 
-The HTTP handler must answer in milliseconds (the bridge app only retries a
-few times), so it does nothing but authenticate the request and push the raw
-body onto a per-user Redis inbox. ``HealthConnectPlugin`` drains the inbox,
-parses the payload and stores the records per local date in Redis
-(``HealthConnectStore``), where later PRs compute daily metrics from them.
+The HTTP handler must answer fast, because the bridge app retries only a few
+times. It only checks the token and pushes the raw body onto a Redis inbox
+for the user. ``HealthConnectPlugin`` reads the inbox, parses each payload
+and stores the records by local date in ``HealthConnectStore``. Later
+changes compute daily metrics from that store.
 
-Payload shape (from the bridge app's ``docs/webhook.md``)::
+The bridge app sends this payload shape (see its ``docs/webhook.md``)::
 
     {
       "timestamp": "2026-05-09T14:00:00.123Z",
@@ -21,8 +21,8 @@ Payload shape (from the bridge app's ``docs/webhook.md``)::
       "resting_heart_rate": [{"bpm": 58, "time": "..."}]
     }
 
-Every per-type key is optional and only present when the batch holds at
-least one record. Timestamps are ISO-8601 UTC instants.
+Each record-type key is optional. It is present only when the batch has at
+least one record of that type. Timestamps are ISO-8601 UTC instants.
 """
 
 import datetime
@@ -96,9 +96,10 @@ _PARSED_TYPES = {"heart_rate", "resting_heart_rate", "steps"}
 
 
 def parse_instant(value: Any) -> datetime.datetime:
-    """Parse an ISO-8601 instant (``java.time.Instant.toString()`` output).
+    """Parse an ISO-8601 instant, as written by ``java.time.Instant``.
 
-    Always returns a timezone-aware datetime. Naive strings are assumed UTC.
+    Return a timezone-aware datetime. Treat a string with no timezone as
+    UTC. Raise ``ValueError`` if the value is not a valid instant string.
     """
     if not isinstance(value, str):
         raise ValueError(f"Expected ISO-8601 string, got {value!r}")
@@ -111,10 +112,10 @@ def parse_instant(value: Any) -> datetime.datetime:
 def parse_payload(data: Any) -> HealthConnectPayload:
     """Parse a webhook JSON object into typed records.
 
-    Lenient by design: a single malformed record is skipped (and counted in
-    ``skipped_records``) rather than failing the whole batch, and unknown
-    per-type keys are collected in ``unknown_types``. A payload that isn't a
-    JSON object at all raises ``ValueError``.
+    Skip a record that has the wrong shape and count it in
+    ``skipped_records``. Do not fail the whole batch for one bad record.
+    Collect record-type keys that this parser does not know in
+    ``unknown_types``. Raise ``ValueError`` if ``data`` is not a JSON object.
     """
     if not isinstance(data, dict):
         raise ValueError(f"Payload is not a JSON object: {type(data).__name__}")
@@ -172,10 +173,11 @@ def parse_payload(data: Any) -> HealthConnectPayload:
 def local_date(
     instant: datetime.datetime, tz: datetime.tzinfo | None = None
 ) -> datetime.date:
-    """The calendar date of an instant in ``tz`` (server-local by default).
+    """Return the calendar date of an instant in timezone ``tz``.
 
-    Daily notes are keyed by local date, and the other daily-note plugins
-    bucket on the server's local midnight too, so this keeps them consistent.
+    Use the server's local timezone if ``tz`` is ``None``. Daily notes are
+    named by local date, and the other daily-note plugins also use the
+    server's local midnight, so this keeps all of them consistent.
     """
     return instant.astimezone(tz).date()
 
@@ -184,7 +186,7 @@ def local_date(
 
 
 class HealthConnectApi:
-    """Static helpers shared by the HTTP route and the plugin."""
+    """Helpers that the HTTP route and the plugin share."""
 
     @staticmethod
     def generate_token() -> str:
@@ -225,9 +227,10 @@ class HealthConnectApi:
 
     @classmethod
     async def dequeue_payload(cls, user: User) -> str | None:
-        """Block for up to ``INBOX_POLL_TIMEOUT_S`` for the next raw payload.
+        """Wait for the next raw payload in the user's inbox.
 
-        Returns the oldest queued body, or ``None`` on timeout.
+        Return the oldest queued body. Return ``None`` if no payload arrives
+        within ``INBOX_POLL_TIMEOUT_S`` seconds.
         """
         result = await redis_api.brpop(
             cls.inbox_key(user.id), timeout=INBOX_POLL_TIMEOUT_S
@@ -239,11 +242,10 @@ class HealthConnectApi:
 
     @classmethod
     async def handle_webhook(cls, token: str, body: str) -> int:
-        """Authenticate and enqueue a webhook delivery. Returns an HTTP status.
+        """Check the token, queue the delivery and return an HTTP status.
 
-        Kept free of any slow work: the bridge app gives up after three
-        attempts, and draining to Obsidian can take minutes when the desktop
-        is offline.
+        Do no slow work here. The bridge app stops after three attempts, and
+        a write to Obsidian can take minutes when the desktop is offline.
         """
         user_id = await cls.user_id_for_token(token)
         if user_id is None:
@@ -287,13 +289,14 @@ def _decode(value: str | bytes) -> str:
 
 
 class HealthConnectStore:
-    """Per-user, per-local-date record buffer in Redis.
+    """Store records in Redis, by user and by local date.
 
-    The bridge app delivers records incrementally (a watermark per type over a
-    48h window), so a day's records arrive across many batches, and updated
-    records are re-sent. Each day is a Redis hash keyed by the record's
-    timestamp, so re-deliveries overwrite in place and the full day can be
-    re-read to compute metrics.
+    The bridge app sends records in small batches. It sends only records that
+    are new or changed since the last sync, over a 48-hour window. So the
+    records of one day arrive in many batches, and a changed record is sent
+    again. Each day is one Redis hash, with the record timestamp as the field
+    name. A record that is sent again replaces the old one, and the full day
+    can be read back to compute metrics.
     """
 
     def __init__(self, user: User, tz: datetime.tzinfo | None = None) -> None:
@@ -319,7 +322,7 @@ class HealthConnectStore:
     async def add_heart_rate(
         self, samples: Iterable[HeartRateSample], record_type: str = "heart-rate"
     ) -> set[datetime.date]:
-        """Store samples; returns the set of local dates that were touched."""
+        """Store samples and return the set of local dates that changed."""
         by_date: dict[datetime.date, _HashMapping] = {}
         for sample in samples:
             by_date.setdefault(local_date(sample.time, self._tz), {})[
@@ -333,7 +336,10 @@ class HealthConnectStore:
         return await self.add_heart_rate(samples, record_type="resting-heart-rate")
 
     async def add_steps(self, records: Iterable[StepsRecord]) -> set[datetime.date]:
-        """Store step intervals, bucketed by the local date they start on."""
+        """Store step intervals and return the local dates that changed.
+
+        An interval belongs to the local date of its start time.
+        """
         by_date: dict[datetime.date, _HashMapping] = {}
         for record in records:
             by_date.setdefault(local_date(record.start_time, self._tz), {})[

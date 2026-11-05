@@ -1,8 +1,8 @@
-"""Health Connect plugin: drains the webhook inbox into the per-day store.
+"""Move Health Connect payloads from the webhook inbox into the store.
 
-See ``spanreed.apis.health_connect`` for the ingress design. This PR only
-ingests and stores records; writing daily-note properties (steps, heart
-rate metrics) is layered on top in follow-up PRs.
+See ``spanreed.apis.health_connect`` for how the data arrives. This plugin
+only parses and stores records. Later changes add the daily-note
+properties (steps, heart-rate metrics) on top of it.
 """
 
 import asyncio
@@ -32,7 +32,7 @@ class UserConfig:
 
 @dataclass
 class IngestSummary:
-    """What one payload contributed, for logging and later PRs' write step."""
+    """Counts of what one payload added to the store."""
 
     heart_rate_samples: int = 0
     resting_heart_rate_samples: int = 0
@@ -110,7 +110,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 self._logger.exception("Failed to ingest Health Connect payload.")
 
     async def _ingest(self, user: User, raw: str) -> IngestSummary:
-        """Parse one raw payload and store its records. Returns a summary."""
+        """Parse one raw payload, store its records and return a summary."""
         payload: HealthConnectPayload = parse_payload(json.loads(raw))
         store = HealthConnectStore(user)
         summary = IngestSummary(
