@@ -176,8 +176,7 @@ def local_date(
     """Return the calendar date of an instant in timezone ``tz``.
 
     Use the server's local timezone if ``tz`` is ``None``. Daily notes are
-    named by local date, and the other daily-note plugins also use the
-    server's local midnight, so this keeps all of them consistent.
+    named by the user's local date, so callers pass the user's timezone.
     """
     return instant.astimezone(tz).date()
 
@@ -300,8 +299,13 @@ class HealthConnectStore:
     """
 
     def __init__(self, user: User, tz: datetime.tzinfo | None = None) -> None:
+        """Create a store for ``user``.
+
+        Bucket records by local date in ``tz``. Use the user's own timezone
+        if ``tz`` is ``None``.
+        """
         self._user = user
-        self._tz = tz
+        self._tz = tz if tz is not None else user.tzinfo
 
     def _key(self, record_type: str, date: datetime.date) -> str:
         return f"health-connect:{self._user.id}:{record_type}:{date.isoformat()}"

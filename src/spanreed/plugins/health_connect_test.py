@@ -3,6 +3,8 @@ import datetime
 import json
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from spanreed.apis.health_connect import HealthConnectApi, HealthConnectStore
 from spanreed.plugin import Plugin
 from spanreed.plugins.health_connect import (
@@ -15,9 +17,6 @@ from spanreed.test_utils import (
     mock_user_find_by_id,
     patch_user_interaction,
 )
-
-
-UTC = datetime.timezone.utc
 
 
 def test_name() -> None:
@@ -51,6 +50,79 @@ def test_ask_for_user_config_generates_registers_and_shows_token(
     sent_text = mock_bot.send_message.await_args.args[0]
     assert config.token in sent_text
     assert "https://spanreed.ink/health-connect" in sent_text
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_ask_for_user_config_asks_for_timezone_when_unset(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    user.timezone = None
+
+    async def set_timezone(_user: object, _bot: object) -> bool:
+        user.timezone = "Asia/Jerusalem"
+        return True
+
+    with (
+        patch("spanreed.apis.health_connect.redis_api", new=fake),
+        patch("spanreed.plugin.redis_api", new=fake),
+        patch(
+            "spanreed.plugins.health_connect.ask_for_timezone",
+            side_effect=set_timezone,
+        ) as mock_ask,
+    ):
+        asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
+        config: UserConfig = asyncio.run(HealthConnectPlugin.get_config(user))
+
+    mock_ask.assert_awaited_once()
+    assert config.token
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_ask_for_user_config_stops_when_timezone_invalid(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    user.timezone = None
+
+    with (
+        patch("spanreed.apis.health_connect.redis_api", new=fake),
+        patch("spanreed.plugin.redis_api", new=fake),
+        patch(
+            "spanreed.plugins.health_connect.ask_for_timezone",
+            new=AsyncMock(return_value=False),
+        ),
+    ):
+        with pytest.raises(RuntimeError):
+            asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
+
+    # No token was generated or registered.
+    assert fake.strings == {}
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_ask_for_user_config_skips_timezone_prompt_when_set(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)  # timezone is set to UTC by the helper
+
+    with (
+        patch("spanreed.apis.health_connect.redis_api", new=fake),
+        patch("spanreed.plugin.redis_api", new=fake),
+        patch("spanreed.plugins.health_connect.ask_for_timezone") as mock_ask,
+    ):
+        asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
+
+    mock_ask.assert_not_called()
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
@@ -93,17 +165,10 @@ def test_ingest_stores_records_and_summarizes() -> None:
         }
     )
 
-    with (
-        patch("spanreed.apis.health_connect.redis_api", new=fake),
-        # Pin the bucketing timezone so the assertion doesn't depend on the
-        # machine running the tests.
-        patch(
-            "spanreed.plugins.health_connect.HealthConnectStore",
-            new=lambda u: HealthConnectStore(u, tz=UTC),
-        ),
-    ):
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
         summary = asyncio.run(plugin._ingest(user, raw))
-        store = HealthConnectStore(user, tz=UTC)
+        # The mock user's timezone is UTC, so the store buckets by UTC date.
+        store = HealthConnectStore(user)
         hr = asyncio.run(store.get_heart_rate(datetime.date(2026, 5, 9)))
         rhr = asyncio.run(store.get_resting_heart_rate(datetime.date(2026, 5, 9)))
         steps = asyncio.run(store.get_steps(datetime.date(2026, 5, 9)))

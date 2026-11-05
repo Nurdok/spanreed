@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
+from spanreed.plugins.plugin_manager import ask_for_timezone
 from spanreed.apis.health_connect import (
     HealthConnectApi,
     HealthConnectPayload,
@@ -71,6 +72,14 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     async def ask_for_user_config(cls, user: User) -> None:
         logging.info("Asking for Health Connect user config.")
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+
+        # Records are bucketed by the user's local date, so the timezone
+        # must be known before the first payload arrives.
+        if user.timezone is None and not await ask_for_timezone(user, bot):
+            await bot.send_message(
+                "Health Connect setup stopped. Set your timezone and try again."
+            )
+            raise RuntimeError("User timezone not set.")
 
         token = HealthConnectApi.generate_token()
         await HealthConnectApi.register_token(user, token)
