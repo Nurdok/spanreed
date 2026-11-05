@@ -1,4 +1,5 @@
 import builtins
+import datetime
 import logging
 from typing import Callable, Any, Coroutine
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -30,6 +31,10 @@ def mock_user_find_by_id(user_id: int) -> MagicMock:
     mock_user.id = user_id
     mock_user.name = "Test User"
     mock_user.plugins = []
+    # A fixed timezone keeps date bucketing in tests independent of the
+    # machine that runs them.
+    mock_user.timezone = "UTC"
+    mock_user.tzinfo = datetime.timezone.utc
     return mock_user
 
 
