@@ -1,8 +1,38 @@
+import datetime
+from typing import List
+
 from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.plugin import Plugin
 from spanreed.user import User
 
-from typing import List
+
+async def ask_for_timezone(user: User, bot: UserInteractionApi) -> bool:
+    """Ask the user for their IANA timezone name and store it.
+
+    Return True if a valid name was stored. Return False if the user gave
+    an unknown name; the user's timezone is then unchanged. Plugins that
+    need the timezone during setup can call this when it is not set yet.
+    """
+    current = user.timezone or "not set"
+    name = await bot.request_user_input(
+        f"Your timezone is {current}.\n"
+        "Enter an IANA timezone name (for example Asia/Jerusalem or "
+        "America/New_York):"
+    )
+    try:
+        await user.set_timezone(name)
+    except ValueError:
+        await bot.send_message(
+            f"'{name.strip()}' is not a known timezone. "
+            "Use a name from the IANA database, such as Europe/London."
+        )
+        return False
+    now = datetime.datetime.now(tz=user.tzinfo)
+    await bot.send_message(
+        f"Timezone set to {user.timezone}. "
+        f"Your local time is now {now.strftime('%H:%M')}."
+    )
+    return True
 
 
 class PluginManagerPlugin(Plugin):
@@ -24,6 +54,17 @@ class PluginManagerPlugin(Plugin):
                 callback=self._manage_plugins,
             ),
         )
+        await UserInteractionApi.register_command(
+            self,
+            PluginCommand(
+                text="Set timezone",
+                callback=self._set_timezone,
+            ),
+        )
+
+    async def _set_timezone(self, user: User) -> None:
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        await ask_for_timezone(user, bot)
 
     async def _manage_plugins(self, user: User) -> None:
         self._logger.info(f"Managing plugins for user {user.id}")
