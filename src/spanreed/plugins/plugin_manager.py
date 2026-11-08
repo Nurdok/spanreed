@@ -1,8 +1,8 @@
-from typing import List
-
 from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.plugin import Plugin
 from spanreed.user import User
+
+from typing import List
 
 
 class PluginManagerPlugin(Plugin):
