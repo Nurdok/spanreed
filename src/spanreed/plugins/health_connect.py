@@ -1,8 +1,9 @@
-"""Move Health Connect payloads from the webhook inbox into the store.
+"""Move Health Connect payloads from the webhook inbox into daily notes.
 
 See ``spanreed.apis.health_connect`` for how the data arrives. This plugin
-only parses and stores records. Later changes add the daily-note
-properties (steps, heart-rate metrics) on top of it.
+parses each payload, stores the records by local date, and writes the
+daily-note properties for the dates that changed. Steps are written now.
+Heart-rate metrics come in a later change.
 """
 
 import asyncio
@@ -15,13 +16,21 @@ from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.plugins.user_profile import ask_for_timezone
+from spanreed.apis.obsidian import ObsidianApi, ObsidianPlugin
 from spanreed.apis.health_connect import (
     HealthConnectApi,
     HealthConnectPayload,
     HealthConnectStore,
     WEBHOOK_URL,
+    daily_step_total,
     parse_payload,
 )
+
+
+# Frontmatter property written into the daily note.
+STEPS_PROPERTY = "steps"
+# Folder holding the daily notes (matches the other daily-note plugins).
+DAILY_NOTE_FOLDER = "Daily"
 
 
 @dataclass
@@ -39,7 +48,10 @@ class IngestSummary:
     resting_heart_rate_samples: int = 0
     steps_records: int = 0
     skipped_records: int = 0
+    # Local dates that got new or changed records, for all types together
+    # and for steps alone (the steps dates are the ones to rewrite).
     touched_dates: set[datetime.date] = field(default_factory=set)
+    steps_dates: set[datetime.date] = field(default_factory=set)
 
 
 def setup_instructions(token: str) -> str:
@@ -69,6 +81,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         return UserConfig
 
     @classmethod
+    def get_prerequisites(cls) -> list[type[Plugin]]:
+        return [ObsidianPlugin]
+
+    @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
         logging.info("Asking for Health Connect user config.")
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
@@ -92,6 +108,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             self,
             PluginCommand(text="Show Health Connect setup", callback=self._show_setup),
         )
+        await UserInteractionApi.register_command(
+            self,
+            PluginCommand(text="Sync steps", callback=self._sync_steps_now),
+        )
         await super().run()
 
     async def _show_setup(self, user: User) -> None:
@@ -110,7 +130,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             if raw is None:
                 continue  # poll timeout; loop so cancellation is noticed
             try:
-                await self._ingest(user, raw)
+                summary = await self._ingest(user, raw)
+                # Silent: the background path must never message the user.
+                # If Obsidian is offline the records are already stored, and
+                # the next payload or a manual sync writes them.
+                await self._write_steps(user, sorted(summary.steps_dates), notify=False)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -135,7 +159,8 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 payload.resting_heart_rate
             )
         if payload.steps:
-            summary.touched_dates |= await store.add_steps(payload.steps)
+            summary.steps_dates = await store.add_steps(payload.steps)
+            summary.touched_dates |= summary.steps_dates
 
         self._logger.info(
             f"Ingested Health Connect payload for user {user.id} "
@@ -151,3 +176,67 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 f"Payload also carried unparsed types: {payload.unknown_types}"
             )
         return summary
+
+    async def _sync_steps_now(self, user: User) -> None:
+        """Write step totals for recent days, on request from the user."""
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        choice = await bot.request_user_choice(
+            "Sync steps for…",
+            ["Today", "The last week", "Cancel"],
+        )
+        if choice == 0:  # Today
+            days = 1
+        elif choice == 1:  # The last week
+            days = 7
+        else:  # Cancel
+            return
+
+        today = datetime.datetime.now(tz=user.tzinfo).date()
+        dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
+        await bot.notify("Syncing steps…")
+        if await self._write_steps(user, dates, notify=True) == 0:
+            await bot.notify("No new step counts found.")
+
+    async def _write_steps(
+        self, user: User, dates: list[datetime.date], *, notify: bool
+    ) -> int:
+        """Write the step total of each date into its daily note.
+
+        Compute each total from the stored records. Skip a date that has no
+        records. Overwrite the property when the total changed, because
+        today's total grows through the day. Leave it alone when it is the
+        same. Send Telegram messages only when ``notify`` is true. Return
+        the number of notes written.
+        """
+        if not dates:
+            return 0
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        store = HealthConnectStore(user)
+        obsidian = await ObsidianApi.for_user(user)
+
+        # Only today's daily note is generated on demand; past dates are
+        # expected to already have their notes.
+        await obsidian.safe_generate_today_note()
+
+        written = 0
+        for date in dates:
+            records = await store.get_steps(date)
+            if not records:
+                continue
+            total = daily_step_total(records)
+            daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
+            try:
+                existing = await obsidian.get_property(daily_note, STEPS_PROPERTY)
+                if existing == total:
+                    continue
+                await obsidian.set_value_of_property(daily_note, STEPS_PROPERTY, total)
+            except FileNotFoundError:
+                if notify:
+                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
+                continue
+
+            written += 1
+            self._logger.info(f"Wrote {STEPS_PROPERTY}={total} for {date.isoformat()}")
+            if notify:
+                await bot.notify(f"Logged steps for {date.isoformat()}: {total}.")
+        return written

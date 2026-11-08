@@ -11,6 +11,7 @@ from spanreed.apis.health_connect import (
     HealthConnectStore,
     HeartRateSample,
     StepsRecord,
+    daily_step_total,
     local_date,
     parse_instant,
     parse_payload,
@@ -150,6 +151,23 @@ def test_local_date_buckets_by_timezone() -> None:
     plus3 = datetime.timezone(datetime.timedelta(hours=3))
     assert local_date(instant, plus3) == datetime.date(2026, 5, 9)
     assert local_date(instant, UTC) == datetime.date(2026, 5, 8)
+
+
+# --- daily_step_total --------------------------------------------------------
+
+
+def test_daily_step_total_sums_counts() -> None:
+    t = datetime.datetime(2026, 5, 9, 8, 0, tzinfo=UTC)
+    records = [
+        StepsRecord(t, t + datetime.timedelta(minutes=10), 120),
+        StepsRecord(
+            t + datetime.timedelta(hours=1),
+            t + datetime.timedelta(hours=1, minutes=5),
+            30,
+        ),
+    ]
+    assert daily_step_total(records) == 150
+    assert daily_step_total([]) == 0
 
 
 # --- HealthConnectStore ------------------------------------------------------
