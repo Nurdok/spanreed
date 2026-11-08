@@ -1,0 +1,65 @@
+name: CI & Deploy
+
+# Push to main (i.e. a merged PR) -> test, then deploy to production. This is
+# how changes reach production WITHOUT anyone (or any agent) holding server
+# credentials: the secrets live in GitHub, and the deploy key can only run
+# deploy.sh on the server. See docs/deployment.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry install --with dev
+      - name: Run tests
+        run: poetry run pytest
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # The real gate is the branch ruleset on `main` requiring a pull request;
+    # `environment:` is kept as the anchor for protection rules if they become
+    # available on this plan. See docs/deployment.md.
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          # Not secrets: GitHub masks every occurrence of a secret's value in
+          # the run log, and "spanreed" appears in every journal line.
+          HOST: spanreed.ink
+          USER: spanreed
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # The server pins this key to deploy.sh; no command is sent from here.
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes "$USER@$HOST"
+
+      - name: Smoke check
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://spanreed.ink/)
+          echo "production returned HTTP $code"
+          test "$code" = "200"
