@@ -23,6 +23,11 @@ logs** to confirm the service comes back up cleanly. Target:
 
 ## Preconditions
 
+- **Merging a PR into `main` already deploys** via
+  `.github/workflows/deploy.yml` (see `docs/deployment.md`), which runs
+  `deploy.sh` on the server with a shell-less deploy key. This skill is the
+  **manual fallback** for when Actions is unavailable or a deploy needs
+  hands-on debugging — not the normal path.
 - This is a **production** change. Only run it when the user explicitly asked
   to deploy in this session.
 - It deploys whatever is on `main`. Make sure the intended work is already
