@@ -5,6 +5,7 @@ import datetime
 from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.plugin import Plugin
 from spanreed.user import User
+from spanreed.web import auth as web_auth
 
 
 async def ask_for_timezone(user: User, bot: UserInteractionApi) -> bool:
@@ -52,7 +53,20 @@ class UserProfilePlugin(Plugin):
             self,
             PluginCommand(text="Set timezone", callback=self._set_timezone),
         )
+        await UserInteractionApi.register_command(
+            self,
+            PluginCommand(text="Web UI login link", callback=self._web_login_link),
+        )
 
     async def _set_timezone(self, user: User) -> None:
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         await ask_for_timezone(user, bot)
+
+    async def _web_login_link(self, user: User) -> None:
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        link = await web_auth.create_login_link(user.id)
+        await bot.send_message(
+            "Open this link to log in to the Spanreed web UI, where you can"
+            " run the same commands as here. It works once and expires in an"
+            f' hour; the login then lasts 90 days.\n<a href="{link}">{link}</a>'
+        )
