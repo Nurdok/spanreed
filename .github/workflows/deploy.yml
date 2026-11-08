@@ -46,8 +46,10 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          USER: ${{ secrets.DEPLOY_USER }}
+          # Not secrets: GitHub masks every occurrence of a secret's value in
+          # the run log, and "spanreed" appears in every journal line.
+          HOST: spanreed.ink
+          USER: spanreed
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key

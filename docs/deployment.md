@@ -20,7 +20,8 @@ credentials are held without handing anyone prod access:
 | Piece | Where |
 |---|---|
 | `DEPLOY_SSH_KEY` | GitHub repo secret; private half of a key that exists only for deploys |
-| `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_KNOWN_HOSTS` | GitHub repo secrets (`spanreed.ink` / `spanreed` / pinned host key, so no MITM) |
+| `DEPLOY_KNOWN_HOSTS` | GitHub repo secret; pinned host key, so no MITM |
+| Host / user | plain values in the workflow (`spanreed.ink` / `spanreed`); not secrets, because GitHub masks a secret's value everywhere in the run log and `spanreed` is in every journal line |
 | Public half | `/home/spanreed/.ssh/authorized_keys`, pinned with `command="/opt/spanreed/deploy.sh",no-pty,no-*-forwarding` |
 | Privilege | one sudoers line: `spanreed ALL=(root) NOPASSWD: /usr/bin/systemctl restart spanreed` |
 
@@ -93,8 +94,6 @@ Run as root on the box. Steps 1–4 are the server side; step 5 is GitHub.
    | Secret | Value |
    |---|---|
    | `DEPLOY_SSH_KEY` | the private key from step 1 |
-   | `DEPLOY_HOST` | `spanreed.ink` |
-   | `DEPLOY_USER` | `spanreed` |
    | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan spanreed.ink 2>/dev/null` output (pins the host key) |
 
    These must be **repository** secrets, not `production` environment
