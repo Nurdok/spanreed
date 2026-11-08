@@ -255,13 +255,15 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             user: User = await User.create()
             await self.set_config(user, UserConfig(user_id=telegram_user_id))
 
-            # These two plugins are required for the bot to work.
+            # These plugins are required for the bot to work.
             # Importing here to avoid circular imports.
             from spanreed.plugins.plugin_manager import PluginManagerPlugin
+            from spanreed.plugins.user_profile import UserProfilePlugin
 
             required_plugins = [
                 self,
                 await Plugin.get_plugin_by_class(PluginManagerPlugin),
+                await Plugin.get_plugin_by_class(UserProfilePlugin),
             ]
 
             for plugin in required_plugins:

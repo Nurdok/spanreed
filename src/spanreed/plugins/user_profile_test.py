@@ -2,9 +2,17 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 from spanreed.plugin import Plugin
-from spanreed.plugins.plugin_manager import PluginManagerPlugin
+from spanreed.plugins.user_profile import UserProfilePlugin
 from spanreed.test_utils import FakeRedis, patch_user_interaction
 from spanreed.user import User
+
+
+def test_name() -> None:
+    Plugin.reset_registry()
+    plugin = UserProfilePlugin()
+
+    assert plugin.name() == "User Profile"
+    assert plugin.canonical_name() == "user-profile"
 
 
 def _user() -> User:
@@ -14,10 +22,10 @@ def _user() -> User:
     return user
 
 
-@patch_user_interaction("spanreed.plugins.plugin_manager")
+@patch_user_interaction("spanreed.plugins.user_profile")
 def test_set_timezone_stores_valid_name(mock_bot: AsyncMock) -> None:
     Plugin.reset_registry()
-    plugin = PluginManagerPlugin()
+    plugin = UserProfilePlugin()
     fake = FakeRedis()
     user = _user()
     mock_bot.request_user_input.return_value = "Asia/Jerusalem"
@@ -33,10 +41,10 @@ def test_set_timezone_stores_valid_name(mock_bot: AsyncMock) -> None:
     assert "Asia/Jerusalem" in confirmation
 
 
-@patch_user_interaction("spanreed.plugins.plugin_manager")
+@patch_user_interaction("spanreed.plugins.user_profile")
 def test_set_timezone_shows_current_value(mock_bot: AsyncMock) -> None:
     Plugin.reset_registry()
-    plugin = PluginManagerPlugin()
+    plugin = UserProfilePlugin()
     fake = FakeRedis()
     user = _user()
     user.timezone = "Europe/London"
@@ -49,10 +57,10 @@ def test_set_timezone_shows_current_value(mock_bot: AsyncMock) -> None:
     assert user.timezone == "Europe/Paris"
 
 
-@patch_user_interaction("spanreed.plugins.plugin_manager")
+@patch_user_interaction("spanreed.plugins.user_profile")
 def test_set_timezone_rejects_unknown_name(mock_bot: AsyncMock) -> None:
     Plugin.reset_registry()
-    plugin = PluginManagerPlugin()
+    plugin = UserProfilePlugin()
     fake = FakeRedis()
     user = _user()
     mock_bot.request_user_input.return_value = "Mars/Olympus_Mons"
