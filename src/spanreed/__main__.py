@@ -17,6 +17,7 @@ from spanreed.plugins.todoist_nooverdue import TodoistNoOverduePlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.obsidian_surface import ObsidianSurfacePlugin
 from spanreed.plugins.plugin_manager import PluginManagerPlugin
+from spanreed.plugins.user_profile import UserProfilePlugin
 from spanreed.plugins.web_ui import WebUiPlugin
 from spanreed.plugins.spanreed_monitor import SpanreedMonitorPlugin
 from spanreed.plugins.timekiller import TimekillerPlugin
@@ -48,6 +49,7 @@ def load_plugins() -> List[Plugin]:
     core_plugins: list[Plugin] = [
         TelegramBotPlugin(),
         PluginManagerPlugin(),
+        UserProfilePlugin(),
     ]
 
     # TODO: Load optional plugins dynamically.
