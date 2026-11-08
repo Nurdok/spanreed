@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
-from spanreed.plugins.plugin_manager import ask_for_timezone
+from spanreed.plugins.user_profile import ask_for_timezone
 from spanreed.apis.health_connect import (
     HealthConnectApi,
     HealthConnectPayload,
