@@ -4,6 +4,8 @@
 and the Obsidian palette, in a browser. It exists for when Telegram flood
 control blocks the bot: a command started here never touches Telegram.
 
+![Web UI on desktop, mid-flow in Manage plugins](images/web-ui-desktop.png)
+
 ## How it fits
 
 - **A third interaction surface.** `spanreed.interaction.web_surface.WebSurface`
