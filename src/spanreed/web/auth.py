@@ -54,6 +54,11 @@ async def create_login_link(user_id: int, base_url: str = BASE_URL) -> str:
     return login_url(await create_login_token(user_id), base_url)
 
 
+async def login_token_is_valid(token: str) -> bool:
+    """Check a login token without consuming it."""
+    return bool(token) and await redis_api.get(_login_key(token)) is not None
+
+
 async def redeem_login_token(token: str) -> int | None:
     """Exchange a login token for its user id; the token is consumed."""
     if not token:
