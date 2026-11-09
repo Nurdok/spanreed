@@ -487,3 +487,9 @@ def test_sync_steps_now_cancel(mock_bot: AsyncMock) -> None:
 
     write.assert_not_called()
     mock_bot.notify.assert_not_called()
+
+
+def test_setup_instructions_put_the_bare_token_in_code() -> None:
+    text = setup_instructions("tok-en_1")
+    assert "<code>tok-en_1</code>" in text
+    assert "`" not in text

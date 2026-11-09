@@ -77,10 +77,13 @@ class UserInteractionApi:
         if not cls._surfaces:
             from spanreed.interaction.obsidian_surface import ObsidianSurface
             from spanreed.interaction.telegram_surface import TelegramSurface
+            from spanreed.interaction.web_surface import WebSurface
 
             cls._surfaces.append(TelegramSurface())
             # Inert until an Obsidian instance registers (never reachable).
             cls._surfaces.append(ObsidianSurface())
+            # Reachable only while a browser has the web UI open.
+            cls._surfaces.append(WebSurface())
 
     def _in_scope_surfaces(self) -> list[UserInteractionSurface]:
         """Effective surfaces per design §2.4 scope algebra.

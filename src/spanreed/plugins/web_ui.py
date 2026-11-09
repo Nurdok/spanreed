@@ -10,6 +10,7 @@ from spanreed.apis.withings import WithingsApi
 from spanreed.apis.gmail import GmailApi
 from spanreed.apis.googlefit import GoogleFitApi
 from spanreed.apis.health_connect import HealthConnectApi
+from spanreed.web.routes import blueprint as app_blueprint
 
 
 class WebUiPlugin(Plugin[None]):
@@ -22,6 +23,8 @@ class WebUiPlugin(Plugin[None]):
 
         # Create a Quart app.
         app = Quart(__name__)
+        # The command UI (login, command list, live conversation) at /app.
+        app.register_blueprint(app_blueprint)
 
         # Register the `get_logs` route.
         @app.get("/")
@@ -128,9 +131,8 @@ class WebUiPlugin(Plugin[None]):
         async def health_connect_webhook() -> tuple[str, int]:
             # Pushed by the Health Connect bridge app on the user's phone.
             # Only authenticates and queues; the plugin drains the queue.
-            auth: str = request.headers.get("Authorization", "")
-            token: str = (
-                auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
+            token: str = HealthConnectApi.token_from_header(
+                request.headers.get("Authorization", "")
             )
             raw: str | bytes = await request.get_data()
             body: str = (

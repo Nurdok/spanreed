@@ -1,0 +1,65 @@
+name: Server logs
+
+# Read the production journal without anyone holding server credentials: the
+# key in GitHub can only run logs.sh on the server (see docs/deployment.md).
+# Start it from the Actions tab or the API; the output is in the run log.
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "How far back: -30m, -2h, -1d, or 2026-11-08T09:30"
+        default: "-1h"
+        type: string
+      grep:
+        description: "Only lines matching this extended regex (optional)"
+        default: ""
+        type: string
+      lines:
+        description: "How many of the last matching lines to show (1-2000)"
+        default: "200"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read logs over SSH
+        env:
+          SSH_KEY: ${{ secrets.LOGS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: spanreed.ink
+          USER: spanreed
+          # Inputs go through the environment, never into this script's text.
+          SINCE: ${{ inputs.since }}
+          LINES: ${{ inputs.lines }}
+          PATTERN: ${{ inputs.grep }}
+        run: |
+          mkdir -p ~/.ssh
+          # Rebuild the key from its markers and base64 body, so a secret
+          # pasted with CRLF, joined lines or extra spaces still loads.
+          body=$(printf '%s' "$SSH_KEY" \
+            | sed -e 's/-----BEGIN OPENSSH PRIVATE KEY-----//' \
+                  -e 's/-----END OPENSSH PRIVATE KEY-----//' \
+            | tr -d ' \r\n\t')
+          {
+            echo '-----BEGIN OPENSSH PRIVATE KEY-----'
+            printf '%s' "$body" | fold -w 70
+            echo
+            echo '-----END OPENSSH PRIVATE KEY-----'
+          } > ~/.ssh/logs_key
+          chmod 600 ~/.ssh/logs_key
+          if ! ssh-keygen -y -f ~/.ssh/logs_key > /dev/null; then
+            echo "LOGS_SSH_KEY does not parse as an OpenSSH private key" \
+              "(${#body} base64 chars after cleanup)." >&2
+            exit 1
+          fi
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # The server pins this key to logs.sh, which reads the arguments
+          # from SSH_ORIGINAL_COMMAND and validates them. The `--` matters:
+          # since usually starts with "-" (e.g. -1h), and GNU getopt would
+          # otherwise read it as an ssh option even after the host.
+          ssh -i ~/.ssh/logs_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            -- "$USER@$HOST" "$SINCE $LINES $PATTERN"

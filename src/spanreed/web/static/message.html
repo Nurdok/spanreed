@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spanreed</title>
+<style>
+  :root { --bg: #f6f5f2; --card: #fff; --fg: #1d1d1b; --muted: #6b6a66; --line: #e2e0da; --accent: #3b5bdb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #1f1f1e; --fg: #ecebe7; --muted: #9a9993; --line: #2f2f2d; --accent: #7b93f0; }
+  }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; box-sizing: border-box; }
+  main { box-sizing: border-box; width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line);
+         border-radius: 12px; padding: 28px; }
+  h1 { margin: 0 0 8px; font-size: 20px; }
+  p { color: var(--muted); margin: 8px 0 16px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>{{title}}</h1>
+  <p>{{body}}</p>
+  <a href="/app/">Back to Spanreed</a>
+</main>
+</body>
+</html>

@@ -8,6 +8,7 @@ Heart-rate metrics come in a later change.
 
 import asyncio
 import datetime
+import html
 import json
 import logging
 from dataclasses import dataclass, field
@@ -55,15 +56,20 @@ class IngestSummary:
 
 
 def setup_instructions(token: str) -> str:
+    # HTML, not Markdown: the bot's send path defaults to parse_html=True, so
+    # Markdown markers were shown literally and got copied into the app.
+    # The token sits alone in <code> so Telegram copies exactly it on tap.
     return (
-        "Install the *Health Connect Webhook* app on your phone "
+        "Install the <b>Health Connect Webhook</b> app on your phone "
         "(github.com/mcnaveen/health-connect-webhook), grant it the "
         "Health Connect permissions for the data you want synced "
         "(heart rate, steps), and add a webhook with:\n\n"
-        f"URL: `{WEBHOOK_URL}`\n"
-        f"Header: `Authorization: Bearer {token}`\n\n"
+        f"URL: <code>{WEBHOOK_URL}</code>\n"
+        "Custom header name: <code>Authorization</code>\n"
+        "Custom header value: <code>Bearer</code>, a space, then this token:\n"
+        f"<code>{html.escape(token)}</code>\n\n"
         "Then enable background sync (an interval of 30–60 minutes is fine) "
-        "and press *Sync Now* once to verify."
+        "and press <b>Sync Now</b> once to verify."
     )
 
 
@@ -101,7 +107,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         await HealthConnectApi.register_token(user, token)
         await cls.set_config(user, UserConfig(token=token))
 
-        await bot.send_message(setup_instructions(token), parse_markdown=True)
+        await bot.send_message(setup_instructions(token), parse_html=True)
 
     async def run(self) -> None:
         await UserInteractionApi.register_command(
@@ -117,7 +123,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     async def _show_setup(self, user: User) -> None:
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         config: UserConfig = await self.get_config(user)
-        await bot.send_message(setup_instructions(config.token), parse_markdown=True)
+        await bot.send_message(setup_instructions(config.token), parse_html=True)
 
     async def run_for_user(self, user: User) -> None:
         config: UserConfig = await self.get_config(user)
