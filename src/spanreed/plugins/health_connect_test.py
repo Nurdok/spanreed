@@ -248,6 +248,8 @@ def test_run_for_user_survives_a_bad_payload() -> None:
         patch("spanreed.apis.health_connect.redis_api", new=fake),
         patch("spanreed.plugin.redis_api", new=fake),
         patch.object(HealthConnectApi, "dequeue_payload", side_effect=fake_dequeue),
+        patch.object(plugin, "_write_steps", new=AsyncMock(return_value=0)),
+        patch.object(plugin, "_write_heart_rate", new=AsyncMock(return_value=1)),
     ):
         asyncio.run(HealthConnectPlugin.set_config(user, UserConfig(token="abc")))
         try:
@@ -427,6 +429,9 @@ def test_run_for_user_writes_steps_for_touched_dates() -> None:
         patch("spanreed.plugin.redis_api", new=fake),
         patch.object(HealthConnectApi, "dequeue_payload", side_effect=fake_dequeue),
         patch.object(plugin, "_write_steps", new=AsyncMock(return_value=2)) as write,
+        patch.object(
+            plugin, "_write_heart_rate", new=AsyncMock(return_value=1)
+        ) as write_hr,
     ):
         asyncio.run(HealthConnectPlugin.set_config(user, UserConfig(token="abc")))
         try:
@@ -437,6 +442,8 @@ def test_run_for_user_writes_steps_for_touched_dates() -> None:
     write.assert_awaited_once_with(
         user, [datetime.date(2026, 5, 9), datetime.date(2026, 5, 10)], notify=False
     )
+    # Heart rate is written only for the date that had heart rate records.
+    write_hr.assert_awaited_once_with(user, [datetime.date(2026, 5, 11)], notify=False)
 
 
 # --- Sync steps command -------------------------------------------------------
@@ -557,3 +564,108 @@ def test_delete_data_cancel_deletes_nothing(answers: list[int]) -> None:
         mock_bot.send_message.assert_not_called()
 
     run()
+
+
+# --- Heart rate metrics in the daily note --------------------------------------
+
+
+def _seed_heart_rate(
+    fake: FakeRedis, user: object, bpm: list[int], resting: list[int]
+) -> None:
+    start = datetime.datetime(2026, 5, 9, 8, 0, tzinfo=UTC)
+    store = HealthConnectStore(user, tz=UTC)  # type: ignore[arg-type]
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(
+            store.add_heart_rate(
+                [
+                    HeartRateSample(start + datetime.timedelta(minutes=i), b)
+                    for i, b in enumerate(bpm)
+                ]
+            )
+        )
+        if resting:
+            asyncio.run(
+                store.add_resting_heart_rate(
+                    [
+                        HeartRateSample(start + datetime.timedelta(hours=i), r)
+                        for i, r in enumerate(resting)
+                    ]
+                )
+            )
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_write_heart_rate_writes_all_metrics(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    _seed_heart_rate(fake, user, list(range(60, 161)), resting=[58, 55])
+    mock_obsidian.get_daily_note.return_value = NOTE
+    mock_obsidian.get_property.return_value = None
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        written = asyncio.run(plugin._write_heart_rate(user, [DATE], notify=True))
+
+    assert written == 1
+    calls = [c.args for c in mock_obsidian.set_value_of_property.await_args_list]
+    # Resting is the day's last record; 60..160 has p5=65, avg=110, p95=155.
+    assert calls == [
+        (NOTE, "resting-heart-rate", 55),
+        (NOTE, "heart-rate-p5", 65),
+        (NOTE, "heart-rate-avg", 110),
+        (NOTE, "heart-rate-p95", 155),
+    ]
+    assert "heart-rate-avg=110" in mock_bot.notify.await_args.args[0]
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_write_heart_rate_sets_only_changed_and_present_metrics(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    # No resting record today; p5 is already in the note.
+    _seed_heart_rate(fake, user, [70, 80, 90], resting=[])
+    mock_obsidian.get_daily_note.return_value = NOTE
+    mock_obsidian.get_property.side_effect = lambda _note, prop: (
+        71 if prop == "heart-rate-p5" else None
+    )
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        written = asyncio.run(plugin._write_heart_rate(user, [DATE], notify=False))
+
+    assert written == 1
+    props = [c.args[1] for c in mock_obsidian.set_value_of_property.await_args_list]
+    assert props == ["heart-rate-avg", "heart-rate-p95"]
+    mock_bot.notify.assert_not_called()
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_write_heart_rate_skips_days_without_records_or_notes(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    _seed_heart_rate(fake, user, [70], resting=[])
+    mock_obsidian.get_daily_note.return_value = NOTE
+    mock_obsidian.get_property.side_effect = FileNotFoundError()
+    empty_day = DATE + datetime.timedelta(days=1)
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        written = asyncio.run(
+            plugin._write_heart_rate(user, [DATE, empty_day], notify=True)
+        )
+
+    assert written == 0
+    mock_obsidian.get_daily_note.assert_awaited_once_with("Daily", DATE)
+    assert "No daily note" in mock_bot.notify.await_args.args[0]
