@@ -8,6 +8,7 @@ import pytest
 from spanreed.apis.health_connect import (
     HealthConnectApi,
     HealthConnectStore,
+    HeartRateSample,
     StepsRecord,
 )
 from spanreed.plugin import Plugin
@@ -493,3 +494,66 @@ def test_setup_instructions_put_the_bare_token_in_code() -> None:
     text = setup_instructions("tok-en_1")
     assert "<code>tok-en_1</code>" in text
     assert "`" not in text
+
+
+# --- Delete data command ------------------------------------------------------
+
+
+def _day_keys(fake: FakeRedis) -> set[str]:
+    return {k for k in fake.hashes if k.startswith("health-connect:4:")}
+
+
+@pytest.mark.parametrize("choice, days", [(0, 1), (1, 7), (2, 30)])
+def test_delete_data_removes_the_chosen_days(choice: int, days: int) -> None:
+    @patch_user_interaction("spanreed.plugins.health_connect")
+    def run(mock_bot: AsyncMock) -> None:
+        Plugin.reset_registry()
+        plugin = HealthConnectPlugin()
+        fake = FakeRedis()
+        user = mock_user_find_by_id(4)
+        today = datetime.datetime.now(tz=UTC).date()
+        store = HealthConnectStore(user, tz=UTC)
+        # One day inside every range, one just outside the 30-day range.
+        outside = today - datetime.timedelta(days=30)
+        for date in (today, outside):
+            noon = datetime.datetime.combine(date, datetime.time(12), tzinfo=UTC)
+            with patch("spanreed.apis.health_connect.redis_api", new=fake):
+                asyncio.run(store.add_heart_rate([HeartRateSample(noon, 60)]))
+                asyncio.run(store.add_resting_heart_rate([HeartRateSample(noon, 50)]))
+                asyncio.run(store.add_steps([StepsRecord(noon, noon, 100)]))
+        assert len(_day_keys(fake)) == 6
+        mock_bot.request_user_choice.side_effect = [choice, 0]  # range, Delete
+
+        with patch("spanreed.apis.health_connect.redis_api", new=fake):
+            asyncio.run(plugin._delete_data(user))
+
+        remaining = _day_keys(fake)
+        assert len(remaining) == 3
+        assert all(outside.isoformat() in k for k in remaining)
+        confirm_prompt = mock_bot.request_user_choice.await_args_list[1].args[0]
+        first = (today - datetime.timedelta(days=days - 1)).isoformat()
+        assert f"from {first} to {today.isoformat()}" in confirm_prompt
+        assert "Deleted" in mock_bot.send_message.await_args.args[0]
+
+    run()
+
+
+@pytest.mark.parametrize("answers", [[3], [1, 1]])  # Cancel range / Cancel confirm
+def test_delete_data_cancel_deletes_nothing(answers: list[int]) -> None:
+    @patch_user_interaction("spanreed.plugins.health_connect")
+    def run(mock_bot: AsyncMock) -> None:
+        Plugin.reset_registry()
+        plugin = HealthConnectPlugin()
+        fake = FakeRedis()
+        user = mock_user_find_by_id(4)
+        _seed_steps(fake, user, 100)
+        before = _day_keys(fake)
+        mock_bot.request_user_choice.side_effect = answers
+
+        with patch("spanreed.apis.health_connect.redis_api", new=fake):
+            asyncio.run(plugin._delete_data(user))
+
+        assert before and _day_keys(fake) == before
+        mock_bot.send_message.assert_not_called()
+
+    run()

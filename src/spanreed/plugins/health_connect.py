@@ -118,6 +118,12 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             self,
             PluginCommand(text="Sync steps", callback=self._sync_steps_now),
         )
+        await UserInteractionApi.register_command(
+            self,
+            PluginCommand(
+                text="Delete Health Connect data", callback=self._delete_data
+            ),
+        )
         await super().run()
 
     async def _show_setup(self, user: User) -> None:
@@ -202,6 +208,44 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         await bot.notify("Syncing steps…")
         if await self._write_steps(user, dates, notify=True) == 0:
             await bot.notify("No new step counts found.")
+
+    async def _delete_data(self, user: User) -> None:
+        """Delete stored records of recent days, on request from the user.
+
+        Only the server-side store is cleared; daily notes keep their values
+        until new data for that day is synced and written over them.
+        """
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        options = [("Today", 1), ("The last 7 days", 7), ("The last 30 days", 30)]
+        choice = await bot.request_user_choice(
+            "Delete stored Health Connect data for…",
+            [label for label, _ in options] + ["Cancel"],
+        )
+        if not 0 <= choice < len(options):
+            return
+        label, days = options[choice]
+
+        today = datetime.datetime.now(tz=user.tzinfo).date()
+        dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
+        confirm = await bot.request_user_choice(
+            f"Delete all stored heart rate and steps records from "
+            f"{dates[0].isoformat()} to {dates[-1].isoformat()}? "
+            "Daily notes are not changed.",
+            ["Delete", "Cancel"],
+        )
+        if confirm != 0:
+            return
+
+        deleted = await HealthConnectStore(user).delete_dates(dates)
+        self._logger.info(
+            f"Deleted {deleted} Health Connect day keys for user {user.id} "
+            f"({dates[0].isoformat()}..{dates[-1].isoformat()})"
+        )
+        await bot.send_message(
+            f"Deleted stored Health Connect data for {label.lower()}. "
+            "To fill it in again, run a manual sync in the phone app that "
+            "covers those days."
+        )
 
     async def _write_steps(
         self, user: User, dates: list[datetime.date], *, notify: bool

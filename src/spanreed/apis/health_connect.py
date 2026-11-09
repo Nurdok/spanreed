@@ -51,6 +51,9 @@ INBOX_MAX_LENGTH = 500
 # keep enough history to re-sync "the last week" with room to spare.
 RECORD_TTL = datetime.timedelta(days=30)
 
+# Record types kept per day in HealthConnectStore (part of each Redis key).
+STORED_RECORD_TYPES = ("heart-rate", "resting-heart-rate", "steps")
+
 # Inbox poll timeout; the drain loop wakes up this often even when idle so a
 # cancellation is noticed promptly.
 INBOX_POLL_TIMEOUT_S = 60
@@ -374,6 +377,21 @@ class HealthConnectStore:
                 str(_epoch_ms(record.start_time))
             ] = f"{_epoch_ms(record.end_time)}:{record.count}"
         return await self._write("steps", by_date)
+
+    async def delete_dates(self, dates: Iterable[datetime.date]) -> int:
+        """Delete every stored record of these local dates.
+
+        Remove heart rate, resting heart rate and steps. Return the number
+        of Redis keys that existed and were deleted.
+        """
+        keys = [
+            self._key(record_type, date)
+            for date in dates
+            for record_type in STORED_RECORD_TYPES
+        ]
+        if not keys:
+            return 0
+        return int(await redis_api.delete(*keys))
 
     async def get_heart_rate(
         self, date: datetime.date, record_type: str = "heart-rate"
