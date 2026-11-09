@@ -35,7 +35,10 @@ for the OAuth callbacks.
 
 1. Run **Web UI login link** (User Profile plugin, so every user has it)
    from `/do` or the Obsidian palette. It sends a link that works once and
-   expires in an hour.
+   expires in an hour. Opening the link shows a **Log in** button, and only
+   pressing it (a POST) uses the link up. Chat apps fetch links to build
+   previews, so a link that logged you in on GET would be used up by
+   Telegram's preview before you tapped it.
 2. Opening it starts a session: an `HttpOnly`, `Secure`, `SameSite=Lax`
    cookie on `/app`, valid for 90 days. Log in once while Telegram works and
    you keep access through a ban.

@@ -77,8 +77,8 @@ async def _app() -> AsyncIterator[tuple[Any, FakeRedis, RecordingSurface]]:
 
 async def _login(client: Any, user_id: int = USER_ID) -> None:
     token = await auth.create_login_token(user_id)
-    response = await client.get(f"/app/login?token={token}")
-    assert response.status_code == 302
+    response = await client.post("/app/login", form={"token": token})
+    assert response.status_code == 303
     assert auth.SESSION_COOKIE in response.headers["Set-Cookie"]
 
 
@@ -96,11 +96,22 @@ def test_api_requires_login_and_login_tokens_are_single_use() -> None:
             assert "login link" in (await page.get_data(as_text=True))
 
             token = await auth.create_login_token(USER_ID)
-            assert (await client.get(f"/app/login?token={token}")).status_code == 302
+            # Opening the link (or a chat app fetching it for a preview)
+            # only shows the button; it doesn't use the token up.
+            for _ in range(3):
+                page = await client.get(f"/app/login?token={token}")
+                assert page.status_code == 200
+                assert token in await page.get_data(as_text=True)
+            assert (await client.get("/app/api/state")).status_code == 401
+
+            login = await client.post("/app/login", form={"token": token})
+            assert login.status_code == 303
             # The cookie jar now holds a session.
             assert (await client.get("/app/api/state")).status_code == 200
             # The same link can't be used twice.
             assert (await client.get(f"/app/login?token={token}")).status_code == 403
+            again = await client.post("/app/login", form={"token": token})
+            assert again.status_code == 403
             assert (await client.get("/app/login?token=nope")).status_code == 403
 
     asyncio.run(run())

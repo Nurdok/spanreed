@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import html
 import logging
 import uuid
 from pathlib import Path
@@ -101,19 +102,42 @@ async def index() -> Any:
     return _no_store(Response(_page("index.html"), mimetype="text/html"))
 
 
+def _invalid_link_page() -> Response:
+    page = _page("login.html").replace(
+        "<!--error-->",
+        '<p class="error">That login link is invalid, expired or was'
+        " already used. Get a new one.</p>",
+    )
+    return _no_store(Response(page, status=403, mimetype="text/html"))
+
+
 @blueprint.get("/login")
+async def login_page() -> Any:
+    """Show a "Log in" button for a login link; never consume the token.
+
+    Chat apps fetch links to build previews (Telegram does it as soon as
+    the message arrives), so a GET that redeemed the one-time token would
+    burn it before the user ever tapped it. Only the POST below redeems.
+    """
+    token = request.args.get("token", "")
+    if not await auth.login_token_is_valid(token):
+        return _invalid_link_page()
+    page = _page("login_confirm.html").replace("{{token}}", html.escape(token))
+    response = _no_store(Response(page, mimetype="text/html"))
+    # Keep the one-time token out of Referer headers.
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@blueprint.post("/login")
 async def login() -> Any:
-    user_id = await auth.redeem_login_token(request.args.get("token", ""))
+    form = await request.form
+    user_id = await auth.redeem_login_token(form.get("token", ""))
     if user_id is None:
-        page = _page("login.html").replace(
-            "<!--error-->",
-            '<p class="error">That login link is invalid, expired or was'
-            " already used. Get a new one.</p>",
-        )
-        return _no_store(Response(page, status=403, mimetype="text/html"))
+        return _invalid_link_page()
     session_id = await auth.create_session(user_id)
     _logger.info(f"Web UI login for user {user_id}")
-    response = redirect("/app/")
+    response = redirect("/app/", code=303)
     response.set_cookie(
         auth.SESSION_COOKIE,
         session_id,
@@ -123,8 +147,6 @@ async def login() -> Any:
         httponly=True,
         samesite="Lax",
     )
-    # Keep the one-time token out of Referer headers.
-    response.headers["Referrer-Policy"] = "no-referrer"
     return response
 
 

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Spanreed</title>
+<style>
+  :root { --bg: #f6f5f2; --card: #fff; --fg: #1d1d1b; --muted: #6b6a66; --line: #e2e0da; --accent: #3b5bdb; --accent-fg: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #1f1f1e; --fg: #ecebe7; --muted: #9a9993; --line: #2f2f2d; --accent: #7b93f0; --accent-fg: #10121a; }
+  }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; box-sizing: border-box; }
+  main { box-sizing: border-box; width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
+  h1 { margin: 0 0 8px; font-size: 22px; }
+  p { color: var(--muted); margin: 8px 0 20px; }
+  button { width: 100%; padding: 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-fg);
+           font: inherit; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Spanreed</h1>
+  <p>Log in to the web UI on this device. You'll stay logged in for 90 days.</p>
+  <form method="post" action="/app/login">
+    <input type="hidden" name="token" value="{{token}}">
+    <button type="submit">Log in</button>
+  </form>
+</main>
+</body>
+</html>
