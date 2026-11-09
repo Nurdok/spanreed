@@ -65,6 +65,8 @@
                         border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
   .primary { padding: 9px 16px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-fg); }
   .conn { color: var(--err); font-size: 13px; }
+  #google form { display: inline; }
+  @media (max-width: 720px) { #google .email { display: none; } }
   @media (max-width: 720px) {
     .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
     aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 34vh; }
@@ -77,6 +79,7 @@
     <h1>Spanreed</h1>
     <span id="conn" class="conn" hidden>Reconnecting…</span>
     <span id="who" class="who"></span>
+    <span id="google" class="who"></span>
     <button id="logout" class="link">Log out</button>
   </header>
   <div class="layout">
@@ -223,10 +226,33 @@ async function run(c) {
   }
 }
 
+function renderGoogle(google) {
+  const box = $("google");
+  box.replaceChildren();
+  if (!google || !google.available) return;
+  if (google.email) {
+    const email = el("span", "email", "Google: " + google.email + " ");
+    const unlink = el("button", "link", "Unlink Google");
+    unlink.onclick = async () => {
+      if (!confirm("Unlink " + google.email + "? You'll need a login link to log in on new devices.")) return;
+      await post("google/unlink");
+      loadState();
+    };
+    box.append(email, unlink);
+  } else {
+    // A real form POST: the server answers with a redirect to Google.
+    const form = el("form");
+    form.method = "post"; form.action = "/app/google/link";
+    form.append(el("button", "link", "Link Google account"));
+    box.append(form);
+  }
+}
+
 async function loadState() {
   const res = await api("state");
   const s = await res.json();
   $("who").textContent = s.user.name;
+  renderGoogle(s.google);
   commands = s.commands; renderCommands();
   $("log").replaceChildren(); bubbles.clear();
   openPrompt = null;

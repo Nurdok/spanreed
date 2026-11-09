@@ -69,3 +69,36 @@ location /app/ {
     proxy_buffering off;
 }
 ```
+
+## Sign in with Google
+
+A permanent way in, so you don't need a new login link for each device.
+
+1. Log in once with a login link, then choose **Link Google account** in
+   the header. That links your Google account to your Spanreed user.
+2. From then on, **Sign in with Google** on the login page logs you in.
+   A Google account that isn't linked can't sign in. **Unlink Google**
+   in the header removes the link.
+
+How it works: OpenID Connect authorization-code flow
+(`spanreed.web.google_auth`), scopes `openid email`. The `state` is
+single-use, kept in Redis for 10 minutes, and bound to the browser by a
+cookie, which blocks login CSRF. The ID token's signature, audience, expiry
+and `nonce` are checked, and its email must be verified. Links live in Redis
+as `web-ui:google-sub:{sub}` → user id and `web-ui:user:{id}:google`. A
+Google account can be linked to only one Spanreed user.
+
+**Server setup (one time):**
+
+- OAuth client: the server uses the client JSON under the Redis key
+  `web_ui_google_credentials`. If that key isn't set, it uses the client
+  that Gmail or Google Fit already use (`gmail_credentials`, then
+  `googlefit_credentials`).
+- In Google Cloud Console → APIs & Services → Credentials → that OAuth
+  client, add the authorized redirect URI
+  `https://spanreed.ink/app/google/callback`. Until you do, Google rejects
+  the sign-in with `redirect_uri_mismatch`.
+- If the consent screen is in "Testing", the Google account must be one of
+  its test users.
+
+The Google button only appears when a client config is found.
