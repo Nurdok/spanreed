@@ -181,6 +181,18 @@ def local_date(
     return instant.astimezone(tz).date()
 
 
+# --- Daily metrics -----------------------------------------------------------
+
+
+def daily_step_total(records: Iterable[StepsRecord]) -> int:
+    """Return the sum of the step counts in ``records``.
+
+    The caller passes the records of one local date. Health Connect gives
+    one interval per source and period, so the sum is the day's total.
+    """
+    return sum(record.count for record in records)
+
+
 # --- Webhook ingress (token registry + inbox) --------------------------------
 
 
