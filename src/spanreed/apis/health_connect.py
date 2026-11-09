@@ -192,6 +192,18 @@ class HealthConnectApi:
         return secrets.token_urlsafe(32)
 
     @staticmethod
+    def token_from_header(auth: str) -> str:
+        """Extract the token from an ``Authorization`` header value.
+
+        Accept the scheme in any case and tolerate stray whitespace or
+        backticks around the token, which a copy from a chat message can add.
+        """
+        scheme, _, rest = auth.strip().partition(" ")
+        if scheme.lower() != "bearer":
+            return ""
+        return rest.strip().strip("`").strip()
+
+    @staticmethod
     def _token_key(token: str) -> str:
         # Key by a digest so the secret itself never appears in key listings.
         digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
