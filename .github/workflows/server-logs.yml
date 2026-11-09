@@ -42,6 +42,8 @@ jobs:
           chmod 600 ~/.ssh/logs_key
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           # The server pins this key to logs.sh, which reads the arguments
-          # from SSH_ORIGINAL_COMMAND and validates them.
+          # from SSH_ORIGINAL_COMMAND and validates them. The `--` matters:
+          # since usually starts with "-" (e.g. -1h), and GNU getopt would
+          # otherwise read it as an ssh option even after the host.
           ssh -i ~/.ssh/logs_key -o IdentitiesOnly=yes -o BatchMode=yes \
-            "$USER@$HOST" "$SINCE $LINES $PATTERN"
+            -- "$USER@$HOST" "$SINCE $LINES $PATTERN"
