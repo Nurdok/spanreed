@@ -11,10 +11,12 @@ from spanreed.apis.health_connect import (
     HealthConnectStore,
     HeartRateSample,
     StepsRecord,
+    daily_heart_rate_metrics,
     daily_step_total,
     local_date,
     parse_instant,
     parse_payload,
+    percentile,
 )
 from spanreed.test_utils import FakeRedis, mock_user_find_by_id
 
@@ -397,3 +399,36 @@ def test_inbox_is_capped() -> None:
 )
 def test_token_from_header(header: str, expected: str) -> None:
     assert HealthConnectApi.token_from_header(header) == expected
+
+
+# --- daily heart rate metrics --------------------------------------------------
+
+
+def test_percentile_interpolates_like_numpy() -> None:
+    assert percentile([1, 2, 3, 4], 50) == 2.5
+    assert percentile([10], 95) == 10
+    assert percentile([5, 1, 3], 0) == 1
+    assert percentile([5, 1, 3], 100) == 5
+    with pytest.raises(ValueError):
+        percentile([], 50)
+
+
+def test_daily_heart_rate_metrics() -> None:
+    t = datetime.datetime(2026, 5, 9, 8, 0, tzinfo=datetime.timezone.utc)
+    hr = [HeartRateSample(t, b) for b in range(60, 161)]
+    resting = [
+        HeartRateSample(t + datetime.timedelta(hours=2), 54),
+        HeartRateSample(t, 58),
+    ]
+    assert daily_heart_rate_metrics(hr, resting) == {
+        "hr_p5": 65,
+        "hr_avg": 110,
+        "hr_p95": 155,
+        "resting_hr": 54,
+    }
+
+
+def test_daily_heart_rate_metrics_leaves_out_missing_data() -> None:
+    t = datetime.datetime(2026, 5, 9, 8, 0, tzinfo=datetime.timezone.utc)
+    assert daily_heart_rate_metrics([], []) == {}
+    assert daily_heart_rate_metrics([], [HeartRateSample(t, 50)]) == {"resting_hr": 50}

@@ -23,13 +23,16 @@ from spanreed.apis.health_connect import (
     HealthConnectPayload,
     HealthConnectStore,
     WEBHOOK_URL,
+    daily_heart_rate_metrics,
     daily_step_total,
     parse_payload,
 )
 
 
-# Frontmatter property written into the daily note.
+# Frontmatter properties written into the daily note.
 STEPS_PROPERTY = "steps"
+# Keys of daily_heart_rate_metrics, written in this order.
+HEART_RATE_PROPERTIES = ("resting_hr", "hr_p5", "hr_avg", "hr_p95")
 # Folder holding the daily notes (matches the other daily-note plugins).
 DAILY_NOTE_FOLDER = "Daily"
 
@@ -50,9 +53,10 @@ class IngestSummary:
     steps_records: int = 0
     skipped_records: int = 0
     # Local dates that got new or changed records, for all types together
-    # and for steps alone (the steps dates are the ones to rewrite).
+    # and per daily-note section (those are the dates to rewrite).
     touched_dates: set[datetime.date] = field(default_factory=set)
     steps_dates: set[datetime.date] = field(default_factory=set)
+    heart_rate_dates: set[datetime.date] = field(default_factory=set)
 
 
 def setup_instructions(token: str) -> str:
@@ -120,6 +124,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         )
         await UserInteractionApi.register_command(
             self,
+            PluginCommand(text="Sync heart rate", callback=self._sync_heart_rate_now),
+        )
+        await UserInteractionApi.register_command(
+            self,
             PluginCommand(
                 text="Delete Health Connect data", callback=self._delete_data
             ),
@@ -147,6 +155,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 # If Obsidian is offline the records are already stored, and
                 # the next payload or a manual sync writes them.
                 await self._write_steps(user, sorted(summary.steps_dates), notify=False)
+                await self._write_heart_rate(
+                    user, sorted(summary.heart_rate_dates), notify=False
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -165,11 +176,12 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             skipped_records=payload.skipped_records,
         )
         if payload.heart_rate:
-            summary.touched_dates |= await store.add_heart_rate(payload.heart_rate)
+            summary.heart_rate_dates |= await store.add_heart_rate(payload.heart_rate)
         if payload.resting_heart_rate:
-            summary.touched_dates |= await store.add_resting_heart_rate(
+            summary.heart_rate_dates |= await store.add_resting_heart_rate(
                 payload.resting_heart_rate
             )
+        summary.touched_dates |= summary.heart_rate_dates
         if payload.steps:
             summary.steps_dates = await store.add_steps(payload.steps)
             summary.touched_dates |= summary.steps_dates
@@ -208,6 +220,26 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         await bot.notify("Syncing steps…")
         if await self._write_steps(user, dates, notify=True) == 0:
             await bot.notify("No new step counts found.")
+
+    async def _sync_heart_rate_now(self, user: User) -> None:
+        """Write heart rate metrics for recent days, on request from the user."""
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        choice = await bot.request_user_choice(
+            "Sync heart rate for…",
+            ["Today", "The last week", "Cancel"],
+        )
+        if choice == 0:  # Today
+            days = 1
+        elif choice == 1:  # The last week
+            days = 7
+        else:  # Cancel
+            return
+
+        today = datetime.datetime.now(tz=user.tzinfo).date()
+        dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
+        await bot.notify("Syncing heart rate…")
+        if await self._write_heart_rate(user, dates, notify=True) == 0:
+            await bot.notify("No new heart rate values found.")
 
     async def _delete_data(self, user: User) -> None:
         """Delete stored records of recent days, on request from the user.
@@ -289,4 +321,56 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             self._logger.info(f"Wrote {STEPS_PROPERTY}={total} for {date.isoformat()}")
             if notify:
                 await bot.notify(f"Logged steps for {date.isoformat()}: {total}.")
+        return written
+
+    async def _write_heart_rate(
+        self, user: User, dates: list[datetime.date], *, notify: bool
+    ) -> int:
+        """Write heart rate metrics of each date into its daily note.
+
+        Compute ``resting_hr``, ``hr_p5``, ``hr_avg`` and ``hr_p95`` from the
+        stored records. Skip a date with no records and leave out a metric
+        the day has no data for. Set only the properties whose value
+        changed. Send Telegram messages only when ``notify`` is true. Return
+        the number of notes written.
+        """
+        if not dates:
+            return 0
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        store = HealthConnectStore(user)
+        obsidian = await ObsidianApi.for_user(user)
+        await obsidian.safe_generate_today_note()
+
+        written = 0
+        for date in dates:
+            metrics = daily_heart_rate_metrics(
+                await store.get_heart_rate(date),
+                await store.get_resting_heart_rate(date),
+            )
+            if not metrics:
+                continue
+            daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
+            changed: dict[str, int] = {}
+            try:
+                for prop in HEART_RATE_PROPERTIES:
+                    if prop not in metrics:
+                        continue
+                    if await obsidian.get_property(daily_note, prop) == metrics[prop]:
+                        continue
+                    await obsidian.set_value_of_property(
+                        daily_note, prop, metrics[prop]
+                    )
+                    changed[prop] = metrics[prop]
+            except FileNotFoundError:
+                if notify:
+                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
+                continue
+            if not changed:
+                continue
+
+            written += 1
+            values = ", ".join(f"{k}={v}" for k, v in changed.items())
+            self._logger.info(f"Wrote {values} for {date.isoformat()}")
+            if notify:
+                await bot.notify(f"Logged heart rate for {date.isoformat()}: {values}.")
         return written

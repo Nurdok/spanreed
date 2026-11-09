@@ -196,6 +196,44 @@ def daily_step_total(records: Iterable[StepsRecord]) -> int:
     return sum(record.count for record in records)
 
 
+def percentile(values: list[int], pct: float) -> float:
+    """Return the ``pct`` percentile (0-100) of ``values``.
+
+    Interpolate linearly between the two nearest ranks, like NumPy's
+    default. Raise ``ValueError`` if ``values`` is empty.
+    """
+    if not values:
+        raise ValueError("percentile of an empty list")
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * pct / 100
+    low = int(rank)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (rank - low)
+
+
+def daily_heart_rate_metrics(
+    heart_rate: Iterable[HeartRateSample],
+    resting_heart_rate: Iterable[HeartRateSample],
+) -> dict[str, int]:
+    """Summarize one local date of heart rate as whole bpm values.
+
+    Return ``hr_p5``, ``hr_avg`` and ``hr_p95`` from the heart rate samples,
+    and ``resting_hr`` from the last resting heart rate record of the day.
+    Leave out a key when the day has no data for it. Every sample counts
+    once, so periods with denser samples (such as a workout) weigh more.
+    """
+    metrics: dict[str, int] = {}
+    bpm = [sample.bpm for sample in heart_rate]
+    if bpm:
+        metrics["hr_p5"] = round(percentile(bpm, 5))
+        metrics["hr_avg"] = round(sum(bpm) / len(bpm))
+        metrics["hr_p95"] = round(percentile(bpm, 95))
+    resting = sorted(resting_heart_rate, key=lambda sample: sample.time)
+    if resting:
+        metrics["resting_hr"] = resting[-1].bpm
+    return metrics
+
+
 # --- Webhook ingress (token registry + inbox) --------------------------------
 
 
