@@ -614,12 +614,12 @@ def test_write_heart_rate_writes_all_metrics(
     calls = [c.args for c in mock_obsidian.set_value_of_property.await_args_list]
     # Resting is the day's last record; 60..160 has p5=65, avg=110, p95=155.
     assert calls == [
-        (NOTE, "resting_hr", 55),
-        (NOTE, "hr_p5", 65),
-        (NOTE, "hr_avg", 110),
-        (NOTE, "hr_p95", 155),
+        (NOTE, "resting-heart-rate", 55),
+        (NOTE, "heart-rate-p5", 65),
+        (NOTE, "heart-rate-avg", 110),
+        (NOTE, "heart-rate-p95", 155),
     ]
-    assert "hr_avg=110" in mock_bot.notify.await_args.args[0]
+    assert "heart-rate-avg=110" in mock_bot.notify.await_args.args[0]
 
 
 @patch_obsidian("spanreed.plugins.health_connect")
@@ -635,7 +635,7 @@ def test_write_heart_rate_sets_only_changed_and_present_metrics(
     _seed_heart_rate(fake, user, [70, 80, 90], resting=[])
     mock_obsidian.get_daily_note.return_value = NOTE
     mock_obsidian.get_property.side_effect = lambda _note, prop: (
-        71 if prop == "hr_p5" else None
+        71 if prop == "heart-rate-p5" else None
     )
 
     with patch("spanreed.apis.health_connect.redis_api", new=fake):
@@ -643,7 +643,7 @@ def test_write_heart_rate_sets_only_changed_and_present_metrics(
 
     assert written == 1
     props = [c.args[1] for c in mock_obsidian.set_value_of_property.await_args_list]
-    assert props == ["hr_avg", "hr_p95"]
+    assert props == ["heart-rate-avg", "heart-rate-p95"]
     mock_bot.notify.assert_not_called()
 
 

@@ -32,7 +32,12 @@ from spanreed.apis.health_connect import (
 # Frontmatter properties written into the daily note.
 STEPS_PROPERTY = "steps"
 # Keys of daily_heart_rate_metrics, written in this order.
-HEART_RATE_PROPERTIES = ("resting_hr", "hr_p5", "hr_avg", "hr_p95")
+HEART_RATE_PROPERTIES = (
+    "resting-heart-rate",
+    "heart-rate-p5",
+    "heart-rate-avg",
+    "heart-rate-p95",
+)
 # Folder holding the daily notes (matches the other daily-note plugins).
 DAILY_NOTE_FOLDER = "Daily"
 
@@ -328,10 +333,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     ) -> int:
         """Write heart rate metrics of each date into its daily note.
 
-        Compute ``resting_hr``, ``hr_p5``, ``hr_avg`` and ``hr_p95`` from the
-        stored records. Skip a date with no records and leave out a metric
-        the day has no data for. Set only the properties whose value
-        changed. Send Telegram messages only when ``notify`` is true. Return
+        Compute ``resting-heart-rate``, ``heart-rate-p5``, ``heart-rate-avg``
+        and ``heart-rate-p95`` from the stored records. Skip a date with no
+        records and leave out a metric the day has no data for. Set only the
+        properties whose value changed. Send Telegram messages only when ``notify`` is true. Return
         the number of notes written.
         """
         if not dates:

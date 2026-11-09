@@ -421,14 +421,16 @@ def test_daily_heart_rate_metrics() -> None:
         HeartRateSample(t, 58),
     ]
     assert daily_heart_rate_metrics(hr, resting) == {
-        "hr_p5": 65,
-        "hr_avg": 110,
-        "hr_p95": 155,
-        "resting_hr": 54,
+        "heart-rate-p5": 65,
+        "heart-rate-avg": 110,
+        "heart-rate-p95": 155,
+        "resting-heart-rate": 54,
     }
 
 
 def test_daily_heart_rate_metrics_leaves_out_missing_data() -> None:
     t = datetime.datetime(2026, 5, 9, 8, 0, tzinfo=datetime.timezone.utc)
     assert daily_heart_rate_metrics([], []) == {}
-    assert daily_heart_rate_metrics([], [HeartRateSample(t, 50)]) == {"resting_hr": 50}
+    assert daily_heart_rate_metrics([], [HeartRateSample(t, 50)]) == {
+        "resting-heart-rate": 50
+    }
