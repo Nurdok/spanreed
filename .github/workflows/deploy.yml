@@ -60,6 +60,6 @@ jobs:
 
       - name: Smoke check
         run: |
-          code=$(curl -s -o /dev/null -w '%{http_code}' https://spanreed.ink/)
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://spanreed.ink/healthz)
           echo "production returned HTTP $code"
           test "$code" = "200"
