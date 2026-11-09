@@ -152,7 +152,7 @@ adds it, since `deploy.sh` resets the checkout to `main`.
 Test the pin from any machine that has the private key:
 
 ```bash
-ssh -i logs_key -o IdentitiesOnly=yes spanreed@spanreed.ink "-10m 20"
+ssh -i logs_key -o IdentitiesOnly=yes -- spanreed@spanreed.ink "-10m 20"
 ```
 
 should print the last 20 journal lines of the last ten minutes, and nothing
