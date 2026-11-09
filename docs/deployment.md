@@ -10,7 +10,7 @@ The remote login shell is zsh.
 **Normal path: merge a PR into `main`.**
 
 That triggers `.github/workflows/deploy.yml`: tests, then (main only) an SSH
-deploy and an HTTP-200 smoke check against https://spanreed.ink/. **Whoever
+deploy and an HTTP-200 smoke check against https://spanreed.ink/healthz. **Whoever
 merges needs no server credentials** — that's the point. Follow it in the
 repo's Actions tab.
 

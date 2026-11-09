@@ -102,3 +102,23 @@ Google account can be linked to only one Spanreed user.
   its test users.
 
 The Google button only appears when a client config is found.
+
+## Server logs
+
+`https://spanreed.ink/app/logs` shows the server's log lines live, as they
+are logged. It needs a web UI session, and only admins can see it, because
+the logs cover every user. The stream is Server-Sent Events from
+`/app/api/logs/stream`, relaying the Redis `logs` channel that
+`RedisPubSubHandler` publishes to. It is plain HTTP, so it needs no
+WebSocket support in nginx; the response sets `X-Accel-Buffering: no` so
+nginx doesn't buffer it.
+
+Admins are the user ids in the Redis set `web-ui:admins`. While that set is
+empty, user 1 (the first account) is the admin. To change the set:
+
+```bash
+poetry run python -m spanreed.web.admins list|add <id>|remove <id>
+```
+
+`/` redirects to `/app/`. `/healthz` is the unauthenticated check the
+deploy workflow uses.

@@ -19,6 +19,7 @@ import html
 import logging
 import uuid
 from pathlib import Path
+from collections.abc import AsyncGenerator
 from typing import Any, Awaitable, Callable, TypeVar, cast
 
 from quart import Blueprint, Response, g, jsonify, redirect, request
@@ -29,7 +30,8 @@ from spanreed.interaction.engine import PromptKind, UserInteractionPriority
 from spanreed.interaction.surface import SurfaceScope
 from spanreed.interaction.web_surface import SURFACE_NAME, WebSurface, read_inbox
 from spanreed.user import User
-from spanreed.web import auth, google_auth
+from spanreed.storage import redis_api
+from spanreed.web import admins, auth, google_auth
 
 _logger = logging.getLogger(__name__)
 
@@ -324,6 +326,7 @@ async def state() -> Any:
                 "active_flow_id": active_web_flow_id(user.id),
                 "inbox": await read_inbox(user.id),
                 "google": await _google_state(user.id),
+                "is_admin": await admins.is_admin(user.id),
             }
         )
     )
@@ -460,4 +463,74 @@ async def document(document_id: str) -> Any:
     safe_name = "".join(c for c in file_name if c.isalnum() or c in "._- ") or "file"
     response = Response(data, mimetype="application/octet-stream")
     response.headers["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Server logs (admins only)
+# ---------------------------------------------------------------------------
+
+LOGS_CHANNEL = "logs"
+SSE_HEARTBEAT_S = 15.0
+
+
+@blueprint.get("/logs")
+async def logs_page() -> Any:
+    user = await _current_user()
+    if user is None:
+        return await _login_page()
+    if not await admins.is_admin(user.id):
+        return _no_store(
+            _message_page(
+                "Admins only",
+                "The server logs show every user's activity, so only admins"
+                " can see them.",
+                403,
+            )
+        )
+    return _no_store(Response(_page("logs.html"), mimetype="text/html"))
+
+
+async def _sse_log_events(pubsub: Any) -> AsyncGenerator[bytes, None]:
+    """Relay the Redis ``logs`` channel as Server-Sent Events."""
+    try:
+        await pubsub.subscribe(LOGS_CHANNEL)
+        yield b"retry: 3000\n\n"
+        idle = 0.0
+        while True:
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True, timeout=1.0
+            )
+            if message is None:
+                idle += 1.0
+                if idle >= SSE_HEARTBEAT_S:
+                    # A comment line keeps proxies from closing the stream.
+                    yield b": keep-alive\n\n"
+                    idle = 0.0
+                continue
+            idle = 0.0
+            data = message["data"]
+            text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
+            yield (
+                "".join(f"data: {line}\n" for line in str(text).split("\n")) + "\n"
+            ).encode("utf-8")
+    finally:
+        await pubsub.unsubscribe(LOGS_CHANNEL)
+        await pubsub.aclose()
+
+
+@blueprint.get("/api/logs/stream")
+@api_auth
+async def logs_stream() -> Any:
+    user: User = g.user
+    if not await admins.is_admin(user.id):
+        return jsonify({"error": "admins only"}), 403
+    response = Response(
+        _sse_log_events(redis_api.pubsub()), mimetype="text/event-stream"
+    )
+    response.headers["Cache-Control"] = "no-store"
+    # nginx buffers proxied responses by default, which would hold the
+    # stream back; this turns that off for this response only.
+    response.headers["X-Accel-Buffering"] = "no"
+    response.timeout = None
     return response

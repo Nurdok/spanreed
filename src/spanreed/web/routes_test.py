@@ -64,6 +64,7 @@ async def _app() -> AsyncIterator[tuple[Any, FakeRedis, RecordingSurface]]:
         patch("spanreed.web.auth.redis_api", new=fake),
         patch("spanreed.interaction.web_surface.redis_api", new=fake),
         patch("spanreed.web.google_auth.redis_api", new=fake),
+        patch("spanreed.web.admins.redis_api", new=fake),
         patch(
             "spanreed.web.routes.User.find_by_id",
             new=AsyncMock(side_effect=_user),
@@ -411,5 +412,88 @@ def test_google_hidden_when_not_configured() -> None:
             assert "Sign in with Google" not in await page.get_data(as_text=True)
             response = await client.get("/app/google/start")
             assert response.status_code == 503
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Server logs (issue #30)
+# ---------------------------------------------------------------------------
+
+
+class FakePubSub:
+    def __init__(self, messages: list[bytes]) -> None:
+        self.messages = list(messages)
+        self.subscribed: list[str] = []
+        self.closed = False
+
+    async def subscribe(self, channel: str) -> None:
+        self.subscribed.append(channel)
+
+    async def unsubscribe(self, channel: str) -> None:
+        self.subscribed.remove(channel)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+    async def get_message(self, **_: Any) -> dict[str, Any] | None:
+        if self.messages:
+            return {"type": "message", "data": self.messages.pop(0)}
+        await asyncio.sleep(0)
+        return None
+
+
+def test_logs_page_needs_login_and_admin() -> None:
+    async def run() -> None:
+        async with _app() as (client, fake, _):
+            page = await client.get("/app/logs")
+            assert "login link" in await page.get_data(as_text=True)
+            assert (await client.get("/app/api/logs/stream")).status_code == 401
+
+            # USER_ID isn't user 1 and the admin set is empty: not an admin.
+            await _login(client)
+            assert (await client.get("/app/logs")).status_code == 403
+            assert (await client.get("/app/api/logs/stream")).status_code == 403
+            state = await (await client.get("/app/api/state")).get_json()
+            assert state["is_admin"] is False
+
+            await fake.sadd("web-ui:admins", USER_ID)
+            page = await client.get("/app/logs")
+            assert page.status_code == 200
+            assert "/app/api/logs/stream" in await page.get_data(as_text=True)
+            state = await (await client.get("/app/api/state")).get_json()
+            assert state["is_admin"] is True
+
+    asyncio.run(run())
+
+
+def test_first_user_is_admin_until_admins_are_set() -> None:
+    from spanreed.web import admins
+
+    async def run() -> None:
+        fake = FakeRedis()
+        with patch("spanreed.web.admins.redis_api", new=fake):
+            assert await admins.is_admin(1)
+            assert not await admins.is_admin(2)
+            await fake.sadd(admins.ADMINS_KEY, 2)
+            assert await admins.is_admin(2)
+            assert not await admins.is_admin(1)
+
+    asyncio.run(run())
+
+
+def test_log_stream_relays_lines_as_server_sent_events() -> None:
+    async def run() -> None:
+        pubsub = FakePubSub([b"line one", b"multi\nline"])
+        events = routes._sse_log_events(pubsub)
+        chunks = [await events.__anext__() for _ in range(3)]
+        assert chunks == [
+            b"retry: 3000\n\n",
+            b"data: line one\n\n",
+            b"data: multi\ndata: line\n\n",
+        ]
+        assert pubsub.subscribed == ["logs"]
+        await events.aclose()
+        assert pubsub.subscribed == [] and pubsub.closed
 
     asyncio.run(run())

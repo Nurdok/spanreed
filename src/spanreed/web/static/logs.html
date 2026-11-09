@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spanreed logs</title>
+<style>
+  :root { --bg: #f6f5f2; --card: #fff; --fg: #1d1d1b; --muted: #6b6a66; --line: #e2e0da; --accent: #3b5bdb;
+          --warn: #b35c00; --err: #c92a2a; --debug: #8a8984; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #1f1f1e; --fg: #ecebe7; --muted: #9a9993; --line: #2f2f2d; --accent: #7b93f0;
+            --warn: #ffb066; --err: #ff8787; --debug: #77766f; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: grid; grid-template-rows: auto 1fr; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line);
+           background: var(--card); flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; flex: 1; }
+  header a, header button { color: var(--accent); background: none; border: 0; font: inherit; cursor: pointer; padding: 4px; text-decoration: none; }
+  #filter { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+            font: inherit; min-width: 0; width: 220px; max-width: 100%; }
+  #status { color: var(--muted); font-size: 13px; }
+  #status.down { color: var(--err); }
+  #log { overflow: auto; padding: 8px 16px; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #log div { white-space: pre-wrap; overflow-wrap: anywhere; border-bottom: 1px solid var(--line); padding: 2px 0; }
+  #log .WARNING { color: var(--warn); }
+  #log .ERROR, #log .CRITICAL { color: var(--err); }
+  #log .DEBUG { color: var(--debug); }
+  #log .hidden { display: none; }
+  .empty { color: var(--muted); font-family: system-ui, sans-serif; padding: 24px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Server logs</h1>
+  <input id="filter" type="search" placeholder="Filter" autocomplete="off">
+  <span id="status">Connecting…</span>
+  <button id="pause">Pause</button>
+  <button id="clear">Clear</button>
+  <a href="/app/">Back to Spanreed</a>
+</header>
+<div id="log"><p class="empty">Waiting for new log lines. Only lines logged after you opened this page appear here.</p></div>
+<script>
+"use strict";
+const MAX_LINES = 2000;
+const log = document.getElementById("log"), status = document.getElementById("status");
+const filter = document.getElementById("filter");
+let paused = false, buffered = [];
+
+function level(line) {
+  const m = / - (DEBUG|INFO|WARNING|ERROR|CRITICAL) - /.exec(line);
+  return m ? m[1] : "";
+}
+function matches(line) {
+  const q = filter.value.trim().toLowerCase();
+  return !q || line.toLowerCase().includes(q);
+}
+function append(line) {
+  log.querySelector(".empty")?.remove();
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  const div = document.createElement("div");
+  div.textContent = line;
+  div.className = level(line) + (matches(line) ? "" : " hidden");
+  log.append(div);
+  while (log.children.length > MAX_LINES) log.firstChild.remove();
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+const source = new EventSource("/app/api/logs/stream");
+source.onopen = () => { status.textContent = "Live"; status.className = ""; };
+source.onerror = () => { status.textContent = "Reconnecting…"; status.className = "down"; };
+source.onmessage = (e) => { if (paused) buffered.push(e.data); else append(e.data); };
+
+document.getElementById("pause").onclick = (e) => {
+  paused = !paused;
+  e.target.textContent = paused ? "Resume" : "Pause";
+  if (!paused) { buffered.forEach(append); buffered = []; }
+};
+document.getElementById("clear").onclick = () => log.replaceChildren();
+filter.oninput = () => {
+  for (const div of log.children) div.classList.toggle("hidden", !matches(div.textContent));
+};
+</script>
+</body>
+</html>
