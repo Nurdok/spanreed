@@ -236,3 +236,9 @@ def test_run_for_user_survives_a_bad_payload() -> None:
     assert len(fake.hashes) == 1
     (stored,) = fake.hashes.values()
     assert list(stored.values()) == ["72"]
+
+
+def test_setup_instructions_put_the_bare_token_in_code() -> None:
+    text = setup_instructions("tok-en_1")
+    assert "<code>tok-en_1</code>" in text
+    assert "`" not in text

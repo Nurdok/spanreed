@@ -131,9 +131,8 @@ class WebUiPlugin(Plugin[None]):
         async def health_connect_webhook() -> tuple[str, int]:
             # Pushed by the Health Connect bridge app on the user's phone.
             # Only authenticates and queues; the plugin drains the queue.
-            auth: str = request.headers.get("Authorization", "")
-            token: str = (
-                auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
+            token: str = HealthConnectApi.token_from_header(
+                request.headers.get("Authorization", "")
             )
             raw: str | bytes = await request.get_data()
             body: str = (

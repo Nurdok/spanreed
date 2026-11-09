@@ -362,3 +362,20 @@ def test_inbox_is_capped() -> None:
     # Newest kept at the head, oldest dropped from the tail.
     assert inbox[0] == str(INBOX_MAX_LENGTH + 9)
     assert inbox[-1] == "10"
+
+
+@pytest.mark.parametrize(
+    "header, expected",
+    [
+        ("Bearer abc", "abc"),
+        ("bearer abc", "abc"),
+        ("BEARER  abc ", "abc"),
+        ("Bearer `abc`", "abc"),
+        ("  Bearer abc\n", "abc"),
+        ("abc", ""),
+        ("Basic abc", ""),
+        ("", ""),
+    ],
+)
+def test_token_from_header(header: str, expected: str) -> None:
+    assert HealthConnectApi.token_from_header(header) == expected
