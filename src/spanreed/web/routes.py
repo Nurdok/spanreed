@@ -29,7 +29,7 @@ from spanreed.interaction.engine import PromptKind, UserInteractionPriority
 from spanreed.interaction.surface import SurfaceScope
 from spanreed.interaction.web_surface import SURFACE_NAME, WebSurface, read_inbox
 from spanreed.user import User
-from spanreed.web import auth
+from spanreed.web import auth, google_auth
 
 _logger = logging.getLogger(__name__)
 
@@ -95,20 +95,50 @@ def api_auth(f: F) -> F:
 # ---------------------------------------------------------------------------
 
 
+_GOOGLE_BUTTON = (
+    '<a class="google" href="/app/google/start">Sign in with Google</a>'
+    '<p class="or">or</p>'
+)
+
+
+async def _login_page(error: str | None = None, status: int = 200) -> Response:
+    page = _page("login.html")
+    if await google_auth.is_configured():
+        page = page.replace("<!--google-->", _GOOGLE_BUTTON)
+    if error is not None:
+        page = page.replace(
+            "<!--error-->", f'<p class="error">{html.escape(error)}</p>'
+        )
+    return _no_store(Response(page, status=status, mimetype="text/html"))
+
+
 @blueprint.get("/")
 async def index() -> Any:
     if await _current_user() is None:
-        return _no_store(Response(_page("login.html"), mimetype="text/html"))
+        return await _login_page()
     return _no_store(Response(_page("index.html"), mimetype="text/html"))
 
 
-def _invalid_link_page() -> Response:
-    page = _page("login.html").replace(
-        "<!--error-->",
-        '<p class="error">That login link is invalid, expired or was'
-        " already used. Get a new one.</p>",
+async def _invalid_link_page() -> Response:
+    return await _login_page(
+        "That login link is invalid, expired or was already used. Get a new one.",
+        status=403,
     )
-    return _no_store(Response(page, status=403, mimetype="text/html"))
+
+
+def _session_response(session_id: str) -> Any:
+    """Redirect to the app with a new session cookie set."""
+    response = redirect("/app/", code=303)
+    response.set_cookie(
+        auth.SESSION_COOKIE,
+        session_id,
+        max_age=auth.SESSION_TTL_S,
+        path="/app",
+        secure=True,
+        httponly=True,
+        samesite="Lax",
+    )
+    return response
 
 
 @blueprint.get("/login")
@@ -121,7 +151,7 @@ async def login_page() -> Any:
     """
     token = request.args.get("token", "")
     if not await auth.login_token_is_valid(token):
-        return _invalid_link_page()
+        return await _invalid_link_page()
     page = _page("login_confirm.html").replace("{{token}}", html.escape(token))
     response = _no_store(Response(page, mimetype="text/html"))
     # Keep the one-time token out of Referer headers.
@@ -134,20 +164,105 @@ async def login() -> Any:
     form = await request.form
     user_id = await auth.redeem_login_token(form.get("token", ""))
     if user_id is None:
-        return _invalid_link_page()
-    session_id = await auth.create_session(user_id)
-    _logger.info(f"Web UI login for user {user_id}")
-    response = redirect("/app/", code=303)
+        return await _invalid_link_page()
+    _logger.info(f"Web UI login (link) for user {user_id}")
+    return _session_response(await auth.create_session(user_id))
+
+
+# ---------------------------------------------------------------------------
+# Sign in with Google
+# ---------------------------------------------------------------------------
+
+
+async def _google_redirect(mode: google_auth.Mode, user_id: int | None) -> Any:
+    url, state = await google_auth.start(mode, user_id)
+    response = redirect(url)
+    # Binds the callback to this browser (no login CSRF). Lax, because the
+    # callback is a top-level navigation back from accounts.google.com.
     response.set_cookie(
-        auth.SESSION_COOKIE,
-        session_id,
-        max_age=auth.SESSION_TTL_S,
+        google_auth.STATE_COOKIE,
+        state,
+        max_age=google_auth.STATE_TTL_S,
         path="/app",
         secure=True,
         httponly=True,
         samesite="Lax",
     )
     return response
+
+
+@blueprint.get("/google/start")
+async def google_start() -> Any:
+    try:
+        return await _google_redirect(google_auth.Mode.LOGIN, None)
+    except google_auth.GoogleAuthError as e:
+        return await _login_page(str(e), status=503)
+
+
+@blueprint.post("/google/link")
+async def google_link() -> Any:
+    # A plain form POST from the app page (top-level navigation to Google
+    # follows), so the CSRF guard is SameSite plus a same-origin check.
+    if not _same_origin():
+        return jsonify({"error": "cross-site request"}), 403
+    user = await _current_user()
+    if user is None:
+        return redirect("/app/", code=303)
+    try:
+        return await _google_redirect(google_auth.Mode.LINK, user.id)
+    except google_auth.GoogleAuthError as e:
+        return _no_store(_message_page("Couldn't link Google", str(e), 503))
+
+
+def _same_origin() -> bool:
+    origin = request.headers.get("Origin")
+    if origin is None:
+        return request.headers.get("Sec-Fetch-Site") in (None, "same-origin")
+    return origin == f"{request.scheme}://{request.host}" or origin == auth.BASE_URL
+
+
+def _message_page(title: str, body: str, status: int = 200) -> Response:
+    page = (
+        _page("message.html")
+        .replace("{{title}}", html.escape(title))
+        .replace("{{body}}", html.escape(body))
+    )
+    return Response(page, status=status, mimetype="text/html")
+
+
+@blueprint.get("/google/callback")
+async def google_callback() -> Any:
+    if request.args.get("error"):
+        # The user cancelled on Google's side.
+        return redirect("/app/", code=303)
+    response: Any
+    try:
+        result = await google_auth.complete(
+            request.args.get("code", ""),
+            request.args.get("state", ""),
+            request.cookies.get(google_auth.STATE_COOKIE),
+        )
+    except google_auth.GoogleAuthError as e:
+        if await _current_user() is not None:
+            response = _message_page("Couldn't link Google", str(e), 400)
+        else:
+            response = await _login_page(str(e), status=400)
+    else:
+        if result.mode == google_auth.Mode.LINK:
+            _logger.info(f"User {result.user_id} linked a Google account")
+            response = redirect("/app/", code=303)
+        else:
+            _logger.info(f"Web UI login (Google) for user {result.user_id}")
+            response = _session_response(await auth.create_session(result.user_id))
+    response.delete_cookie(google_auth.STATE_COOKIE, path="/app")
+    return _no_store(response)
+
+
+@blueprint.post("/api/google/unlink")
+@api_auth
+async def google_unlink() -> Any:
+    user: User = g.user
+    return jsonify({"ok": await google_auth.unlink(user.id)})
 
 
 @blueprint.post("/api/logout")
@@ -184,6 +299,14 @@ def active_web_flow_id(user_id: int) -> str | None:
     return entry[0]
 
 
+async def _google_state(user_id: int) -> dict[str, Any]:
+    identity = await google_auth.linked_identity(user_id)
+    return {
+        "available": await google_auth.is_configured(),
+        "email": identity.email if identity is not None else None,
+    }
+
+
 @blueprint.get("/api/state")
 @api_auth
 async def state() -> Any:
@@ -200,6 +323,7 @@ async def state() -> Any:
                 "open_prompt": surface.open_prompt(user.id),
                 "active_flow_id": active_web_flow_id(user.id),
                 "inbox": await read_inbox(user.id),
+                "google": await _google_state(user.id),
             }
         )
     )

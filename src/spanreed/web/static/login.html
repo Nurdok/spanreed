@@ -17,13 +17,18 @@
   p { color: var(--muted); margin: 8px 0; }
   code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 14px; }
   .error { color: var(--err); }
+  .google { display: block; text-align: center; margin: 20px 0 4px; padding: 12px; border-radius: 8px;
+            border: 1px solid var(--line); background: var(--bg); color: var(--fg); text-decoration: none; font-weight: 600; }
+  .google:hover { border-color: var(--accent); }
+  .or { text-align: center; font-size: 14px; margin: 12px 0; }
 </style>
 </head>
 <body>
 <main>
   <h1>Spanreed</h1>
   <!--error-->
-  <p>You need a login link to use the web UI.</p>
+  <!--google-->
+  <p>Use a login link to log in on a new device.</p>
   <p>Run <b>Web UI login link</b> from the <code>/do</code> menu in Telegram
      (or the Obsidian command palette) and open the link it sends you.</p>
   <p>If no chat surface can reach you, the server admin can run

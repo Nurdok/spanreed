@@ -63,6 +63,7 @@ async def _app() -> AsyncIterator[tuple[Any, FakeRedis, RecordingSurface]]:
     with (
         patch("spanreed.web.auth.redis_api", new=fake),
         patch("spanreed.interaction.web_surface.redis_api", new=fake),
+        patch("spanreed.web.google_auth.redis_api", new=fake),
         patch(
             "spanreed.web.routes.User.find_by_id",
             new=AsyncMock(side_effect=_user),
@@ -268,5 +269,147 @@ def test_logout_ends_the_session() -> None:
             response = await client.post("/app/api/logout", headers=H)
             assert response.status_code == 200
             assert (await client.get("/app/api/state")).status_code == 401
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Sign in with Google
+# ---------------------------------------------------------------------------
+
+GOOGLE_CONFIG = '{"web": {"client_id": "cid", "client_secret": "secret"}}'
+
+
+def _claims(nonce: str, sub: str = "g-123") -> dict[str, Any]:
+    return {
+        "sub": sub,
+        "email": "amir@example.com",
+        "email_verified": True,
+        "nonce": nonce,
+    }
+
+
+async def _google_round_trip(
+    client: Any, fake: FakeRedis, start: Any, sub: str = "g-123"
+) -> Any:
+    """Follow /start (or /link) to Google and come back with a code."""
+    import json
+    import urllib.parse
+
+    response = await start
+    assert response.status_code == 302
+    location = response.headers["Location"]
+    assert location.startswith("https://accounts.google.com/")
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+    assert query["redirect_uri"] == ["https://spanreed.ink/app/google/callback"]
+    state = query["state"][0]
+    nonce = json.loads(fake.strings[f"web-ui:google-state:{state}"])["nonce"]
+    with (
+        patch(
+            "spanreed.web.google_auth.exchange_code",
+            new=AsyncMock(return_value={"id_token": "tok"}),
+        ),
+        patch(
+            "spanreed.web.google_auth.verify_id_token",
+            new=AsyncMock(return_value=_claims(nonce, sub)),
+        ) as verify,
+    ):
+        callback = await client.get(f"/app/google/callback?code=c&state={state}")
+        verify.assert_awaited_once_with("tok", "cid")
+    return callback
+
+
+def test_google_login_needs_a_link_first_then_works() -> None:
+    async def run() -> None:
+        async with _app() as (client, fake, _):
+            await fake.set("gmail_credentials", GOOGLE_CONFIG)
+            page = await client.get("/app/")
+            assert "Sign in with Google" in await page.get_data(as_text=True)
+
+            # Not linked yet: Google proves who you are, but to no one.
+            callback = await _google_round_trip(
+                client, fake, client.get("/app/google/start")
+            )
+            assert callback.status_code == 400
+            assert "linked to a Spanreed account yet" in await callback.get_data(
+                as_text=True
+            )
+            assert (await client.get("/app/api/state")).status_code == 401
+
+            # Link from a link-login session.
+            await _login(client)
+            state = await (await client.get("/app/api/state")).get_json()
+            assert state["google"] == {"available": True, "email": None}
+            callback = await _google_round_trip(
+                client,
+                fake,
+                client.post("/app/google/link", headers={"Origin": auth.BASE_URL}),
+            )
+            assert callback.status_code == 303
+            state = await (await client.get("/app/api/state")).get_json()
+            assert state["google"]["email"] == "amir@example.com"
+
+            # Log out, then sign in with Google alone.
+            await client.post("/app/api/logout", headers=H)
+            assert (await client.get("/app/api/state")).status_code == 401
+            callback = await _google_round_trip(
+                client, fake, client.get("/app/google/start")
+            )
+            assert callback.status_code == 303
+            state = await (await client.get("/app/api/state")).get_json()
+            assert state["user"]["id"] == USER_ID
+
+            # Unlink: Google sign-in stops working.
+            await client.post("/app/api/google/unlink", headers=H)
+            await client.post("/app/api/logout", headers=H)
+            callback = await _google_round_trip(
+                client, fake, client.get("/app/google/start")
+            )
+            assert callback.status_code == 400
+
+    asyncio.run(run())
+
+
+def test_google_callback_rejects_a_state_from_another_browser() -> None:
+    async def run() -> None:
+        from spanreed.web import google_auth
+
+        async with _app() as (client, fake, _):
+            await fake.set("gmail_credentials", GOOGLE_CONFIG)
+            # An attacker's own flow: valid state in Redis, but this browser
+            # never got the matching state cookie.
+            _, state = await google_auth.start(google_auth.Mode.LOGIN)
+            callback = await client.get(f"/app/google/callback?code=c&state={state}")
+            assert callback.status_code == 400
+            assert "start in this browser" in await callback.get_data(as_text=True)
+
+    asyncio.run(run())
+
+
+def test_google_account_cannot_be_linked_to_two_users() -> None:
+    async def run() -> None:
+        from spanreed.web import google_auth
+
+        async with _app() as (client, fake, _):
+            identity = google_auth.GoogleIdentity("g-1", "a@example.com")
+            await google_auth.link(OTHER_USER_ID, identity)
+            try:
+                await google_auth.link(USER_ID, identity)
+            except google_auth.GoogleAuthError as e:
+                assert "another Spanreed account" in str(e)
+            else:
+                raise AssertionError("expected GoogleAuthError")
+            assert await google_auth.user_id_for_google("g-1") == OTHER_USER_ID
+
+    asyncio.run(run())
+
+
+def test_google_hidden_when_not_configured() -> None:
+    async def run() -> None:
+        async with _app() as (client, _, _):
+            page = await client.get("/app/")
+            assert "Sign in with Google" not in await page.get_data(as_text=True)
+            response = await client.get("/app/google/start")
+            assert response.status_code == 503
 
     asyncio.run(run())
