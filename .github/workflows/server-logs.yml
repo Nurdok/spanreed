@@ -38,8 +38,24 @@ jobs:
           PATTERN: ${{ inputs.grep }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/logs_key
+          # Rebuild the key from its markers and base64 body, so a secret
+          # pasted with CRLF, joined lines or extra spaces still loads.
+          body=$(printf '%s' "$SSH_KEY" \
+            | sed -e 's/-----BEGIN OPENSSH PRIVATE KEY-----//' \
+                  -e 's/-----END OPENSSH PRIVATE KEY-----//' \
+            | tr -d ' \r\n\t')
+          {
+            echo '-----BEGIN OPENSSH PRIVATE KEY-----'
+            printf '%s' "$body" | fold -w 70
+            echo
+            echo '-----END OPENSSH PRIVATE KEY-----'
+          } > ~/.ssh/logs_key
           chmod 600 ~/.ssh/logs_key
+          if ! ssh-keygen -y -f ~/.ssh/logs_key > /dev/null; then
+            echo "LOGS_SSH_KEY does not parse as an OpenSSH private key" \
+              "(${#body} base64 chars after cleanup)." >&2
+            exit 1
+          fi
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           # The server pins this key to logs.sh, which reads the arguments
           # from SSH_ORIGINAL_COMMAND and validates them. The `--` matters:
