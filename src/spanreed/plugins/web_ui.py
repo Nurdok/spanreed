@@ -10,6 +10,7 @@ from spanreed.apis.withings import WithingsApi
 from spanreed.apis.gmail import GmailApi
 from spanreed.apis.googlefit import GoogleFitApi
 from spanreed.apis.health_connect import HealthConnectApi
+from spanreed.web.routes import blueprint as app_blueprint
 
 
 class WebUiPlugin(Plugin[None]):
@@ -22,6 +23,8 @@ class WebUiPlugin(Plugin[None]):
 
         # Create a Quart app.
         app = Quart(__name__)
+        # The command UI (login, command list, live conversation) at /app.
+        app.register_blueprint(app_blueprint)
 
         # Register the `get_logs` route.
         @app.get("/")
