@@ -71,3 +71,29 @@ def test_set_timezone_rejects_unknown_name(mock_bot: AsyncMock) -> None:
     assert user.timezone is None
     assert fake.strings == {}
     assert "not a known timezone" in mock_bot.send_message.await_args.args[0]
+
+
+def test_existing_users_are_registered_at_startup() -> None:
+    from spanreed.apis.telegram_bot import TelegramBotPlugin
+
+    Plugin.reset_registry()
+    plugin = UserProfilePlugin()
+    old_user, new_user = _user(), _user()
+    new_user.id = 5
+    telegram = AsyncMock()
+    telegram.get_users.return_value = [old_user, new_user]
+
+    async def is_registered(user: User) -> bool:
+        return user is new_user
+
+    with (
+        patch.object(
+            Plugin, "get_plugin_by_class", AsyncMock(return_value=telegram)
+        ) as get_plugin,
+        patch.object(UserProfilePlugin, "is_registered", side_effect=is_registered),
+        patch.object(UserProfilePlugin, "register_user", AsyncMock()) as register,
+    ):
+        asyncio.run(plugin._register_existing_users())
+
+    get_plugin.assert_awaited_once_with(TelegramBotPlugin)
+    register.assert_awaited_once_with(old_user)

@@ -57,6 +57,23 @@ class UserProfilePlugin(Plugin):
             self,
             PluginCommand(text="Web UI login link", callback=self._web_login_link),
         )
+        await self._register_existing_users()
+
+    async def _register_existing_users(self) -> None:
+        """Register every user to this core plugin.
+
+        New users get it at /start, but users who signed up before this
+        plugin existed don't, so they never saw its commands ("Set
+        timezone", "Web UI login link"). Every Spanreed user is a Telegram
+        user, so the Telegram plugin's user list is the full list.
+        """
+        from spanreed.apis.telegram_bot import TelegramBotPlugin
+
+        telegram = await Plugin.get_plugin_by_class(TelegramBotPlugin)
+        for user in await telegram.get_users():
+            if not await self.is_registered(user):
+                self._logger.info(f"Registering existing user {user.id}")
+                await self.register_user(user)
 
     async def _set_timezone(self, user: User) -> None:
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
