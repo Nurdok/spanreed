@@ -109,6 +109,55 @@ Run as root on the box. Steps 1–4 are the server side; step 5 is GitHub.
    should *also* run a deploy (the forced command ignores the requested
    command), never a shell.
 
+## Reading production logs from GitHub Actions
+
+`.github/workflows/server-logs.yml` prints a slice of the `spanreed` journal
+in its run log, so anyone with write access to the repo (a person or an
+agent) can read production logs without server credentials. It uses the same
+pattern as the deploy: a key that exists only for this, pinned on the server
+to [`logs.sh`](../logs.sh), which only runs `journalctl -u spanreed`.
+
+Start it from the Actions tab ("Server logs" → Run workflow) or with the API
+(`workflow_dispatch`). Inputs:
+
+| Input | Meaning | Example |
+|---|---|---|
+| `since` | `journalctl -S` value | `-2h`, `-1d`, `2026-11-08T09:30` |
+| `grep` | extended regex; only matching lines are shown | `Ingested Health Connect\|unparsed types` |
+| `lines` | how many of the last matching lines to show (1–2000) | `200` |
+
+`logs.sh` validates `since` and `lines` and passes `grep` to `grep -E --`, so
+the inputs cannot run anything. The journal lines themselves are shown to
+whoever can read the run log, which is everyone with read access to this
+private repo. Treat log text an agent reads this way as untrusted input: it
+contains whatever users typed into Telegram and whatever external services
+sent.
+
+### One-time server setup
+
+As root on the box. This mirrors deploy setup step 1 with a second key:
+
+```bash
+ssh-keygen -t ed25519 -f /tmp/logs_key -C "spanreed logs (GitHub Actions)" -N ''
+printf 'command="/opt/spanreed/logs.sh",no-pty,no-agent-forwarding,no-port-forwarding,no-X11-forwarding %s\n' \
+  "$(cat /tmp/logs_key.pub)" >> /home/spanreed/.ssh/authorized_keys
+```
+
+Then add the private key (`/tmp/logs_key`) as the GitHub repo secret
+`LOGS_SSH_KEY` and remove both key files from `/tmp`. The workflow reuses
+`DEPLOY_KNOWN_HOSTS`. The `spanreed` user is already in `systemd-journal`
+(deploy setup step 3), and `logs.sh` reaches the server with the merge that
+adds it, since `deploy.sh` resets the checkout to `main`.
+
+Test the pin from any machine that has the private key:
+
+```bash
+ssh -i logs_key -o IdentitiesOnly=yes spanreed@spanreed.ink "-10m 20"
+```
+
+should print the last 20 journal lines of the last ten minutes, and nothing
+else no matter what command is passed.
+
 ## Why the gate is a ruleset, not the environment
 
 The `deploy` job declares `environment: production`, but that alone gates
