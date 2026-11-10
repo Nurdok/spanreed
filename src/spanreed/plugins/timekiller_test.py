@@ -1,8 +1,9 @@
 import asyncio
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from spanreed.interaction import UserInteractionPreempted
 from spanreed.plugins.timekiller import TimekillerPlugin, UserConfig
 from spanreed.plugin import Plugin
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
@@ -175,6 +176,39 @@ def test_set_journal_heading_command_none_clears(mock_bot: AsyncMock) -> None:
     asyncio.run(plugin._set_journal_heading_command(user))
 
     assert holder["config"].journal_heading is None
+
+
+@patch_user_interaction("spanreed.plugins.timekiller")
+def test_preempted_push_is_not_reported_to_user(mock_bot: AsyncMock) -> None:
+    plugin, _ = _plugin_with_store()
+    plugin._kill_time_push = AsyncMock(  # type: ignore[method-assign]
+        side_effect=UserInteractionPreempted()
+    )
+    user = mock_user_find_by_id(1)
+
+    with patch("spanreed.plugins.spanreed_monitor.redis_api") as mock_redis:
+        mock_redis.lpush = AsyncMock()
+        # Must neither raise nor land in the monitor's exception queue (which
+        # is forwarded to the user).
+        asyncio.run(plugin._push_once(user, mock_bot))
+
+    plugin._kill_time_push.assert_awaited_once()
+    mock_redis.lpush.assert_not_called()
+
+
+@patch_user_interaction("spanreed.plugins.timekiller")
+def test_push_timeout_is_still_reported(mock_bot: AsyncMock) -> None:
+    plugin, _ = _plugin_with_store()
+    plugin._kill_time_push = AsyncMock(  # type: ignore[method-assign]
+        side_effect=TimeoutError()
+    )
+    user = mock_user_find_by_id(1)
+
+    with patch("spanreed.plugins.spanreed_monitor.redis_api") as mock_redis:
+        mock_redis.lpush = AsyncMock()
+        asyncio.run(plugin._push_once(user, mock_bot))
+
+    mock_redis.lpush.assert_awaited_once()
 
 
 @patch_user_interaction("spanreed.plugins.timekiller")
