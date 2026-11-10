@@ -151,12 +151,14 @@ class TimekillerPlugin(Plugin):
             # `or`, which is true for every hour of the day, so kill-time
             # prompts fired all night.
             if 7 < now.hour < 22:
-                await self._push_once(user, bot)
+                await self._initiate_timekiller_prompt(user, bot)
             await asyncio.sleep(
                 datetime.timedelta(hours=random.randrange(1, 3)).total_seconds()
             )
 
-    async def _push_once(self, user: User, bot: UserInteractionApi) -> None:
+    async def _initiate_timekiller_prompt(
+        self, user: User, bot: UserInteractionApi
+    ) -> None:
         """Run a single unprompted kill-time interaction."""
         # Timeouts are reported to the user through the monitor's exception
         # queue. Preemption is not: it's the expected outcome whenever another

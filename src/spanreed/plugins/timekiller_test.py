@@ -190,7 +190,7 @@ def test_preempted_push_is_not_reported_to_user(mock_bot: AsyncMock) -> None:
         mock_redis.lpush = AsyncMock()
         # Must neither raise nor land in the monitor's exception queue (which
         # is forwarded to the user).
-        asyncio.run(plugin._push_once(user, mock_bot))
+        asyncio.run(plugin._initiate_timekiller_prompt(user, mock_bot))
 
     plugin._kill_time_push.assert_awaited_once()
     mock_redis.lpush.assert_not_called()
@@ -206,7 +206,7 @@ def test_push_timeout_is_still_reported(mock_bot: AsyncMock) -> None:
 
     with patch("spanreed.plugins.spanreed_monitor.redis_api") as mock_redis:
         mock_redis.lpush = AsyncMock()
-        asyncio.run(plugin._push_once(user, mock_bot))
+        asyncio.run(plugin._initiate_timekiller_prompt(user, mock_bot))
 
     mock_redis.lpush.assert_awaited_once()
 
