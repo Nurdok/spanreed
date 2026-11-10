@@ -217,8 +217,8 @@ def daily_heart_rate_metrics(
 ) -> dict[str, int]:
     """Summarize one local date of heart rate as whole bpm values.
 
-    Return ``heart-rate-p5``, ``heart-rate-avg`` and ``heart-rate-p95`` from
-    the heart rate samples, and ``resting-heart-rate`` from the last resting
+    Return ``heart-rate-p5``, ``heart-rate-avg``, ``heart-rate-p95``,
+    ``heart-rate-p98`` and ``heart-rate-p99`` from the heart rate samples, and ``resting-heart-rate`` from the last resting
     heart rate record of the day. The keys are the daily note property names.
     Leave out a key when the day has no data for it. Every sample counts
     once, so periods with denser samples (such as a workout) weigh more.
@@ -229,6 +229,8 @@ def daily_heart_rate_metrics(
         metrics["heart-rate-p5"] = round(percentile(bpm, 5))
         metrics["heart-rate-avg"] = round(sum(bpm) / len(bpm))
         metrics["heart-rate-p95"] = round(percentile(bpm, 95))
+        metrics["heart-rate-p98"] = round(percentile(bpm, 98))
+        metrics["heart-rate-p99"] = round(percentile(bpm, 99))
     resting = sorted(resting_heart_rate, key=lambda sample: sample.time)
     if resting:
         metrics["resting-heart-rate"] = resting[-1].bpm

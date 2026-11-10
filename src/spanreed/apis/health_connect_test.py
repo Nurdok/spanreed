@@ -424,6 +424,8 @@ def test_daily_heart_rate_metrics() -> None:
         "heart-rate-p5": 65,
         "heart-rate-avg": 110,
         "heart-rate-p95": 155,
+        "heart-rate-p98": 158,
+        "heart-rate-p99": 159,
         "resting-heart-rate": 54,
     }
 
