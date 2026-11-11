@@ -9,7 +9,7 @@ from spanreed.user import User
 import contextlib
 import requests
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 
 from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
@@ -17,12 +17,18 @@ from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 @dataclass
 class UserConfig:
-    userid: str
-    access_token: str
-    refresh_token: str
-    expires_in: str
-    scope: str
-    token_type: str
+    """The result of the OAuth flow.
+
+    Every field is hidden in the settings form, because only the flow can
+    set them.
+    """
+
+    userid: str = field(metadata={"config_form": "hidden"})
+    access_token: str = field(metadata={"config_form": "hidden"})
+    refresh_token: str = field(metadata={"config_form": "hidden"})
+    expires_in: str = field(metadata={"config_form": "hidden"})
+    scope: str = field(metadata={"config_form": "hidden"})
+    token_type: str = field(metadata={"config_form": "hidden"})
 
 
 class AuthenticationFlow:

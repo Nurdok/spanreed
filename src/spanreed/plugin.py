@@ -77,6 +77,17 @@ class Plugin(abc.ABC, Generic[UC]):
         return config_class(**json.loads(config))
 
     @classmethod
+    async def get_saved_config_data(cls, user: User) -> Optional[dict]:
+        """Return the user's saved config as JSON data.
+
+        Return ``None`` if no config is saved for the user.
+        """
+        config = await redis_api.get(cls._get_config_key(user))
+        if config is None:
+            return None
+        return cast(dict, json.loads(config))
+
+    @classmethod
     async def set_config(cls, user: User, config: UC) -> None:
         if cls.get_config_class() is None or type(config) != cls.get_config_class():
             raise NotImplementedError(

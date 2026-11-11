@@ -14,6 +14,7 @@ invocation: as a HIGH-priority user-initiated flow in the shared slot
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import functools
 import html
 import logging
@@ -23,11 +24,13 @@ from typing import Any, Awaitable, Callable, TypeVar, cast
 
 from quart import Blueprint, Response, g, jsonify, redirect, request
 
+from spanreed import config_form
 from spanreed.interaction import commands, engine
 from spanreed.interaction.api import UserInteractionApi
 from spanreed.interaction.engine import PromptKind, UserInteractionPriority
 from spanreed.interaction.surface import SurfaceScope
 from spanreed.interaction.web_surface import SURFACE_NAME, WebSurface, read_inbox
+from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.web import auth, google_auth
 
@@ -447,6 +450,96 @@ async def cancel() -> Any:
     if pending is not None and engine.preempt_current_interaction(user.id):
         return jsonify({"ok": True})
     return jsonify({"ok": False})
+
+
+# ---------------------------------------------------------------------------
+# Plugin settings
+# ---------------------------------------------------------------------------
+
+
+async def _configurable_plugins(user: User) -> list[Plugin]:
+    """Return the user's plugins whose config the settings form can edit."""
+    plugins = [
+        plugin
+        for plugin in await Plugin.get_plugins_for_user(user)
+        if plugin.has_user_config()
+        and dataclasses.is_dataclass(plugin.get_config_class())
+        # A config with only hidden fields has nothing to edit.
+        and config_form.form_schema(plugin.get_config_class())["fields"]
+    ]
+    return sorted(plugins, key=lambda plugin: plugin.name())
+
+
+async def _configurable_plugin(user: User, plugin_id: str) -> Plugin | None:
+    for plugin in await _configurable_plugins(user):
+        if plugin.canonical_name() == plugin_id:
+            return plugin
+    return None
+
+
+async def _settings_form(plugin: Plugin, user: User) -> dict[str, Any]:
+    config_class = plugin.get_config_class()
+    saved = await plugin.get_saved_config_data(user)
+    return {
+        "id": plugin.canonical_name(),
+        "name": plugin.name(),
+        "schema": config_form.form_schema(config_class),
+        "value": config_form.form_value(config_class, saved),
+    }
+
+
+@blueprint.get("/api/settings")
+@api_auth
+async def settings() -> Any:
+    user: User = g.user
+    return _no_store(
+        jsonify(
+            {
+                "plugins": [
+                    {"id": plugin.canonical_name(), "name": plugin.name()}
+                    for plugin in await _configurable_plugins(user)
+                ]
+            }
+        )
+    )
+
+
+@blueprint.get("/api/settings/<plugin_id>")
+@api_auth
+async def plugin_settings(plugin_id: str) -> Any:
+    user: User = g.user
+    plugin = await _configurable_plugin(user, plugin_id)
+    if plugin is None:
+        return jsonify({"error": "This plugin has no settings."}), 404
+    return _no_store(jsonify(await _settings_form(plugin, user)))
+
+
+@blueprint.put("/api/settings/<plugin_id>")
+@api_auth
+async def save_plugin_settings(plugin_id: str) -> Any:
+    """Check a submitted settings form and save it as the plugin's config."""
+    user: User = g.user
+    plugin = await _configurable_plugin(user, plugin_id)
+    if plugin is None:
+        return jsonify({"error": "This plugin has no settings."}), 404
+    body = await request.get_json(silent=True) or {}
+    config_class: Any = plugin.get_config_class()
+    try:
+        data = config_form.config_data_from_form(
+            config_class,
+            body.get("value"),
+            await plugin.get_saved_config_data(user),
+        )
+        # Build the config the way a saved one is loaded, so the plugin's
+        # own checks run before anything is saved.
+        config = config_class(**data)
+    except config_form.ConfigFormError as e:
+        return jsonify({"error": str(e), "path": e.path}), 400
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": str(e), "path": []}), 400
+    await plugin.set_config(user, config)
+    _logger.info(f"User {user.id} saved the settings of plugin {plugin_id}")
+    return jsonify({"ok": True, **await _settings_form(plugin, user)})
 
 
 @blueprint.get("/api/documents/<document_id>")

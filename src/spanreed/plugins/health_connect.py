@@ -54,9 +54,21 @@ class UserConfig:
     # Bearer token the bridge app sends; also registered in Redis so the
     # HTTP route can map it back to the user.
     # Empty until the plugin is set up for the user.
-    token: str = ""
+    # Hidden in the settings form: a new token must also be registered, which
+    # only the setup flow does.
+    token: str = field(default="", metadata={"config_form": "hidden"})
     # Vault folder that the raw data files are written under.
-    raw_data_folder: str = DEFAULT_RAW_DATA_FOLDER
+    raw_data_folder: str = field(
+        default=DEFAULT_RAW_DATA_FOLDER,
+        metadata={
+            "config_help": "Vault folder for the raw data files. Files "
+            "already written to another folder are not moved."
+        },
+    )
+
+    def __post_init__(self) -> None:
+        """Clean up the folder, and raise ``ValueError`` if it is not valid."""
+        self.raw_data_folder = normalize_vault_folder(self.raw_data_folder)
 
 
 @dataclass
