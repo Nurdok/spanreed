@@ -53,7 +53,8 @@ DEFAULT_RAW_DATA_FOLDER = "Health/raw"
 class UserConfig:
     # Bearer token the bridge app sends; also registered in Redis so the
     # HTTP route can map it back to the user.
-    token: str
+    # Empty until the plugin is set up for the user.
+    token: str = ""
     # Vault folder that the raw data files are written under.
     raw_data_folder: str = DEFAULT_RAW_DATA_FOLDER
 
@@ -145,11 +146,55 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             )
             raise RuntimeError("User timezone not set.")
 
-        token = HealthConnectApi.generate_token()
-        await HealthConnectApi.register_token(user, token)
-        await cls.set_config(user, UserConfig(token=token))
+        # Reconfiguring keeps the token unless the user asks for a new one,
+        # because a new token must be entered again in the phone app.
+        config: UserConfig = await cls.get_config(user)
+        old_token = config.token
+        if old_token:
+            choice = await bot.request_user_choice(
+                "The phone app is set up with a token. A new token must be "
+                "entered in the phone app again.",
+                ["Keep the current token", "Generate a new token"],
+            )
+            if choice == 1:  # Generate a new token
+                config.token = ""
+        if not config.token:
+            config.token = HealthConnectApi.generate_token()
 
-        await bot.send_message(setup_instructions(token), parse_html=True)
+        config.raw_data_folder = await cls._ask_for_raw_data_folder(
+            bot, config.raw_data_folder
+        )
+
+        await HealthConnectApi.register_token(user, config.token)
+        await cls.set_config(user, config)
+        if config.token != old_token:
+            if old_token:
+                await HealthConnectApi.unregister_token(old_token)
+            await bot.send_message(setup_instructions(config.token), parse_html=True)
+
+    @staticmethod
+    async def _ask_for_raw_data_folder(bot: UserInteractionApi, current: str) -> str:
+        """Ask where in the vault the raw data files go, and return the folder.
+
+        Return ``current`` if the user keeps it, or gives a folder that is
+        not valid. Files that are already in the vault are not moved.
+        """
+        choice = await bot.request_user_choice(
+            f"Raw Health Connect data files are written to the vault folder "
+            f"{current}.",
+            ["Keep this folder", "Change folder"],
+        )
+        if choice != 1:  # Keep this folder
+            return current
+        answer = await bot.request_user_input(
+            f"Send the vault folder for the raw data files, for example "
+            f"{DEFAULT_RAW_DATA_FOLDER}. Files already in {current} are not moved."
+        )
+        try:
+            return normalize_vault_folder(answer)
+        except ValueError as e:
+            await bot.send_message(f"Folder not changed. {e}")
+            return current
 
     async def run(self) -> None:
         await UserInteractionApi.register_command(
@@ -168,13 +213,6 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             self,
             PluginCommand(
                 text="Export Health Connect raw data", callback=self._export_raw_now
-            ),
-        )
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(
-                text="Set Health Connect raw data folder",
-                callback=self._set_raw_data_folder,
             ),
         )
         await UserInteractionApi.register_command(
@@ -314,46 +352,6 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 f"Wrote {written} raw data {'file' if written == 1 else 'files'} "
                 f"to {config.raw_data_folder}."
             )
-
-    async def _set_raw_data_folder(self, user: User) -> None:
-        """Change the vault folder of the raw data files, on request.
-
-        Leave the files of the old folder where they are. New and changed
-        days are written under the new folder from then on.
-        """
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        config: UserConfig = await self.get_config(user)
-        choice = await bot.request_user_choice(
-            f"Raw Health Connect data is written to {config.raw_data_folder}.",
-            ["Change folder", "Cancel"],
-        )
-        if choice != 0:
-            return
-        answer = await bot.request_user_input(
-            "Send the vault folder for the raw data files, for example "
-            f"{DEFAULT_RAW_DATA_FOLDER}."
-        )
-        try:
-            folder = normalize_vault_folder(answer)
-        except ValueError as e:
-            await bot.send_message(f"Folder not changed. {e}")
-            return
-        if folder == config.raw_data_folder:
-            await bot.send_message(f"The folder is already {folder}.")
-            return
-
-        old_folder = config.raw_data_folder
-        config.raw_data_folder = folder
-        await self.set_config(user, config)
-        self._logger.info(
-            f"Raw data folder of user {user.id} changed from {old_folder!r} "
-            f"to {folder!r}"
-        )
-        await bot.send_message(
-            f"Raw data files are now written to {folder}. Files already in "
-            f"{old_folder} were not moved. Run “Export Health Connect raw "
-            "data” to write every stored day to the new folder."
-        )
 
     async def _sync_steps_now(self, user: User) -> None:
         """Write step totals for recent days, on request from the user."""
