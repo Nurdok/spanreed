@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +16,8 @@ from spanreed.plugin import Plugin
 from spanreed.plugins.health_connect import (
     HealthConnectPlugin,
     UserConfig,
+    normalize_vault_folder,
+    raw_file_path,
     setup_instructions,
 )
 from spanreed.test_utils import (
@@ -60,6 +63,7 @@ def test_ask_for_user_config_generates_registers_and_shows_token(
     HealthConnectPlugin()
     fake = FakeRedis()
     user = mock_user_find_by_id(4)
+    mock_bot.request_user_choice.return_value = 0  # Keep this folder
 
     with (
         patch("spanreed.apis.health_connect.redis_api", new=fake),
@@ -71,6 +75,9 @@ def test_ask_for_user_config_generates_registers_and_shows_token(
         assert asyncio.run(HealthConnectApi.user_id_for_token(config.token)) == 4
 
     assert len(config.token) >= 40
+    assert config.raw_data_folder == "Health/raw"
+    # A first setup has no token to keep, so only the folder is asked about.
+    mock_bot.request_user_choice.assert_awaited_once()
     mock_bot.send_message.assert_awaited_once()
     sent_text = mock_bot.send_message.await_args.args[0]
     assert config.token in sent_text
@@ -84,6 +91,7 @@ def test_ask_for_user_config_asks_for_timezone_when_unset(
     Plugin.reset_registry()
     HealthConnectPlugin()
     fake = FakeRedis()
+    mock_bot.request_user_choice.return_value = 0  # Keep this folder
     user = mock_user_find_by_id(4)
     user.timezone = None
 
@@ -138,6 +146,7 @@ def test_ask_for_user_config_skips_timezone_prompt_when_set(
     Plugin.reset_registry()
     HealthConnectPlugin()
     fake = FakeRedis()
+    mock_bot.request_user_choice.return_value = 0  # Keep this folder
     user = mock_user_find_by_id(4)  # timezone is set to UTC by the helper
 
     with (
@@ -148,6 +157,94 @@ def test_ask_for_user_config_skips_timezone_prompt_when_set(
         asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
 
     mock_ask.assert_not_called()
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_reconfigure_changes_the_folder_and_keeps_the_token(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    # Keep the current token, then change the folder.
+    mock_bot.request_user_choice.side_effect = [0, 1]
+    mock_bot.request_user_input.return_value = "/Data/Health Connect/"
+
+    with (
+        patch("spanreed.apis.health_connect.redis_api", new=fake),
+        patch("spanreed.plugin.redis_api", new=fake),
+    ):
+        asyncio.run(HealthConnectPlugin.set_config(user, UserConfig(token="abc")))
+        asyncio.run(HealthConnectApi.register_token(user, "abc"))
+        asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
+        config: UserConfig = asyncio.run(HealthConnectPlugin.get_config(user))
+        assert asyncio.run(HealthConnectApi.user_id_for_token("abc")) == 4
+
+    assert config == UserConfig(token="abc", raw_data_folder="Data/Health Connect")
+    folder_prompt = mock_bot.request_user_choice.await_args_list[1].args[0]
+    assert "Health/raw" in folder_prompt
+    # The token did not change, so the setup instructions are not sent again.
+    mock_bot.send_message.assert_not_called()
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_reconfigure_can_replace_the_token_and_keeps_the_folder(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    # Generate a new token, then keep the folder.
+    mock_bot.request_user_choice.side_effect = [1, 0]
+
+    with (
+        patch("spanreed.apis.health_connect.redis_api", new=fake),
+        patch("spanreed.plugin.redis_api", new=fake),
+    ):
+        asyncio.run(
+            HealthConnectPlugin.set_config(
+                user, UserConfig(token="abc", raw_data_folder="Data/raw")
+            )
+        )
+        asyncio.run(HealthConnectApi.register_token(user, "abc"))
+        asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
+        config: UserConfig = asyncio.run(HealthConnectPlugin.get_config(user))
+        assert asyncio.run(HealthConnectApi.user_id_for_token(config.token)) == 4
+        # The old token no longer works.
+        assert asyncio.run(HealthConnectApi.user_id_for_token("abc")) is None
+
+    assert config.token not in ("", "abc")
+    assert config.raw_data_folder == "Data/raw"
+    assert config.token in mock_bot.send_message.await_args.args[0]
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_reconfigure_keeps_the_folder_when_the_new_one_is_not_valid(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    mock_bot.request_user_choice.side_effect = [0, 1]
+    mock_bot.request_user_input.return_value = "Data/../Secrets"
+
+    with (
+        patch("spanreed.apis.health_connect.redis_api", new=fake),
+        patch("spanreed.plugin.redis_api", new=fake),
+    ):
+        asyncio.run(
+            HealthConnectPlugin.set_config(
+                user, UserConfig(token="abc", raw_data_folder="Data/raw")
+            )
+        )
+        asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
+        config: UserConfig = asyncio.run(HealthConnectPlugin.get_config(user))
+
+    assert config == UserConfig(token="abc", raw_data_folder="Data/raw")
+    assert "Folder not changed" in mock_bot.send_message.await_args.args[0]
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
@@ -250,6 +347,7 @@ def test_run_for_user_survives_a_bad_payload() -> None:
         patch.object(HealthConnectApi, "dequeue_payload", side_effect=fake_dequeue),
         patch.object(plugin, "_write_steps", new=AsyncMock(return_value=0)),
         patch.object(plugin, "_write_heart_rate", new=AsyncMock(return_value=1)),
+        patch.object(plugin, "_write_raw_files", new=AsyncMock(return_value=1)),
     ):
         asyncio.run(HealthConnectPlugin.set_config(user, UserConfig(token="abc")))
         try:
@@ -262,7 +360,7 @@ def test_run_for_user_survives_a_bad_payload() -> None:
     # The good payload after the bad one was stored.
     assert len(fake.hashes) == 1
     (stored,) = fake.hashes.values()
-    assert list(stored.values()) == ["72"]
+    assert list(stored.values()) == ['{"bpm":72,"time":"2026-05-09T08:15:00Z"}']
 
 
 # --- _write_steps -------------------------------------------------------------
@@ -432,6 +530,9 @@ def test_run_for_user_writes_steps_for_touched_dates() -> None:
         patch.object(
             plugin, "_write_heart_rate", new=AsyncMock(return_value=1)
         ) as write_hr,
+        patch.object(
+            plugin, "_write_raw_files", new=AsyncMock(return_value=3)
+        ) as write_raw,
     ):
         asyncio.run(HealthConnectPlugin.set_config(user, UserConfig(token="abc")))
         try:
@@ -444,6 +545,7 @@ def test_run_for_user_writes_steps_for_touched_dates() -> None:
     )
     # Heart rate is written only for the date that had heart rate records.
     write_hr.assert_awaited_once_with(user, [datetime.date(2026, 5, 11)], notify=False)
+    write_raw.assert_awaited_once_with(user)
 
 
 # --- Sync steps command -------------------------------------------------------
@@ -761,3 +863,254 @@ def test_write_heart_rate_skips_days_without_records_or_notes(
     assert written == 0
     mock_obsidian.get_daily_note.assert_awaited_once_with("Daily", DATE)
     assert "No daily note" in mock_bot.notify.await_args.args[0]
+
+
+# --- Raw data files -----------------------------------------------------------
+
+
+def _written_files(mock_obsidian: AsyncMock) -> dict[str, str]:
+    """Return the text of each file written to the vault, by path."""
+    files = {}
+    for call in mock_obsidian.write_binary_file.await_args_list:
+        assert call.kwargs == {"overwrite": True}
+        files[call.args[0]] = call.args[1].decode("utf-8")
+    return files
+
+
+def _configure(fake: FakeRedis, user: object, **config: str) -> None:
+    """Save the plugin config of ``user``; call with ``fake`` patched in."""
+    asyncio.run(
+        HealthConnectPlugin.set_config(
+            user, UserConfig(token="abc", **config)  # type: ignore[arg-type]
+        )
+    )
+
+
+def _patch_redis(fake: FakeRedis) -> ExitStack:
+    """Patch the store's Redis and the plugin config's Redis with ``fake``."""
+    stack = ExitStack()
+    stack.enter_context(patch("spanreed.apis.health_connect.redis_api", new=fake))
+    stack.enter_context(patch("spanreed.plugin.redis_api", new=fake))
+    return stack
+
+
+def test_raw_file_path_uses_the_payload_name_of_the_type() -> None:
+    assert raw_file_path("Health/raw", "resting-heart-rate", DATE) == (
+        "Health/raw/resting_heart_rate/2026-05-09.jsonl"
+    )
+
+
+def test_normalize_vault_folder() -> None:
+    assert normalize_vault_folder(" /Data/ Health Connect //raw/ ") == (
+        "Data/Health Connect/raw"
+    )
+    assert normalize_vault_folder("Data\\raw") == "Data/raw"
+    for bad in ("", " / ", "Data/../Secrets", "./raw"):
+        with pytest.raises(ValueError):
+            normalize_vault_folder(bad)
+
+
+def test_config_saved_before_the_folder_setting_uses_the_default() -> None:
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        key = HealthConnectPlugin._get_config_key(user)
+        fake.strings[key] = json.dumps({"token": "abc"})
+        config = asyncio.run(HealthConnectPlugin.get_config(user))
+
+    assert config == UserConfig(token="abc", raw_data_folder="Health/raw")
+
+
+def test_ingest_stores_unknown_types_and_extra_fields() -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    raw = json.dumps(
+        {
+            "timestamp": "2026-05-10T14:00:00Z",
+            "heart_rate": [
+                {"bpm": 72, "time": "2026-05-09T08:15:00Z", "source": "watch"}
+            ],
+            "sleep": [{"session_end_time": "2026-05-09T06:00:00Z", "stages": [1, 2]}],
+            "weight": [{"kilograms": 70.5}],
+        }
+    )
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        summary = asyncio.run(plugin._ingest(user, raw))
+        store = HealthConnectStore(user, tz=UTC)
+        hr = asyncio.run(store.get_raw_records("heart-rate", DATE))
+        sleep = asyncio.run(store.get_raw_records("sleep", DATE))
+        # No timestamp in the record: filed under the day it was received.
+        weight = asyncio.run(
+            store.get_raw_records("weight", datetime.date(2026, 5, 10))
+        )
+        pending = asyncio.run(store.get_export_pending())
+
+    assert hr == [{"bpm": 72, "time": "2026-05-09T08:15:00Z", "source": "watch"}]
+    assert sleep == [{"session_end_time": "2026-05-09T06:00:00Z", "stages": [1, 2]}]
+    assert weight == [{"kilograms": 70.5}]
+    assert summary.heart_rate_dates == {DATE}
+    assert summary.steps_dates == set()
+    assert summary.touched_dates == {DATE, datetime.date(2026, 5, 10)}
+    assert pending == [
+        ("heart-rate", DATE),
+        ("sleep", DATE),
+        ("weight", datetime.date(2026, 5, 10)),
+    ]
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+def test_write_raw_files_writes_each_pending_day_once(
+    mock_obsidian: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    raw = json.dumps(
+        {
+            "heart_rate": [
+                {"bpm": 80, "time": "2026-05-09T09:00:00Z"},
+                {"bpm": 72, "time": "2026-05-09T08:15:00Z"},
+            ],
+            "sleep": [{"session_end_time": "2026-05-09T06:00:00Z"}],
+        }
+    )
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._ingest(user, raw))
+        written = asyncio.run(plugin._write_raw_files(user))
+        again = asyncio.run(plugin._write_raw_files(user))
+
+    assert written == 2
+    assert again == 0
+    # One record on each line, oldest first, as the phone sent it.
+    assert _written_files(mock_obsidian) == {
+        "Health/raw/heart_rate/2026-05-09.jsonl": (
+            '{"bpm":72,"time":"2026-05-09T08:15:00Z"}\n'
+            '{"bpm":80,"time":"2026-05-09T09:00:00Z"}\n'
+        ),
+        "Health/raw/sleep/2026-05-09.jsonl": (
+            '{"session_end_time":"2026-05-09T06:00:00Z"}\n'
+        ),
+    }
+    assert mock_obsidian.write_binary_file.await_count == 2
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+def test_write_raw_files_retries_a_day_that_failed(
+    mock_obsidian: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    raw = json.dumps({"heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z"}]})
+    mock_obsidian.write_binary_file.side_effect = [TimeoutError("offline"), None]
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._ingest(user, raw))
+        with pytest.raises(TimeoutError):
+            asyncio.run(plugin._write_raw_files(user))
+        written = asyncio.run(plugin._write_raw_files(user))
+
+    assert written == 1
+    assert mock_obsidian.write_binary_file.await_count == 2
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+def test_write_raw_files_skips_a_day_with_no_stored_records(
+    mock_obsidian: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        store = HealthConnectStore(user, tz=UTC)
+        asyncio.run(store.mark_export_pending([("heart-rate", DATE)]))
+        written = asyncio.run(plugin._write_raw_files(user))
+        pending = asyncio.run(store.get_export_pending())
+
+    assert written == 0
+    assert pending == []
+    mock_obsidian.write_binary_file.assert_not_called()
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_export_raw_now_writes_every_stored_day(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    t = datetime.datetime(2026, 5, 9, 8, 15, tzinfo=UTC)
+    epoch_ms = int(t.timestamp() * 1000)
+    # Records of the older storage format, with nothing marked as pending.
+    fake.hashes["health-connect:4:heart-rate:2026-05-09"] = {str(epoch_ms): "72"}
+    fake.hashes["health-connect:4:steps:2026-05-09"] = {
+        str(epoch_ms): f"{epoch_ms + 60_000}:15"
+    }
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._export_raw_now(user))
+
+    assert _written_files(mock_obsidian) == {
+        "Health/raw/heart_rate/2026-05-09.jsonl": (
+            '{"bpm":72,"time":"2026-05-09T08:15:00Z"}\n'
+        ),
+        "Health/raw/steps/2026-05-09.jsonl": (
+            '{"count":15,"start_time":"2026-05-09T08:15:00Z",'
+            '"end_time":"2026-05-09T08:16:00Z"}\n'
+        ),
+    }
+    assert "Wrote 2 raw data files" in mock_bot.notify.await_args.args[0]
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_export_raw_now_reports_nothing_stored(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    user = mock_user_find_by_id(4)
+
+    fake = FakeRedis()
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._export_raw_now(user))
+
+    mock_obsidian.write_binary_file.assert_not_called()
+    assert "No stored Health Connect data" in mock_bot.notify.await_args.args[0]
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+def test_write_raw_files_uses_the_configured_folder(
+    mock_obsidian: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    raw = json.dumps({"heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z"}]})
+
+    with _patch_redis(fake):
+        _configure(fake, user, raw_data_folder="Data/Health Connect")
+        asyncio.run(plugin._ingest(user, raw))
+        asyncio.run(plugin._write_raw_files(user))
+
+    assert list(_written_files(mock_obsidian)) == [
+        "Data/Health Connect/heart_rate/2026-05-09.jsonl"
+    ]
