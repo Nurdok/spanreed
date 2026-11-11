@@ -229,12 +229,30 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             await bot.notify("No new step counts found.")
 
     async def _sync_heart_rate_now(self, user: User) -> None:
-        """Write heart rate metrics for recent days, on request from the user."""
+        """Write heart rate metrics into daily notes, on request from the user.
+
+        Offer today, the last week, or all time. All time covers every date
+        that still has stored records, and reports one total instead of a
+        message for each day.
+        """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         choice = await bot.request_user_choice(
             "Sync heart rate for…",
-            ["Today", "The last week", "Cancel"],
+            ["Today", "The last week", "All time", "Cancel"],
         )
+        if choice == 2:  # All time
+            dates = await HealthConnectStore(user).get_heart_rate_dates()
+            await bot.notify("Syncing heart rate…")
+            written = await self._write_heart_rate(user, dates, notify=False)
+            if written == 0:
+                await bot.notify("No new heart rate values found.")
+            else:
+                await bot.notify(
+                    f"Logged heart rate in {written} daily "
+                    f"{'note' if written == 1 else 'notes'}, out of "
+                    f"{len(dates)} stored {'day' if len(dates) == 1 else 'days'}."
+                )
+            return
         if choice == 0:  # Today
             days = 1
         elif choice == 1:  # The last week
