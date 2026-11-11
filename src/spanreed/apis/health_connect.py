@@ -449,6 +449,22 @@ class HealthConnectStore:
     ) -> list[HeartRateSample]:
         return await self.get_heart_rate(date, record_type="resting-heart-rate")
 
+    async def get_heart_rate_dates(self) -> list[datetime.date]:
+        """Return every local date that has stored heart rate records.
+
+        Include dates that have only resting heart rate records. Sort the
+        dates from oldest to newest.
+        """
+        dates: set[datetime.date] = set()
+        for record_type in ("heart-rate", "resting-heart-rate"):
+            prefix = f"health-connect:{self._user.id}:{record_type}:"
+            async for key in redis_api.scan_iter(match=f"{prefix}*"):
+                try:
+                    dates.add(datetime.date.fromisoformat(_decode(key)[len(prefix) :]))
+                except ValueError:
+                    continue
+        return sorted(dates)
+
     async def get_steps(self, date: datetime.date) -> list[StepsRecord]:
         raw: dict = await redis_api.hgetall(self._key("steps", date))
         records = []

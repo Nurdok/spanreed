@@ -497,6 +497,90 @@ def test_sync_steps_now_cancel(mock_bot: AsyncMock) -> None:
     mock_bot.notify.assert_not_called()
 
 
+# --- Sync heart rate command --------------------------------------------------
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_sync_heart_rate_now_today(mock_bot: AsyncMock) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    user = mock_user_find_by_id(4)
+    mock_bot.request_user_choice.return_value = 0  # Today
+    today = datetime.datetime.now(tz=UTC).date()
+
+    with patch.object(
+        plugin, "_write_heart_rate", new=AsyncMock(return_value=1)
+    ) as write:
+        asyncio.run(plugin._sync_heart_rate_now(user))
+
+    assert mock_bot.request_user_choice.await_args.args[1] == [
+        "Today",
+        "The last week",
+        "All time",
+        "Cancel",
+    ]
+    write.assert_awaited_once_with(user, [today], notify=True)
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_sync_heart_rate_now_all_time_covers_every_stored_date(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    mock_bot.request_user_choice.return_value = 2  # All time
+    old = datetime.datetime(2025, 1, 3, 12, 0, tzinfo=UTC)
+    recent = datetime.datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        store = HealthConnectStore(user, tz=UTC)
+        asyncio.run(store.add_heart_rate([HeartRateSample(recent, 60)]))
+        asyncio.run(store.add_resting_heart_rate([HeartRateSample(old, 50)]))
+        with patch.object(
+            plugin, "_write_heart_rate", new=AsyncMock(return_value=1)
+        ) as write:
+            asyncio.run(plugin._sync_heart_rate_now(user))
+
+    # One summary replaces the per-day messages.
+    write.assert_awaited_once_with(user, [old.date(), recent.date()], notify=False)
+    assert "1 daily note, out of 2 stored days" in mock_bot.notify.await_args.args[0]
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_sync_heart_rate_now_all_time_reports_nothing_new(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    user = mock_user_find_by_id(4)
+    mock_bot.request_user_choice.return_value = 2  # All time
+
+    with patch("spanreed.apis.health_connect.redis_api", new=FakeRedis()):
+        with patch.object(
+            plugin, "_write_heart_rate", new=AsyncMock(return_value=0)
+        ) as write:
+            asyncio.run(plugin._sync_heart_rate_now(user))
+
+    write.assert_awaited_once_with(user, [], notify=False)
+    assert "No new heart rate" in mock_bot.notify.await_args.args[0]
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_sync_heart_rate_now_cancel(mock_bot: AsyncMock) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    user = mock_user_find_by_id(4)
+    mock_bot.request_user_choice.return_value = 3  # Cancel
+
+    with patch.object(plugin, "_write_heart_rate", new=AsyncMock()) as write:
+        asyncio.run(plugin._sync_heart_rate_now(user))
+
+    write.assert_not_called()
+    mock_bot.notify.assert_not_called()
+
+
 def test_setup_instructions_put_the_bare_token_in_code() -> None:
     text = setup_instructions("tok-en_1")
     assert "<code>tok-en_1</code>" in text

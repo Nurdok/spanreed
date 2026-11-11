@@ -222,6 +222,30 @@ def test_store_redelivered_sample_overwrites_in_place() -> None:
     assert day == [HeartRateSample(t, 70)]
 
 
+def test_store_heart_rate_dates_cover_both_record_types_of_one_user() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    other = HealthConnectStore(mock_user_find_by_id(40), tz=UTC)
+
+    def at(day: int) -> datetime.datetime:
+        return datetime.datetime(2026, 5, day, 8, 0, tzinfo=UTC)
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        assert asyncio.run(store.get_heart_rate_dates()) == []
+        asyncio.run(store.add_heart_rate([HeartRateSample(at(9), 72)]))
+        asyncio.run(store.add_heart_rate([HeartRateSample(at(2), 70)]))
+        asyncio.run(store.add_resting_heart_rate([HeartRateSample(at(9), 58)]))
+        asyncio.run(store.add_resting_heart_rate([HeartRateSample(at(5), 57)]))
+        asyncio.run(other.add_heart_rate([HeartRateSample(at(20), 80)]))
+        dates = asyncio.run(store.get_heart_rate_dates())
+
+    assert dates == [
+        datetime.date(2026, 5, 2),
+        datetime.date(2026, 5, 5),
+        datetime.date(2026, 5, 9),
+    ]
+
+
 def test_store_resting_heart_rate_is_kept_separately() -> None:
     fake = FakeRedis()
     user = mock_user_find_by_id(4)

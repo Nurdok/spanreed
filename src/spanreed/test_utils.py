@@ -1,7 +1,8 @@
 import builtins
 import datetime
+import fnmatch
 import logging
-from typing import Callable, Any, Coroutine
+from typing import Callable, Any, AsyncIterator, Coroutine
 from unittest.mock import MagicMock, patch, AsyncMock
 from spanreed.user import User
 
@@ -223,6 +224,12 @@ class FakeRedis:
     async def expire(self, key: str, seconds: int) -> bool:
         self.expirations[key] = seconds
         return True
+
+    async def scan_iter(self, match: str | None = None) -> AsyncIterator[str]:
+        stores: list[dict] = [self.lists, self.strings, self.hashes, self.sets]
+        for key in [key for store in stores for key in store]:
+            if match is None or fnmatch.fnmatchcase(key, match):
+                yield key
 
     async def hget(self, key: str, field: str) -> Any | None:
         return self.hashes.get(key, {}).get(field)
