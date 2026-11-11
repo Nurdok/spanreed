@@ -8,8 +8,9 @@ plugin.
 The HTTP handler must answer fast, because the bridge app retries only a few
 times. It only checks the token and pushes the raw body onto a Redis inbox
 for the user. ``HealthConnectPlugin`` reads the inbox, parses each payload
-and stores the records by local date in ``HealthConnectStore``. Later
-changes compute daily metrics from that store.
+and stores every record by local date in ``HealthConnectStore``, exactly as
+the phone sent it. Daily metrics and the raw data files in the vault are
+both built from that store.
 
 The bridge app sends this payload shape (see its ``docs/webhook.md``)::
 
@@ -22,13 +23,16 @@ The bridge app sends this payload shape (see its ``docs/webhook.md``)::
     }
 
 Each record-type key is optional. It is present only when the batch has at
-least one record of that type. Timestamps are ISO-8601 UTC instants.
+least one record of that type. Timestamps are ISO-8601 UTC instants. The app
+can send more record types than the three shown. Those are stored too, but
+no metric is computed from them.
 """
 
 import datetime
 import hashlib
 import json
 import logging
+import re
 import secrets
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -51,8 +55,12 @@ INBOX_MAX_LENGTH = 500
 # keep enough history to re-sync "the last week" with room to spare.
 RECORD_TTL = datetime.timedelta(days=30)
 
-# Record types kept per day in HealthConnectStore (part of each Redis key).
-STORED_RECORD_TYPES = ("heart-rate", "resting-heart-rate", "steps")
+# A record-type key of the payload that is safe to use in a Redis key and in
+# a vault path.
+_TYPE_NAME_RE = re.compile(r"[A-Za-z0-9_]+")
+# Prefix of the hash field of a record that has no usable timestamp field
+# name; the rest is a digest of the record.
+_DIGEST_FIELD_PREFIX = "h:"
 
 # Inbox poll timeout; the drain loop wakes up this often even when idle so a
 # cancellation is noticed promptly.
@@ -112,6 +120,28 @@ def parse_instant(value: Any) -> datetime.datetime:
     return parsed
 
 
+def _heart_rate_sample(record: Any) -> HeartRateSample:
+    """Build a sample from one heart rate record of the payload.
+
+    Raise ``KeyError``, ``TypeError`` or ``ValueError`` if the record does
+    not have the expected shape.
+    """
+    return HeartRateSample(time=parse_instant(record["time"]), bpm=int(record["bpm"]))
+
+
+def _steps_record(record: Any) -> StepsRecord:
+    """Build a steps interval from one steps record of the payload.
+
+    Raise ``KeyError``, ``TypeError`` or ``ValueError`` if the record does
+    not have the expected shape.
+    """
+    return StepsRecord(
+        start_time=parse_instant(record["start_time"]),
+        end_time=parse_instant(record["end_time"]),
+        count=int(record["count"]),
+    )
+
+
 def parse_payload(data: Any) -> HealthConnectPayload:
     """Parse a webhook JSON object into typed records.
 
@@ -137,12 +167,7 @@ def parse_payload(data: Any) -> HealthConnectPayload:
         target = getattr(payload, type_name)
         for record in records:
             try:
-                target.append(
-                    HeartRateSample(
-                        time=parse_instant(record["time"]),
-                        bpm=int(record["bpm"]),
-                    )
-                )
+                target.append(_heart_rate_sample(record))
             except (KeyError, TypeError, ValueError) as e:
                 _logger.warning(
                     f"Skipping malformed {type_name} record {record!r}: {e}"
@@ -156,13 +181,7 @@ def parse_payload(data: Any) -> HealthConnectPayload:
         else:
             for record in steps:
                 try:
-                    payload.steps.append(
-                        StepsRecord(
-                            start_time=parse_instant(record["start_time"]),
-                            end_time=parse_instant(record["end_time"]),
-                            count=int(record["count"]),
-                        )
-                    )
+                    payload.steps.append(_steps_record(record))
                 except (KeyError, TypeError, ValueError) as e:
                     _logger.warning(f"Skipping malformed steps record {record!r}: {e}")
                     payload.skipped_records += 1
@@ -355,15 +374,92 @@ def _decode(value: str | bytes) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
 
+def _format_instant(instant: datetime.datetime) -> str:
+    """Format an instant the way the bridge app writes one."""
+    utc = instant.astimezone(datetime.timezone.utc)
+    timespec = "milliseconds" if utc.microsecond else "seconds"
+    return utc.isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def dump_record(record: Any) -> str:
+    """Serialize one record compactly, keeping its key order."""
+    return json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+
+
+def _digest_field(record: Any) -> str:
+    """Return a hash field name that is the same for equal records."""
+    canonical = json.dumps(record, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"{_DIGEST_FIELD_PREFIX}{digest}"
+
+
+def _record_instant(record: Any) -> datetime.datetime | None:
+    """Return the instant a record of any type belongs to, if it has one.
+
+    Prefer ``time``, then ``start_time``, then any other key that ends in
+    ``time`` and holds an instant. Return ``None`` if there is none.
+    """
+    if not isinstance(record, dict):
+        return None
+    others = sorted(
+        key
+        for key in record
+        if isinstance(key, str)
+        and key.endswith("time")
+        and key not in ("time", "start_time")
+    )
+    for key in ["time", "start_time", *others]:
+        try:
+            return parse_instant(record.get(key))
+        except ValueError:
+            continue
+    return None
+
+
+def _known_record_start(type_name: str, record: Any) -> datetime.datetime | None:
+    """Return the start instant of a well-formed record of a parsed type.
+
+    Return ``None`` for a record type that is not parsed, and for a record
+    that does not have the expected shape.
+    """
+    try:
+        if type_name in ("heart_rate", "resting_heart_rate"):
+            return _heart_rate_sample(record).time
+        if type_name == "steps":
+            return _steps_record(record).start_time
+    except (KeyError, TypeError, ValueError):
+        pass
+    return None
+
+
+def record_type_of(type_name: str) -> str:
+    """Return the store's record type for a record-type key of the payload."""
+    return type_name.replace("_", "-")
+
+
+def type_name_of(record_type: str) -> str:
+    """Return the payload's record-type key for a record type of the store."""
+    return record_type.replace("-", "_")
+
+
 class HealthConnectStore:
-    """Store records in Redis, by user and by local date.
+    """Store records in Redis, by user, record type and local date.
 
     The bridge app sends records in small batches. It sends only records that
     are new or changed since the last sync, over a 48-hour window. So the
     records of one day arrive in many batches, and a changed record is sent
-    again. Each day is one Redis hash, with the record timestamp as the field
-    name. A record that is sent again replaces the old one, and the full day
-    can be read back to compute metrics.
+    again. Each day of each record type is one Redis hash, and each value is
+    one record as JSON, exactly as the phone sent it. The full day can be
+    read back to compute metrics and to write the raw data file.
+
+    A well-formed heart rate, resting heart rate or steps record has its
+    timestamp in epoch milliseconds as the field name, so a record that is
+    sent again replaces the old one. Any other record has a digest of its
+    content as the field name. Sending it again unchanged stores nothing new,
+    but a record that the phone corrects is stored next to the old one.
+
+    Hashes written before records were stored as JSON hold only the bpm, or
+    ``{end epoch ms}:{count}`` for steps. Those values are still read.
     """
 
     def __init__(self, user: User, tz: datetime.tzinfo | None = None) -> None:
@@ -375,8 +471,12 @@ class HealthConnectStore:
         self._user = user
         self._tz = tz if tz is not None else user.tzinfo
 
+    @property
+    def _prefix(self) -> str:
+        return f"health-connect:{self._user.id}:"
+
     def _key(self, record_type: str, date: datetime.date) -> str:
-        return f"health-connect:{self._user.id}:{record_type}:{date.isoformat()}"
+        return f"{self._prefix}{record_type}:{date.isoformat()}"
 
     async def _write(
         self,
@@ -391,20 +491,73 @@ class HealthConnectStore:
             await redis_api.expire(key, int(RECORD_TTL.total_seconds()))
         return {date for date, mapping in by_date.items() if mapping}
 
+    async def add_records(
+        self,
+        type_name: str,
+        records: Iterable[Any],
+        received: datetime.datetime | None = None,
+    ) -> set[datetime.date]:
+        """Store records of one payload key and return the changed dates.
+
+        Accept any JSON value as a record. A record belongs to the local
+        date of its timestamp. A record with no timestamp belongs to the
+        local date of ``received``, which defaults to now.
+        """
+        if received is None:
+            received = datetime.datetime.now(tz=datetime.timezone.utc)
+        by_date: dict[datetime.date, _HashMapping] = {}
+        for record in records:
+            start = _known_record_start(type_name, record)
+            if start is not None:
+                field, instant = str(_epoch_ms(start)), start
+            else:
+                field = _digest_field(record)
+                instant = _record_instant(record) or received
+            by_date.setdefault(local_date(instant, self._tz), {})[field] = dump_record(
+                record
+            )
+        return await self._write(record_type_of(type_name), by_date)
+
+    async def add_payload(self, data: dict[str, Any]) -> dict[str, set[datetime.date]]:
+        """Store every record of a webhook payload.
+
+        Keep records of every type, with every field they carry. Treat a
+        value that is not a list as one record. Return the changed local
+        dates for each record type of the store.
+        """
+        try:
+            received: datetime.datetime | None = parse_instant(data.get("timestamp"))
+        except ValueError:
+            received = None
+        touched: dict[str, set[datetime.date]] = {}
+        for type_name, value in data.items():
+            if type_name in _METADATA_KEYS:
+                continue
+            if not _TYPE_NAME_RE.fullmatch(type_name):
+                _logger.warning(f"Not storing record type {type_name!r}: bad name.")
+                continue
+            records = value if isinstance(value, list) else [value]
+            dates = await self.add_records(type_name, records, received)
+            if dates:
+                touched[record_type_of(type_name)] = dates
+        return touched
+
     async def add_heart_rate(
         self, samples: Iterable[HeartRateSample], record_type: str = "heart-rate"
     ) -> set[datetime.date]:
         """Store samples and return the set of local dates that changed."""
-        by_date: dict[datetime.date, _HashMapping] = {}
-        for sample in samples:
-            by_date.setdefault(local_date(sample.time, self._tz), {})[
-                str(_epoch_ms(sample.time))
-            ] = str(sample.bpm)
-        return await self._write(record_type, by_date)
+        return await self.add_records(
+            type_name_of(record_type),
+            [
+                {"bpm": sample.bpm, "time": _format_instant(sample.time)}
+                for sample in samples
+            ],
+        )
 
     async def add_resting_heart_rate(
         self, samples: Iterable[HeartRateSample]
     ) -> set[datetime.date]:
+        """Store resting samples and return the local dates that changed."""
         return await self.add_heart_rate(samples, record_type="resting-heart-rate")
 
     async def add_steps(self, records: Iterable[StepsRecord]) -> set[datetime.date]:
@@ -412,41 +565,118 @@ class HealthConnectStore:
 
         An interval belongs to the local date of its start time.
         """
-        by_date: dict[datetime.date, _HashMapping] = {}
-        for record in records:
-            by_date.setdefault(local_date(record.start_time, self._tz), {})[
-                str(_epoch_ms(record.start_time))
-            ] = f"{_epoch_ms(record.end_time)}:{record.count}"
-        return await self._write("steps", by_date)
+        return await self.add_records(
+            "steps",
+            [
+                {
+                    "count": record.count,
+                    "start_time": _format_instant(record.start_time),
+                    "end_time": _format_instant(record.end_time),
+                }
+                for record in records
+            ],
+        )
+
+    @property
+    def _export_pending_key(self) -> str:
+        return f"health-connect:export-pending:{self._user.id}"
+
+    async def mark_export_pending(
+        self, days: Iterable[tuple[str, datetime.date]]
+    ) -> None:
+        """Remember that the raw data files of these days are out of date.
+
+        Each day is a record type of the store and a local date.
+        """
+        members = [f"{record_type}|{date.isoformat()}" for record_type, date in days]
+        if members:
+            await redis_api.sadd(self._export_pending_key, *members)
+
+    async def clear_export_pending(self, record_type: str, date: datetime.date) -> None:
+        """Forget that the raw data file of this day is out of date."""
+        await redis_api.srem(
+            self._export_pending_key, f"{record_type}|{date.isoformat()}"
+        )
+
+    async def get_export_pending(self) -> list[tuple[str, datetime.date]]:
+        """Return the days whose raw data files are out of date.
+
+        Sort the pairs by record type, then by date.
+        """
+        days: set[tuple[str, datetime.date]] = set()
+        for member in await redis_api.smembers(self._export_pending_key):
+            record_type, _, day = _decode(member).rpartition("|")
+            try:
+                days.add((record_type, datetime.date.fromisoformat(day)))
+            except ValueError:
+                continue
+        return sorted(days)
+
+    async def get_stored_days(self) -> list[tuple[str, datetime.date]]:
+        """Return every record type and local date that has stored records.
+
+        Sort the pairs by record type, then by date.
+        """
+        days: set[tuple[str, datetime.date]] = set()
+        async for key in redis_api.scan_iter(match=f"{self._prefix}*"):
+            record_type, _, day = _decode(key)[len(self._prefix) :].rpartition(":")
+            try:
+                days.add((record_type, datetime.date.fromisoformat(day)))
+            except ValueError:
+                continue
+        return sorted(days)
 
     async def delete_dates(self, dates: Iterable[datetime.date]) -> int:
         """Delete every stored record of these local dates.
 
-        Remove heart rate, resting heart rate and steps. Return the number
-        of Redis keys that existed and were deleted.
+        Remove the records of every record type. Return the number of Redis
+        keys that existed and were deleted.
         """
+        wanted = set(dates)
         keys = [
             self._key(record_type, date)
-            for date in dates
-            for record_type in STORED_RECORD_TYPES
+            for record_type, date in await self.get_stored_days()
+            if date in wanted
         ]
         if not keys:
             return 0
         return int(await redis_api.delete(*keys))
 
+    async def _get_timed(self, record_type: str, date: datetime.date) -> dict[int, Any]:
+        """Return the well-formed records of a parsed type, by epoch ms.
+
+        A value is the record as a dict, or the string of the older storage
+        format.
+        """
+        raw: dict = await redis_api.hgetall(self._key(record_type, date))
+        timed: dict[int, Any] = {}
+        for k, v in raw.items():
+            field, value = _decode(k), _decode(v)
+            if not field.isdigit():
+                continue
+            try:
+                record = json.loads(value)
+            except ValueError:
+                record = None
+            timed[int(field)] = record if isinstance(record, dict) else value
+        return timed
+
     async def get_heart_rate(
         self, date: datetime.date, record_type: str = "heart-rate"
     ) -> list[HeartRateSample]:
-        raw: dict = await redis_api.hgetall(self._key(record_type, date))
-        samples = [
-            HeartRateSample(time=_from_epoch_ms(_decode(k)), bpm=int(_decode(v)))
-            for k, v in raw.items()
-        ]
+        """Return the samples of one local date, oldest first."""
+        samples = []
+        for ms, record in (await self._get_timed(record_type, date)).items():
+            if isinstance(record, dict):
+                samples.append(_heart_rate_sample(record))
+            else:
+                samples.append(HeartRateSample(_from_epoch_ms(str(ms)), int(record)))
         return sorted(samples, key=lambda s: s.time)
 
     async def get_resting_heart_rate(
         self, date: datetime.date
     ) -> list[HeartRateSample]:
+        """Return the resting samples of one local date, oldest first."""
         return await self.get_heart_rate(date, record_type="resting-heart-rate")
 
     async def get_heart_rate_dates(self) -> list[datetime.date]:
@@ -455,26 +685,58 @@ class HealthConnectStore:
         Include dates that have only resting heart rate records. Sort the
         dates from oldest to newest.
         """
-        dates: set[datetime.date] = set()
-        for record_type in ("heart-rate", "resting-heart-rate"):
-            prefix = f"health-connect:{self._user.id}:{record_type}:"
-            async for key in redis_api.scan_iter(match=f"{prefix}*"):
-                try:
-                    dates.add(datetime.date.fromisoformat(_decode(key)[len(prefix) :]))
-                except ValueError:
-                    continue
-        return sorted(dates)
+        return sorted(
+            {
+                date
+                for record_type, date in await self.get_stored_days()
+                if record_type in ("heart-rate", "resting-heart-rate")
+            }
+        )
 
     async def get_steps(self, date: datetime.date) -> list[StepsRecord]:
-        raw: dict = await redis_api.hgetall(self._key("steps", date))
+        """Return the step intervals of one local date, oldest first."""
         records = []
-        for k, v in raw.items():
-            end_ms, count = _decode(v).split(":")
-            records.append(
-                StepsRecord(
-                    start_time=_from_epoch_ms(_decode(k)),
-                    end_time=_from_epoch_ms(end_ms),
-                    count=int(count),
+        for ms, record in (await self._get_timed("steps", date)).items():
+            if isinstance(record, dict):
+                records.append(_steps_record(record))
+            else:
+                end_ms, count = record.split(":")
+                records.append(
+                    StepsRecord(
+                        start_time=_from_epoch_ms(str(ms)),
+                        end_time=_from_epoch_ms(end_ms),
+                        count=int(count),
+                    )
                 )
-            )
         return sorted(records, key=lambda r: r.start_time)
+
+    async def get_raw_records(self, record_type: str, date: datetime.date) -> list[Any]:
+        """Return every stored record of one type and local date.
+
+        Return each record as the JSON value the phone sent, oldest first. A
+        record with no timestamp comes last. Rebuild a record of the older
+        storage format from the fields that were kept.
+        """
+        raw: dict = await redis_api.hgetall(self._key(record_type, date))
+        keyed: list[tuple[float, str, Any]] = []
+        for k, v in raw.items():
+            field, value = _decode(k), _decode(v)
+            try:
+                record = json.loads(value)
+            except ValueError:
+                record = value
+            if field.isdigit() and not isinstance(record, dict):
+                start = _from_epoch_ms(field)
+                if record_type == "steps":
+                    end_ms, count = value.split(":")
+                    record = {
+                        "count": int(count),
+                        "start_time": _format_instant(start),
+                        "end_time": _format_instant(_from_epoch_ms(end_ms)),
+                    }
+                else:
+                    record = {"bpm": int(value), "time": _format_instant(start)}
+            instant = _record_instant(record)
+            order = _epoch_ms(instant) if instant is not None else float("inf")
+            keyed.append((order, field, record))
+        return [record for _, _, record in sorted(keyed, key=lambda item: item[:2])]

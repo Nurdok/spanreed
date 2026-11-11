@@ -110,6 +110,7 @@ def patch_obsidian(
                 mock_obsidian.list_dir = AsyncMock()
                 mock_obsidian.read_file = AsyncMock()
                 mock_obsidian.read_binary_file = AsyncMock()
+                mock_obsidian.write_binary_file = AsyncMock()
                 mock_obsidian.move_file = AsyncMock()
 
                 args = (mock_obsidian,) + args

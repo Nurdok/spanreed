@@ -1,9 +1,9 @@
-"""Move Health Connect payloads from the webhook inbox into daily notes.
+"""Move Health Connect payloads from the webhook inbox into the vault.
 
 See ``spanreed.apis.health_connect`` for how the data arrives. This plugin
-parses each payload, stores the records by local date, and writes the
-daily-note properties for the dates that changed. Steps are written now.
-Heart-rate metrics come in a later change.
+stores every record of each payload by local date. For the dates that
+changed, it writes the step total and the heart rate metrics into the daily
+note, and it rewrites the raw data files, which hold every stored record.
 """
 
 import asyncio
@@ -25,7 +25,9 @@ from spanreed.apis.health_connect import (
     WEBHOOK_URL,
     daily_heart_rate_metrics,
     daily_step_total,
+    dump_record,
     parse_payload,
+    type_name_of,
 )
 
 
@@ -42,6 +44,9 @@ HEART_RATE_PROPERTIES = (
 )
 # Folder holding the daily notes (matches the other daily-note plugins).
 DAILY_NOTE_FOLDER = "Daily"
+# Folder holding the raw data files, one JSON Lines file for each record type
+# and local date: ``Health/raw/heart_rate/2026-05-09.jsonl``.
+RAW_DATA_FOLDER = "Health/raw"
 
 
 @dataclass
@@ -64,6 +69,14 @@ class IngestSummary:
     touched_dates: set[datetime.date] = field(default_factory=set)
     steps_dates: set[datetime.date] = field(default_factory=set)
     heart_rate_dates: set[datetime.date] = field(default_factory=set)
+    # Changed local dates for each record type of the store, including the
+    # types that no metric is computed from.
+    stored_dates: dict[str, set[datetime.date]] = field(default_factory=dict)
+
+
+def raw_file_path(record_type: str, date: datetime.date) -> str:
+    """Return the vault path of the raw data file of one type and date."""
+    return f"{RAW_DATA_FOLDER}/{type_name_of(record_type)}/{date.isoformat()}.jsonl"
 
 
 def setup_instructions(token: str) -> str:
@@ -136,6 +149,12 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         await UserInteractionApi.register_command(
             self,
             PluginCommand(
+                text="Export Health Connect raw data", callback=self._export_raw_now
+            ),
+        )
+        await UserInteractionApi.register_command(
+            self,
+            PluginCommand(
                 text="Delete Health Connect data", callback=self._delete_data
             ),
         )
@@ -165,6 +184,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 await self._write_heart_rate(
                     user, sorted(summary.heart_rate_dates), notify=False
                 )
+                await self._write_raw_files(user)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -173,8 +193,13 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 self._logger.exception("Failed to ingest Health Connect payload.")
 
     async def _ingest(self, user: User, raw: str) -> IngestSummary:
-        """Parse one raw payload, store its records and return a summary."""
-        payload: HealthConnectPayload = parse_payload(json.loads(raw))
+        """Store the records of one raw payload and return a summary.
+
+        Store every record, of every type. Mark the raw data files of the
+        changed days as out of date.
+        """
+        data = json.loads(raw)
+        payload: HealthConnectPayload = parse_payload(data)
         store = HealthConnectStore(user)
         summary = IngestSummary(
             heart_rate_samples=len(payload.heart_rate),
@@ -182,16 +207,18 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             steps_records=len(payload.steps),
             skipped_records=payload.skipped_records,
         )
-        if payload.heart_rate:
-            summary.heart_rate_dates |= await store.add_heart_rate(payload.heart_rate)
-        if payload.resting_heart_rate:
-            summary.heart_rate_dates |= await store.add_resting_heart_rate(
-                payload.resting_heart_rate
-            )
-        summary.touched_dates |= summary.heart_rate_dates
-        if payload.steps:
-            summary.steps_dates = await store.add_steps(payload.steps)
-            summary.touched_dates |= summary.steps_dates
+        summary.stored_dates = await store.add_payload(data)
+        await store.mark_export_pending(
+            (record_type, date)
+            for record_type, dates in summary.stored_dates.items()
+            for date in dates
+        )
+        for record_type, dates in summary.stored_dates.items():
+            summary.touched_dates |= dates
+            if record_type == "steps":
+                summary.steps_dates |= dates
+            elif record_type in ("heart-rate", "resting-heart-rate"):
+                summary.heart_rate_dates |= dates
 
         self._logger.info(
             f"Ingested Health Connect payload for user {user.id} "
@@ -204,9 +231,62 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         )
         if payload.unknown_types:
             self._logger.info(
-                f"Payload also carried unparsed types: {payload.unknown_types}"
+                f"Also stored record types with no metrics: {payload.unknown_types}"
             )
         return summary
+
+    async def _write_raw_files(self, user: User) -> int:
+        """Bring the raw data file of every out-of-date day up to date.
+
+        Rewrite each file from the stored records, one JSON record on each
+        line. Keep a day marked as out of date if its file cannot be
+        written, so that the next run writes it. Return the number of files
+        written.
+        """
+        store = HealthConnectStore(user)
+        pending = await store.get_export_pending()
+        if not pending:
+            return 0
+        obsidian = await ObsidianApi.for_user(user)
+
+        written = 0
+        for record_type, date in pending:
+            # Clear the mark before reading, so that records which arrive
+            # during the write mark the day again.
+            await store.clear_export_pending(record_type, date)
+            try:
+                records = await store.get_raw_records(record_type, date)
+                if not records:
+                    continue  # the stored records expired or were deleted
+                content = "".join(f"{dump_record(record)}\n" for record in records)
+                await obsidian.write_binary_file(
+                    raw_file_path(record_type, date),
+                    content.encode("utf-8"),
+                    overwrite=True,
+                )
+            except BaseException:
+                await store.mark_export_pending([(record_type, date)])
+                raise
+            written += 1
+            self._logger.info(
+                f"Wrote {len(records)} {record_type} records for {date.isoformat()}"
+            )
+        return written
+
+    async def _export_raw_now(self, user: User) -> None:
+        """Rewrite the raw data file of every stored day, on request."""
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        store = HealthConnectStore(user)
+        await store.mark_export_pending(await store.get_stored_days())
+        await bot.notify("Exporting raw Health Connect data…")
+        written = await self._write_raw_files(user)
+        if written == 0:
+            await bot.notify("No stored Health Connect data to export.")
+        else:
+            await bot.notify(
+                f"Wrote {written} raw data {'file' if written == 1 else 'files'} "
+                f"to {RAW_DATA_FOLDER}."
+            )
 
     async def _sync_steps_now(self, user: User) -> None:
         """Write step totals for recent days, on request from the user."""
@@ -269,8 +349,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     async def _delete_data(self, user: User) -> None:
         """Delete stored records of recent days, on request from the user.
 
-        Only the server-side store is cleared; daily notes keep their values
-        until new data for that day is synced and written over them.
+        Only the server-side store is cleared. Daily notes keep their values
+        until new data for that day is synced and written over them, and raw
+        data files are left as they are.
         """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         options = [("Today", 1), ("The last 7 days", 7), ("The last 30 days", 30)]
@@ -285,9 +366,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         today = datetime.datetime.now(tz=user.tzinfo).date()
         dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
         confirm = await bot.request_user_choice(
-            f"Delete all stored heart rate and steps records from "
+            f"Delete all stored Health Connect records from "
             f"{dates[0].isoformat()} to {dates[-1].isoformat()}? "
-            "Daily notes are not changed.",
+            "Daily notes and raw data files are not changed.",
             ["Delete", "Cancel"],
         )
         if confirm != 0:

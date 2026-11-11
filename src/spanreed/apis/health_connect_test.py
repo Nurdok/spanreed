@@ -290,6 +290,108 @@ def test_store_steps_roundtrip_bucketed_by_start() -> None:
     assert day10 == []
 
 
+def test_store_keeps_records_as_sent_and_replaces_a_resent_one() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    first = {"bpm": 72, "time": "2026-05-09T08:15:00Z", "source": "watch"}
+    corrected = {"bpm": 70, "time": "2026-05-09T08:15:00Z", "source": "watch"}
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(store.add_records("heart_rate", [first]))
+        asyncio.run(store.add_records("heart_rate", [corrected]))
+        raw = asyncio.run(store.get_raw_records("heart-rate", day))
+        samples = asyncio.run(store.get_heart_rate(day))
+
+    assert raw == [corrected]
+    assert [s.bpm for s in samples] == [70]
+
+
+def test_store_keeps_malformed_records_out_of_the_metrics() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    good = {"bpm": 72, "time": "2026-05-09T08:15:00Z"}
+    no_bpm = {"time": "2026-05-09T09:00:00Z"}
+    received = datetime.datetime(2026, 5, 9, 14, 0, tzinfo=UTC)
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(store.add_records("heart_rate", [good, no_bpm, 5], received))
+        raw = asyncio.run(store.get_raw_records("heart-rate", day))
+        samples = asyncio.run(store.get_heart_rate(day))
+
+    # Timed records first, then the one that has no timestamp.
+    assert raw == [good, no_bpm, 5]
+    assert [s.bpm for s in samples] == [72]
+
+
+def test_store_does_not_duplicate_an_unknown_record_sent_twice() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    record = {"kilograms": 70.5, "time": "2026-05-09T07:00:00Z"}
+    changed = {"kilograms": 70.1, "time": "2026-05-09T07:00:00Z"}
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(store.add_records("weight", [record]))
+        asyncio.run(store.add_records("weight", [dict(reversed(record.items()))]))
+        once = asyncio.run(store.get_raw_records("weight", day))
+        asyncio.run(store.add_records("weight", [changed]))
+        both = asyncio.run(store.get_raw_records("weight", day))
+
+    assert once == [record]
+    assert sorted(r["kilograms"] for r in both) == [70.1, 70.5]
+
+
+def test_store_add_payload_skips_metadata_and_bad_type_names() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        touched = asyncio.run(
+            store.add_payload(
+                {
+                    "timestamp": "2026-05-09T14:00:00Z",
+                    "app_version": "1.2.3",
+                    "bad:name": [{"x": 1}],
+                    # Not a list: kept as one record.
+                    "device": {"model": "Pixel"},
+                    "steps": [],
+                }
+            )
+        )
+        days = asyncio.run(store.get_stored_days())
+        device = asyncio.run(store.get_raw_records("device", day))
+
+    assert touched == {"device": {day}}
+    assert days == [("device", day)]
+    assert device == [{"model": "Pixel"}]
+
+
+def test_store_delete_dates_removes_every_record_type() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    other_day = datetime.date(2026, 5, 10)
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(
+            store.add_payload(
+                {
+                    "heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z"}],
+                    "sleep": [{"session_end_time": "2026-05-09T06:00:00Z"}],
+                    "weight": [{"kilograms": 70.5, "time": "2026-05-10T07:00:00Z"}],
+                }
+            )
+        )
+        deleted = asyncio.run(store.delete_dates([day]))
+        days = asyncio.run(store.get_stored_days())
+
+    assert deleted == 2
+    assert days == [("weight", other_day)]
+
+
 def test_store_decodes_bytes_from_real_redis() -> None:
     """The real client returns bytes for hash fields and values."""
     fake = FakeRedis()
