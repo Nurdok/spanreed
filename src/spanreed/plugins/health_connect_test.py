@@ -612,12 +612,15 @@ def test_write_heart_rate_writes_all_metrics(
 
     assert written == 1
     calls = [c.args for c in mock_obsidian.set_value_of_property.await_args_list]
-    # Resting is the day's last record; 60..160 has p5=65, avg=110, p95=155.
+    # Resting is the day's last record; 60..160 has p5=65, avg=110, p95=155,
+    # p98=158, p99=159.
     assert calls == [
         (NOTE, "resting-heart-rate", 55),
         (NOTE, "heart-rate-p5", 65),
         (NOTE, "heart-rate-avg", 110),
         (NOTE, "heart-rate-p95", 155),
+        (NOTE, "heart-rate-p98", 158),
+        (NOTE, "heart-rate-p99", 159),
     ]
     assert "heart-rate-avg=110" in mock_bot.notify.await_args.args[0]
 
@@ -643,7 +646,12 @@ def test_write_heart_rate_sets_only_changed_and_present_metrics(
 
     assert written == 1
     props = [c.args[1] for c in mock_obsidian.set_value_of_property.await_args_list]
-    assert props == ["heart-rate-avg", "heart-rate-p95"]
+    assert props == [
+        "heart-rate-avg",
+        "heart-rate-p95",
+        "heart-rate-p98",
+        "heart-rate-p99",
+    ]
     mock_bot.notify.assert_not_called()
 
 
