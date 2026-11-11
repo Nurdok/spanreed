@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from spanreed.plugin import Plugin
 from spanreed.plugins.health_connect import (
     HealthConnectPlugin,
     UserConfig,
+    normalize_vault_folder,
     raw_file_path,
     setup_instructions,
 )
@@ -781,10 +783,50 @@ def _written_files(mock_obsidian: AsyncMock) -> dict[str, str]:
     return files
 
 
+def _configure(fake: FakeRedis, user: object, **config: str) -> None:
+    """Save the plugin config of ``user``; call with ``fake`` patched in."""
+    asyncio.run(
+        HealthConnectPlugin.set_config(
+            user, UserConfig(token="abc", **config)  # type: ignore[arg-type]
+        )
+    )
+
+
+def _patch_redis(fake: FakeRedis) -> ExitStack:
+    """Patch the store's Redis and the plugin config's Redis with ``fake``."""
+    stack = ExitStack()
+    stack.enter_context(patch("spanreed.apis.health_connect.redis_api", new=fake))
+    stack.enter_context(patch("spanreed.plugin.redis_api", new=fake))
+    return stack
+
+
 def test_raw_file_path_uses_the_payload_name_of_the_type() -> None:
-    assert raw_file_path("resting-heart-rate", DATE) == (
+    assert raw_file_path("Health/raw", "resting-heart-rate", DATE) == (
         "Health/raw/resting_heart_rate/2026-05-09.jsonl"
     )
+
+
+def test_normalize_vault_folder() -> None:
+    assert normalize_vault_folder(" /Data/ Health Connect //raw/ ") == (
+        "Data/Health Connect/raw"
+    )
+    assert normalize_vault_folder("Data\\raw") == "Data/raw"
+    for bad in ("", " / ", "Data/../Secrets", "./raw"):
+        with pytest.raises(ValueError):
+            normalize_vault_folder(bad)
+
+
+def test_config_saved_before_the_folder_setting_uses_the_default() -> None:
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        key = HealthConnectPlugin._get_config_key(user)
+        fake.strings[key] = json.dumps({"token": "abc"})
+        config = asyncio.run(HealthConnectPlugin.get_config(user))
+
+    assert config == UserConfig(token="abc", raw_data_folder="Health/raw")
 
 
 def test_ingest_stores_unknown_types_and_extra_fields() -> None:
@@ -845,7 +887,8 @@ def test_write_raw_files_writes_each_pending_day_once(
         }
     )
 
-    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+    with _patch_redis(fake):
+        _configure(fake, user)
         asyncio.run(plugin._ingest(user, raw))
         written = asyncio.run(plugin._write_raw_files(user))
         again = asyncio.run(plugin._write_raw_files(user))
@@ -876,7 +919,8 @@ def test_write_raw_files_retries_a_day_that_failed(
     raw = json.dumps({"heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z"}]})
     mock_obsidian.write_binary_file.side_effect = [TimeoutError("offline"), None]
 
-    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+    with _patch_redis(fake):
+        _configure(fake, user)
         asyncio.run(plugin._ingest(user, raw))
         with pytest.raises(TimeoutError):
             asyncio.run(plugin._write_raw_files(user))
@@ -895,7 +939,8 @@ def test_write_raw_files_skips_a_day_with_no_stored_records(
     fake = FakeRedis()
     user = mock_user_find_by_id(4)
 
-    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+    with _patch_redis(fake):
+        _configure(fake, user)
         store = HealthConnectStore(user, tz=UTC)
         asyncio.run(store.mark_export_pending([("heart-rate", DATE)]))
         written = asyncio.run(plugin._write_raw_files(user))
@@ -923,7 +968,8 @@ def test_export_raw_now_writes_every_stored_day(
         str(epoch_ms): f"{epoch_ms + 60_000}:15"
     }
 
-    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+    with _patch_redis(fake):
+        _configure(fake, user)
         asyncio.run(plugin._export_raw_now(user))
 
     assert _written_files(mock_obsidian) == {
@@ -947,8 +993,62 @@ def test_export_raw_now_reports_nothing_stored(
     plugin = HealthConnectPlugin()
     user = mock_user_find_by_id(4)
 
-    with patch("spanreed.apis.health_connect.redis_api", new=FakeRedis()):
+    fake = FakeRedis()
+    with _patch_redis(fake):
+        _configure(fake, user)
         asyncio.run(plugin._export_raw_now(user))
 
     mock_obsidian.write_binary_file.assert_not_called()
     assert "No stored Health Connect data" in mock_bot.notify.await_args.args[0]
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_set_raw_data_folder_changes_where_files_are_written(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    raw = json.dumps({"heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z"}]})
+    mock_bot.request_user_choice.return_value = 0  # Change folder
+    mock_bot.request_user_input.return_value = "/Data/Health Connect/"
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._set_raw_data_folder(user))
+        config = asyncio.run(HealthConnectPlugin.get_config(user))
+        asyncio.run(plugin._ingest(user, raw))
+        asyncio.run(plugin._write_raw_files(user))
+
+    assert "Health/raw" in mock_bot.request_user_choice.await_args.args[0]
+    assert config == UserConfig(token="abc", raw_data_folder="Data/Health Connect")
+    assert list(_written_files(mock_obsidian)) == [
+        "Data/Health Connect/heart_rate/2026-05-09.jsonl"
+    ]
+    assert "were not moved" in mock_bot.send_message.await_args.args[0]
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_set_raw_data_folder_cancel_and_bad_input_keep_the_folder(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+
+    with _patch_redis(fake):
+        _configure(fake, user, raw_data_folder="Data/raw")
+        mock_bot.request_user_choice.return_value = 1  # Cancel
+        asyncio.run(plugin._set_raw_data_folder(user))
+        mock_bot.request_user_input.assert_not_called()
+
+        mock_bot.request_user_choice.return_value = 0  # Change folder
+        mock_bot.request_user_input.return_value = "Data/../Secrets"
+        asyncio.run(plugin._set_raw_data_folder(user))
+        config = asyncio.run(HealthConnectPlugin.get_config(user))
+
+    assert config.raw_data_folder == "Data/raw"
+    assert "Folder not changed" in mock_bot.send_message.await_args.args[0]

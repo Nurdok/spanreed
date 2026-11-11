@@ -44,9 +44,9 @@ HEART_RATE_PROPERTIES = (
 )
 # Folder holding the daily notes (matches the other daily-note plugins).
 DAILY_NOTE_FOLDER = "Daily"
-# Folder holding the raw data files, one JSON Lines file for each record type
-# and local date: ``Health/raw/heart_rate/2026-05-09.jsonl``.
-RAW_DATA_FOLDER = "Health/raw"
+# Default vault folder of the raw data files. It holds one JSON Lines file for
+# each record type and local date: ``Health/raw/heart_rate/2026-05-09.jsonl``.
+DEFAULT_RAW_DATA_FOLDER = "Health/raw"
 
 
 @dataclass
@@ -54,6 +54,8 @@ class UserConfig:
     # Bearer token the bridge app sends; also registered in Redis so the
     # HTTP route can map it back to the user.
     token: str
+    # Vault folder that the raw data files are written under.
+    raw_data_folder: str = DEFAULT_RAW_DATA_FOLDER
 
 
 @dataclass
@@ -74,9 +76,25 @@ class IngestSummary:
     stored_dates: dict[str, set[datetime.date]] = field(default_factory=dict)
 
 
-def raw_file_path(record_type: str, date: datetime.date) -> str:
+def raw_file_path(folder: str, record_type: str, date: datetime.date) -> str:
     """Return the vault path of the raw data file of one type and date."""
-    return f"{RAW_DATA_FOLDER}/{type_name_of(record_type)}/{date.isoformat()}.jsonl"
+    return f"{folder}/{type_name_of(record_type)}/{date.isoformat()}.jsonl"
+
+
+def normalize_vault_folder(text: str) -> str:
+    """Return a vault folder path as typed by the user, in a clean form.
+
+    Accept either kind of slash and drop the slashes and spaces around each
+    part. Raise ``ValueError`` if no folder is left, or if a part is ``.``
+    or ``..``.
+    """
+    parts = [part.strip() for part in text.replace("\\", "/").split("/")]
+    parts = [part for part in parts if part]
+    if not parts:
+        raise ValueError("The folder is empty.")
+    if any(part in (".", "..") for part in parts):
+        raise ValueError("The folder must not contain '.' or '..' parts.")
+    return "/".join(parts)
 
 
 def setup_instructions(token: str) -> str:
@@ -150,6 +168,13 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             self,
             PluginCommand(
                 text="Export Health Connect raw data", callback=self._export_raw_now
+            ),
+        )
+        await UserInteractionApi.register_command(
+            self,
+            PluginCommand(
+                text="Set Health Connect raw data folder",
+                callback=self._set_raw_data_folder,
             ),
         )
         await UserInteractionApi.register_command(
@@ -247,6 +272,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         pending = await store.get_export_pending()
         if not pending:
             return 0
+        config: UserConfig = await self.get_config(user)
         obsidian = await ObsidianApi.for_user(user)
 
         written = 0
@@ -260,7 +286,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                     continue  # the stored records expired or were deleted
                 content = "".join(f"{dump_record(record)}\n" for record in records)
                 await obsidian.write_binary_file(
-                    raw_file_path(record_type, date),
+                    raw_file_path(config.raw_data_folder, record_type, date),
                     content.encode("utf-8"),
                     overwrite=True,
                 )
@@ -276,6 +302,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     async def _export_raw_now(self, user: User) -> None:
         """Rewrite the raw data file of every stored day, on request."""
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
         store = HealthConnectStore(user)
         await store.mark_export_pending(await store.get_stored_days())
         await bot.notify("Exporting raw Health Connect data…")
@@ -285,8 +312,48 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         else:
             await bot.notify(
                 f"Wrote {written} raw data {'file' if written == 1 else 'files'} "
-                f"to {RAW_DATA_FOLDER}."
+                f"to {config.raw_data_folder}."
             )
+
+    async def _set_raw_data_folder(self, user: User) -> None:
+        """Change the vault folder of the raw data files, on request.
+
+        Leave the files of the old folder where they are. New and changed
+        days are written under the new folder from then on.
+        """
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        choice = await bot.request_user_choice(
+            f"Raw Health Connect data is written to {config.raw_data_folder}.",
+            ["Change folder", "Cancel"],
+        )
+        if choice != 0:
+            return
+        answer = await bot.request_user_input(
+            "Send the vault folder for the raw data files, for example "
+            f"{DEFAULT_RAW_DATA_FOLDER}."
+        )
+        try:
+            folder = normalize_vault_folder(answer)
+        except ValueError as e:
+            await bot.send_message(f"Folder not changed. {e}")
+            return
+        if folder == config.raw_data_folder:
+            await bot.send_message(f"The folder is already {folder}.")
+            return
+
+        old_folder = config.raw_data_folder
+        config.raw_data_folder = folder
+        await self.set_config(user, config)
+        self._logger.info(
+            f"Raw data folder of user {user.id} changed from {old_folder!r} "
+            f"to {folder!r}"
+        )
+        await bot.send_message(
+            f"Raw data files are now written to {folder}. Files already in "
+            f"{old_folder} were not moved. Run “Export Health Connect raw "
+            "data” to write every stored day to the new folder."
+        )
 
     async def _sync_steps_now(self, user: User) -> None:
         """Write step totals for recent days, on request from the user."""
