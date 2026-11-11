@@ -14,3 +14,7 @@ Run these before pushing:
 - `poetry run pytest` (tests live next to the code as `*_test.py`)
 - `poetry run black --check src`
 - `poetry run mypy src`
+
+## Code style
+
+Docstrings should adhere to the PEP257 style guide.
