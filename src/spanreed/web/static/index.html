@@ -65,6 +65,36 @@
                         border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
   .primary { padding: 9px 16px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-fg); }
   .conn { color: var(--err); font-size: 13px; }
+  #settings { min-height: 0; }
+  #settings[hidden], .layout[hidden] { display: none; }
+  #settings-main { overflow-y: auto; padding: 16px; }
+  #settings-main form { max-width: 720px; display: flex; flex-direction: column; gap: 14px; }
+  #settings-main h2 { font-size: 17px; margin: 0; }
+  .cmd.current { background: var(--bg); font-weight: 600; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label, .field > .name { font-weight: 600; font-size: 14px; }
+  .field .help { color: var(--muted); font-size: 13px; }
+  .field input[type=text], .field input[type=password], .field input[type=number],
+  .field select, .field textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); color: var(--fg); font: inherit; }
+  .field textarea { resize: vertical; min-height: 40px; }
+  .field textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .field.check { flex-direction: row; align-items: center; gap: 8px; }
+  .field.check > label { font-weight: 600; }
+  .group { border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+           display: flex; flex-direction: column; gap: 12px; }
+  .fields { display: flex; flex-direction: column; gap: 12px; }
+  .item-head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .item-head span { flex: 1; }
+  .small { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--bg); color: var(--fg); font-size: 13px; align-self: flex-start; }
+  .small:hover { border-color: var(--accent); }
+  .small:disabled { opacity: .4; cursor: default; }
+  .save-row { display: flex; align-items: center; gap: 12px; position: sticky; bottom: 0;
+              background: var(--bg); padding: 10px 0; }
+  .save-row .ok { color: var(--muted); }
+  .save-row .err { color: var(--err); }
   #google form { display: inline; }
   @media (max-width: 720px) { #google .email { display: none; } }
   @media (max-width: 720px) {
@@ -80,9 +110,10 @@
     <span id="conn" class="conn" hidden>Reconnecting…</span>
     <span id="who" class="who"></span>
     <span id="google" class="who"></span>
+    <button id="settings-toggle" class="link">Settings</button>
     <button id="logout" class="link">Log out</button>
   </header>
-  <div class="layout">
+  <div class="layout" id="commands-view">
     <aside>
       <h2>Commands</h2>
       <input id="filter" type="search" placeholder="Filter commands" autocomplete="off">
@@ -92,6 +123,13 @@
       <div id="log" aria-live="polite"></div>
       <div id="dock"></div>
     </main>
+  </div>
+  <div class="layout" id="settings" hidden>
+    <aside>
+      <h2>Plugin settings</h2>
+      <nav id="settings-plugins"></nav>
+    </aside>
+    <div id="settings-main"></div>
   </div>
 </div>
 <script>
@@ -284,6 +322,280 @@ async function poll() {
   }
 }
 
+// --- Plugin settings: a form built from the schema the server sends. ---
+
+let fieldCounter = 0;
+
+// Each build* function returns { node, read }. read() returns the value to
+// submit and throws an Error with a message for the user if it can't.
+function buildField(schema, value, label) {
+  switch (schema.kind) {
+    case "object": return buildObject(schema, value, label);
+    case "list": return buildList(schema, value, label);
+    case "boolean": return buildBoolean(schema, value, label);
+    case "choice": return buildChoice(schema, value, label);
+    case "json": return buildJson(schema, value, label);
+    default: return buildScalar(schema, value, label);
+  }
+}
+
+function wrap(schema, label, control, cls) {
+  const box = el("div", "field" + (cls ? " " + cls : ""));
+  if (label) {
+    const l = el("label", "", label);
+    control.id = control.id || "f" + (++fieldCounter);
+    l.htmlFor = control.id;
+    if (cls === "check") box.append(control, l); else box.append(l, control);
+  } else {
+    box.append(control);
+  }
+  if (schema.help) box.append(el("div", "help", schema.help));
+  return box;
+}
+
+function buildScalar(schema, value, label) {
+  const isNumber = schema.kind === "integer" || schema.kind === "number";
+  const text = value === null || value === undefined ? "" : String(value);
+  let input;
+  if (schema.mode === "secret") {
+    input = el("input");
+    input.type = "password"; input.autocomplete = "new-password";
+    input.placeholder = "Leave empty to keep the current value";
+  } else if (isNumber) {
+    input = el("input");
+    input.type = "number"; input.step = schema.kind === "integer" ? "1" : "any";
+    input.value = text;
+  } else if (text.includes("\n") || text.length > 70 || /template|content/.test(schema.name || "")) {
+    input = el("textarea");
+    input.rows = Math.min(12, Math.max(2, text.split("\n").length));
+    input.value = text;
+  } else {
+    input = el("input");
+    input.type = "text"; input.value = text;
+  }
+  if (schema.optional && schema.mode !== "secret") input.placeholder = "Not set";
+  const read = () => {
+    const raw = input.value;
+    if (schema.mode === "secret") return raw;
+    if (isNumber) {
+      if (raw.trim() === "") {
+        if (schema.optional) return null;
+        throw new Error((label || "A number") + ": a value is required.");
+      }
+      const n = Number(raw);
+      if (!Number.isFinite(n)) throw new Error((label || "A number") + ": not a number.");
+      return n;
+    }
+    return raw === "" && schema.optional ? null : raw;
+  };
+  return { node: wrap(schema, label, input), read };
+}
+
+function buildBoolean(schema, value, label) {
+  if (schema.optional) {
+    const select = el("select");
+    for (const [v, text] of [["", "Not set"], ["true", "Yes"], ["false", "No"]]) {
+      const o = el("option", "", text); o.value = v; select.append(o);
+    }
+    select.value = value === null || value === undefined ? "" : String(value);
+    return { node: wrap(schema, label, select),
+             read: () => select.value === "" ? null : select.value === "true" };
+  }
+  const box = el("input");
+  box.type = "checkbox"; box.checked = value === true;
+  return { node: wrap(schema, label, box, "check"), read: () => box.checked };
+}
+
+function buildChoice(schema, value, label) {
+  const select = el("select");
+  if (schema.optional) { const o = el("option", "", "Not set"); o.value = ""; select.append(o); }
+  for (const choice of schema.choices) {
+    const o = el("option", "", choice); o.value = choice; select.append(o);
+  }
+  select.value = value === null || value === undefined ? "" : value;
+  return { node: wrap(schema, label, select),
+           read: () => select.value === "" && schema.optional ? null : select.value };
+}
+
+function buildJson(schema, value, label) {
+  const ta = el("textarea", "code");
+  const text = value === null || value === undefined ? "" : JSON.stringify(value, null, 2);
+  ta.value = text; ta.spellcheck = false;
+  ta.rows = Math.min(14, Math.max(3, text.split("\n").length));
+  ta.placeholder = "JSON";
+  const read = () => {
+    if (ta.value.trim() === "") {
+      if (schema.optional) return null;
+      throw new Error((label || "JSON") + ": a value is required.");
+    }
+    try { return JSON.parse(ta.value); }
+    catch (e) { throw new Error((label || "JSON") + ": not valid JSON."); }
+  };
+  return { node: wrap(schema, label, ta), read };
+}
+
+function buildObject(schema, value, label) {
+  const box = el("div", "field");
+  if (label) box.append(el("div", "name", label));
+  if (schema.help) box.append(el("div", "help", schema.help));
+  const group = el("div", "group");
+  let parts = null;  // null while an optional group is not set
+  const fill = (v) => {
+    group.replaceChildren();
+    parts = schema.fields.map((f) => {
+      const built = buildField(f, v ? v[f.name] : undefined, f.label);
+      group.append(built.node);
+      return [f.name, built];
+    });
+  };
+  if (schema.optional) {
+    const toggle = el("button", "small");
+    toggle.type = "button";
+    const show = (v) => {
+      if (v === null || v === undefined) {
+        parts = null; group.replaceChildren(); group.hidden = true;
+        toggle.textContent = "Add " + (label || "this").toLowerCase();
+      } else {
+        fill(v); group.hidden = false;
+        toggle.textContent = "Remove " + (label || "this").toLowerCase();
+      }
+    };
+    toggle.onclick = () => show(parts === null ? schema.blank : null);
+    box.append(toggle, group);
+    show(value);
+  } else {
+    box.append(group);
+    fill(value || {});
+  }
+  const read = () => {
+    if (parts === null) return null;
+    const out = {};
+    for (const [name, built] of parts) out[name] = built.read();
+    return out;
+  };
+  return { node: box, read };
+}
+
+function buildList(schema, value, label) {
+  const box = el("div", "field");
+  if (label) box.append(el("div", "name", label));
+  if (schema.help) box.append(el("div", "help", schema.help));
+  const list = el("div", "rows");
+  const items = [];
+  const one = (label || "item").toLowerCase().replace(/s$/, "");
+  const renumber = () => items.forEach((item, i) => {
+    item.title.textContent = "#" + (i + 1);
+    item.up.disabled = i === 0; item.down.disabled = i === items.length - 1;
+  });
+  const move = (item, by) => {
+    const i = items.indexOf(item), j = i + by;
+    if (j < 0 || j >= items.length) return;
+    items.splice(i, 1); items.splice(j, 0, item);
+    list.replaceChildren(...items.map((it) => it.node));
+    renumber();
+  };
+  const add = (v) => {
+    const built = buildField(schema.item, v, "");
+    // The item already has a frame, so its own fields need no second one.
+    const inner = built.node.querySelector(":scope > .group");
+    if (inner) inner.className = "fields";
+    const item = { built, node: el("div", "group"), title: el("span"),
+                   up: el("button", "small", "↑"), down: el("button", "small", "↓") };
+    const remove = el("button", "small", "Remove");
+    for (const b of [item.up, item.down, remove]) b.type = "button";
+    item.up.title = "Move up"; item.down.title = "Move down";
+    item.up.onclick = () => move(item, -1);
+    item.down.onclick = () => move(item, 1);
+    remove.onclick = () => { items.splice(items.indexOf(item), 1); item.node.remove(); renumber(); };
+    const head = el("div", "item-head");
+    head.append(item.title, item.up, item.down, remove);
+    item.node.append(head, built.node);
+    items.push(item); list.append(item.node); renumber();
+  };
+  for (const v of value || []) add(v);
+  const more = el("button", "small", "Add " + one);
+  more.type = "button";
+  // A copy, so that two new items never share one object.
+  more.onclick = () => add(JSON.parse(JSON.stringify(schema.blank)));
+  box.append(list, more);
+  return { node: box, read: () => items.map((item) => item.built.read()) };
+}
+
+let settingsPlugins = [], currentSettings = null;
+
+function renderSettingsNav() {
+  const nav = $("settings-plugins");
+  nav.replaceChildren();
+  for (const p of settingsPlugins) {
+    const b = el("button", "cmd" + (p.id === currentSettings ? " current" : ""), p.name);
+    b.onclick = () => openSettings(p.id);
+    nav.append(b);
+  }
+  if (!settingsPlugins.length) nav.append(el("p", "sys", "No plugin has settings."));
+}
+
+function renderSettingsForm(data) {
+  const main = $("settings-main");
+  const form = el("form");
+  form.append(el("h2", "", data.name));
+  const built = buildObject({ ...data.schema, optional: false }, data.value, "");
+  // The top level needs no frame around it.
+  built.node.querySelector(".group").className = "fields";
+  const status = el("span");
+  const save = el("button", "primary", "Save");
+  const row = el("div", "save-row");
+  row.append(save, status);
+  form.append(built.node, row);
+  form.oninput = () => { status.textContent = ""; };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    let value;
+    try { value = built.read(); }
+    catch (err) { status.className = "err"; status.textContent = err.message; return; }
+    save.disabled = true; status.className = "ok"; status.textContent = "Saving…";
+    try {
+      const res = await api("settings/" + encodeURIComponent(data.id),
+        { method: "PUT", headers: HEADERS, body: JSON.stringify({ value }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Could not save the settings.");
+      renderSettingsForm(body);
+      $("settings-main").querySelector(".save-row span").textContent = "Saved.";
+    } catch (err) {
+      status.className = "err"; status.textContent = err.message;
+    } finally {
+      save.disabled = false;
+    }
+  };
+  main.replaceChildren(form);
+  main.querySelector(".save-row span").className = "ok";
+}
+
+async function openSettings(id) {
+  currentSettings = id;
+  renderSettingsNav();
+  const main = $("settings-main");
+  main.replaceChildren(el("p", "sys", "Loading…"));
+  const res = await api("settings/" + encodeURIComponent(id));
+  if (currentSettings !== id) return;
+  if (!res.ok) { main.replaceChildren(el("p", "sys err", "Could not load these settings.")); return; }
+  renderSettingsForm(await res.json());
+}
+
+async function showSettings(show) {
+  $("settings").hidden = !show;
+  $("commands-view").hidden = show;
+  $("settings-toggle").textContent = show ? "Commands" : "Settings";
+  if (!show) { scrollDown(); return; }
+  const res = await api("settings");
+  settingsPlugins = res.ok ? (await res.json()).plugins : [];
+  if (!settingsPlugins.some((p) => p.id === currentSettings)) currentSettings = null;
+  renderSettingsNav();
+  if (currentSettings) return;
+  if (settingsPlugins.length) openSettings(settingsPlugins[0].id);
+  else $("settings-main").replaceChildren(el("p", "empty", "None of your plugins has settings."));
+}
+
+$("settings-toggle").onclick = () => showSettings($("settings").hidden);
 $("filter").oninput = renderCommands;
 $("logout").onclick = async () => { await post("logout"); location.reload(); };
 loadState().then(poll, () => { $("conn").hidden = false; setTimeout(() => location.reload(), 5000); });

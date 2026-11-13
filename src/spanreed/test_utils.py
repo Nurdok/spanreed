@@ -256,6 +256,9 @@ class FakeRedis:
     async def smembers(self, key: str) -> "builtins.set":
         return builtins.set(self.sets.get(key, builtins.set()))
 
+    async def sismember(self, key: str, member: Any) -> bool:
+        return member in self.sets.get(key, set())
+
     async def srem(self, key: str, *members: Any) -> int:
         target = self.sets.setdefault(key, set())
         removed = len(target & {str(m) for m in members})

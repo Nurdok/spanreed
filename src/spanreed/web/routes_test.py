@@ -413,3 +413,143 @@ def test_google_hidden_when_not_configured() -> None:
             assert response.status_code == 503
 
     asyncio.run(run())
+
+
+# --- Plugin settings ----------------------------------------------------------
+
+
+@contextlib.asynccontextmanager
+async def _settings_app() -> AsyncIterator[tuple[Any, FakeRedis]]:
+    """Run the app for a user of the Health Connect and Hevy plugins."""
+    from spanreed.plugin import Plugin
+    from spanreed.plugins.health_connect import HealthConnectPlugin
+    from spanreed.plugins.health_connect import UserConfig as HealthConfig
+    from spanreed.plugins.hevy import HevyPlugin
+    from spanreed.plugins.hevy import UserConfig as HevyConfig
+    from spanreed.plugins.todoist import TodoistPlugin
+
+    Plugin.reset_registry()
+    HealthConnectPlugin()
+    HevyPlugin()
+    TodoistPlugin()  # the user does not use this one
+    try:
+        async with _app() as (client, fake, _):
+            with patch("spanreed.plugin.redis_api", new=fake):
+                user = _user(USER_ID)
+                await fake.sadd(f"user:{USER_ID}:plugins", "health-connect", "hevy")
+                await HealthConnectPlugin.set_config(user, HealthConfig(token="tok"))
+                await HevyPlugin.set_config(
+                    user, HevyConfig(api_key="hevy-secret", vault_dir="Workouts")
+                )
+                await _login(client)
+                yield client, fake
+    finally:
+        Plugin.reset_registry()
+
+
+def test_settings_lists_the_users_plugins_that_have_a_form() -> None:
+    async def run() -> None:
+        async with _settings_app() as (client, _):
+            response = await client.get("/app/api/settings")
+            assert (await response.get_json())["plugins"] == [
+                {"id": "health-connect", "name": "Health Connect"},
+                {"id": "hevy", "name": "Hevy"},
+            ]
+            # A plugin the user does not use has no settings page.
+            assert (await client.get("/app/api/settings/todoist")).status_code == 404
+
+    asyncio.run(run())
+
+
+def test_settings_require_login() -> None:
+    async def run() -> None:
+        async with _app() as (client, _, _):
+            assert (await client.get("/app/api/settings")).status_code == 401
+            response = await client.put(
+                "/app/api/settings/hevy", json={"value": {}}, headers=H
+            )
+            assert response.status_code == 401
+
+    asyncio.run(run())
+
+
+def test_settings_form_never_shows_secrets() -> None:
+    async def run() -> None:
+        async with _settings_app() as (client, _):
+            response = await client.get("/app/api/settings/hevy")
+            text = await response.get_data(as_text=True)
+            form = await response.get_json()
+            assert "hevy-secret" not in text
+            assert form["value"] == {"api_key": "", "vault_dir": "Workouts"}
+
+            response = await client.get("/app/api/settings/health-connect")
+            text = await response.get_data(as_text=True)
+            assert "tok" not in text
+            assert (await response.get_json())["value"] == {
+                "raw_data_folder": "Health/raw"
+            }
+
+    asyncio.run(run())
+
+
+def test_saving_settings_updates_the_config_and_keeps_secrets() -> None:
+    async def run() -> None:
+        from spanreed.plugins.health_connect import HealthConnectPlugin
+        from spanreed.plugins.hevy import HevyPlugin
+
+        async with _settings_app() as (client, _):
+            user = _user(USER_ID)
+            response = await client.put(
+                "/app/api/settings/health-connect",
+                json={"value": {"raw_data_folder": "/Data/Health/"}},
+                headers=H,
+            )
+            assert response.status_code == 200
+            # The response is the form again, with the cleaned-up value.
+            assert (await response.get_json())["value"] == {
+                "raw_data_folder": "Data/Health"
+            }
+            config = await HealthConnectPlugin.get_config(user)
+            assert (config.token, config.raw_data_folder) == ("tok", "Data/Health")
+
+            response = await client.put(
+                "/app/api/settings/hevy",
+                json={"value": {"api_key": "", "vault_dir": "Gym"}},
+                headers=H,
+            )
+            assert response.status_code == 200
+            hevy = await HevyPlugin.get_config(user)
+            assert (hevy.api_key, hevy.vault_dir) == ("hevy-secret", "Gym")
+
+    asyncio.run(run())
+
+
+def test_saving_bad_settings_changes_nothing() -> None:
+    async def run() -> None:
+        from spanreed.plugins.health_connect import HealthConnectPlugin
+
+        async with _settings_app() as (client, _):
+            user = _user(USER_ID)
+            for value in (
+                {"raw_data_folder": 5},  # wrong type
+                {"raw_data_folder": "../outside"},  # the plugin's own check
+                {"raw_data_folder": "x", "token": "stolen"},  # hidden field
+                None,
+            ):
+                response = await client.put(
+                    "/app/api/settings/health-connect",
+                    json={"value": value},
+                    headers=H,
+                )
+                assert response.status_code == 400, value
+                assert (await response.get_json())["error"]
+            # A write without the CSRF header is refused.
+            response = await client.put(
+                "/app/api/settings/health-connect",
+                json={"value": {"raw_data_folder": "Data"}},
+            )
+            assert response.status_code == 403
+            config = await HealthConnectPlugin.get_config(user)
+            assert (config.token, config.raw_data_folder) == ("tok", "Health/raw")
+
+    asyncio.run(run())

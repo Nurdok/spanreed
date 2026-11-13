@@ -31,6 +31,40 @@ The routes are a Quart blueprint (`spanreed.web.routes`) registered on the
 existing Web UI plugin app on `127.0.0.1:5000`, which nginx already proxies
 for the OAuth callbacks.
 
+## Plugin settings
+
+**Settings** in the header switches from the command list to a form for each
+plugin's configuration, so a setting can be changed without going through
+the plugin's chat setup again.
+
+![Plugin settings form](images/web-ui-settings.png)
+
+- **Generated from the config dataclass.** `spanreed.config_form` reads the
+  type hints of the plugin's `UserConfig` and describes it as a form: text,
+  numbers, yes/no, optional values, lists that can be added to and reordered,
+  and nested groups. A field of any other type (a free-form `dict`, for
+  example) is edited as JSON text. A new plugin config gets a form with no
+  extra code.
+- **Which plugins are listed.** The ones the user is registered to that have
+  a user config with at least one field to edit.
+- **Saving.** The form's values are checked against the field types, then
+  the config is built the same way a saved one is loaded, so checks in the
+  dataclass's `__post_init__` run too. Nothing is saved if anything fails.
+  The saved config is what the plugin reads the next time it loads its
+  config; a plugin that loads it only once at startup picks it up after a
+  restart, as with **Reconfigure an existing plugin**.
+- **Secrets.** A text field whose name looks like a secret (`token`,
+  `api_key`, `password`...) is never sent to the browser. It shows an empty
+  password box, and leaving it empty keeps the saved value.
+- **Hidden fields.** A field marked `metadata={"config_form": "hidden"}` is
+  not in the form and cannot be changed through it. Use it for values that
+  only the plugin's own setup may set, like OAuth tokens or the Health
+  Connect token. `"secret"` and `"plain"` override the name check, and
+  `"config_help"` adds a line of help text under the field.
+
+The API is `GET /app/api/settings` (the list), and `GET` and `PUT` on
+`/app/api/settings/<plugin>`.
+
 ## Logging in
 
 1. Run **Web UI login link** (User Profile plugin, so every user has it)
