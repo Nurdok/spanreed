@@ -485,9 +485,9 @@ def test_settings_form_never_shows_secrets() -> None:
             response = await client.get("/app/api/settings/health-connect")
             text = await response.get_data(as_text=True)
             assert "tok" not in text
-            assert (await response.get_json())["value"] == {
-                "raw_data_folder": "Health/raw"
-            }
+            value = (await response.get_json())["value"]
+            assert value["raw_data_folder"] == "Health/raw"
+            assert "token" not in value
 
     asyncio.run(run())
 
@@ -506,9 +506,8 @@ def test_saving_settings_updates_the_config_and_keeps_secrets() -> None:
             )
             assert response.status_code == 200
             # The response is the form again, with the cleaned-up value.
-            assert (await response.get_json())["value"] == {
-                "raw_data_folder": "Data/Health"
-            }
+            value = (await response.get_json())["value"]
+            assert value["raw_data_folder"] == "Data/Health"
             config = await HealthConnectPlugin.get_config(user)
             assert (config.token, config.raw_data_folder) == ("tok", "Data/Health")
 

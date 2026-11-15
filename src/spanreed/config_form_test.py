@@ -250,12 +250,15 @@ def test_health_connect_form_hides_the_token_and_keeps_it() -> None:
     saved = {"token": "abc", "raw_data_folder": "Health/raw"}
     schema = form_schema(health_connect.UserConfig)
 
-    assert [f["name"] for f in schema["fields"]] == ["raw_data_folder"]
+    assert [f["name"] for f in schema["fields"]] == [
+        "raw_data_folder",
+        "daily_note_fields",
+    ]
     assert "help" in schema["fields"][0]
     data = config_data_from_form(
         health_connect.UserConfig, {"raw_data_folder": "/Data/raw/"}, saved
     )
-    assert data == {"token": "abc", "raw_data_folder": "/Data/raw/"}
+    assert (data["token"], data["raw_data_folder"]) == ("abc", "/Data/raw/")
     # Building the config cleans the folder, and rejects a bad one.
     assert health_connect.UserConfig(**data).raw_data_folder == "Data/raw"
     with pytest.raises(ValueError):

@@ -7,6 +7,7 @@ note, and it rewrites the raw data files, which hold every stored record.
 """
 
 import asyncio
+import dataclasses
 import datetime
 import html
 import json
@@ -55,6 +56,42 @@ DEFAULT_RAW_DATA_FOLDER = "Health/raw"
 
 
 @dataclass
+class DailyNoteFields:
+    """Which properties are written into the daily note.
+
+    Each field is one property; its name is the property name with ``_``
+    for ``-``.
+    """
+
+    steps: bool = True
+    resting_heart_rate: bool = True
+    heart_rate_p5: bool = True
+    heart_rate_avg: bool = True
+    heart_rate_p95: bool = True
+    heart_rate_p98: bool = True
+    heart_rate_p99: bool = True
+    hr_moderate_minutes: bool = True
+    hr_vigorous_minutes: bool = True
+
+    @staticmethod
+    def properties() -> list[str]:
+        """Return every property name, in the order it is written."""
+        return [STEPS_PROPERTY, *HEART_RATE_PROPERTIES]
+
+    def writes(self, prop: str) -> bool:
+        """Return whether the daily note property ``prop`` is written."""
+        return bool(getattr(self, prop.replace("-", "_")))
+
+    def set(self, prop: str, write: bool) -> None:
+        """Turn the daily note property ``prop`` on or off."""
+        setattr(self, prop.replace("-", "_"), write)
+
+    def written(self) -> list[str]:
+        """Return the names of the properties that are written."""
+        return [prop for prop in self.properties() if self.writes(prop)]
+
+
+@dataclass
 class UserConfig:
     # Bearer token the bridge app sends; also registered in Redis so the
     # HTTP route can map it back to the user.
@@ -71,9 +108,31 @@ class UserConfig:
         },
     )
 
+    # The daily note properties to write. All of them by default.
+    daily_note_fields: DailyNoteFields = field(
+        default_factory=DailyNoteFields,
+        metadata={
+            "config_help": "The checked properties are written to the daily "
+            "note. Unchecking one does not remove values already written."
+        },
+    )
+
     def __post_init__(self) -> None:
-        """Clean up the folder, and raise ``ValueError`` if it is not valid."""
+        """Clean up the folder, and raise ``ValueError`` if it is not valid.
+
+        Build ``daily_note_fields`` from the saved JSON data, ignoring a
+        property that no longer exists.
+        """
         self.raw_data_folder = normalize_vault_folder(self.raw_data_folder)
+        if isinstance(self.daily_note_fields, dict):
+            known = {f.name for f in dataclasses.fields(DailyNoteFields)}
+            self.daily_note_fields = DailyNoteFields(
+                **{
+                    name: bool(value)
+                    for name, value in self.daily_note_fields.items()
+                    if name in known
+                }
+            )
 
 
 @dataclass
@@ -190,6 +249,8 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             bot, config.raw_data_folder
         )
 
+        await cls._ask_for_daily_note_fields(bot, config.daily_note_fields)
+
         await HealthConnectApi.register_token(user, config.token)
         await cls.set_config(user, config)
         if config.token != old_token:
@@ -220,6 +281,37 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         except ValueError as e:
             await bot.send_message(f"Folder not changed. {e}")
             return current
+
+    @staticmethod
+    async def _ask_for_daily_note_fields(
+        bot: UserInteractionApi, fields: DailyNoteFields
+    ) -> None:
+        """Ask which properties to write into the daily note.
+
+        Change ``fields`` in place. Let the user turn properties on and off
+        one at a time until they are done.
+        """
+        properties = fields.properties()
+        choice = await bot.request_user_choice(
+            f"{len(fields.written())} of {len(properties)} daily note "
+            "properties are written.",
+            ["Keep these", "Choose properties"],
+        )
+        if choice != 1:  # Keep these
+            return
+        while True:
+            choice = await bot.request_user_choice(
+                "Choose a property to turn it on or off. Turning one off "
+                "does not remove values already in your notes.",
+                [
+                    f"{'✅' if fields.writes(prop) else '⬜'} {prop}"
+                    for prop in properties
+                ]
+                + ["Done"],
+            )
+            if not 0 <= choice < len(properties):  # Done
+                return
+            fields.set(properties[choice], not fields.writes(properties[choice]))
 
     async def run(self) -> None:
         await UserInteractionApi.register_command(
@@ -381,6 +473,12 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     async def _sync_steps_now(self, user: User) -> None:
         """Write step totals for recent days, on request from the user."""
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        if not config.daily_note_fields.writes(STEPS_PROPERTY):
+            await bot.send_message(
+                "The steps property is turned off in the Health Connect settings."
+            )
+            return
         choice = await bot.request_user_choice(
             "Sync steps for…",
             ["Today", "The last week", "Cancel"],
@@ -406,11 +504,25 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         message for each day.
         """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        fields = (await self.get_config(user)).daily_note_fields
+        if not any(fields.writes(prop) for prop in HEART_RATE_PROPERTIES):
+            await bot.send_message(
+                "Every heart rate property is turned off in the Health "
+                "Connect settings."
+            )
+            return
         choice = await bot.request_user_choice(
             "Sync heart rate for…",
             ["Today", "The last week", "All time", "Cancel"],
         )
-        if choice in (0, 1, 2) and await User.get_user_birthday(user.id) is None:
+        zone_minutes = fields.writes(HR_MODERATE_MINUTES) or fields.writes(
+            HR_VIGOROUS_MINUTES
+        )
+        if (
+            choice in (0, 1, 2)
+            and zone_minutes
+            and await User.get_user_birthday(user.id) is None
+        ):
             await bot.notify(
                 "Heart rate zone minutes are skipped until you set your "
                 "birthday with “Set birthday”."
@@ -485,13 +597,16 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     ) -> int:
         """Write the step total of each date into its daily note.
 
-        Compute each total from the stored records. Skip a date that has no
-        records. Overwrite the property when the total changed, because
+        Do nothing if the user turned the steps property off. Compute each
+        total from the stored records. Skip a date that has no records. Overwrite the property when the total changed, because
         today's total grows through the day. Leave it alone when it is the
         same. Send Telegram messages only when ``notify`` is true. Return
         the number of notes written.
         """
         if not dates:
+            return 0
+        config: UserConfig = await self.get_config(user)
+        if not config.daily_note_fields.writes(STEPS_PROPERTY):
             return 0
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         store = HealthConnectStore(user)
@@ -533,11 +648,20 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         ``heart-rate-p95``, ``heart-rate-p98`` and ``heart-rate-p99`` from the
         stored records. If the user's birthday is set, also compute
         ``hr-moderate-minutes`` and ``hr-vigorous-minutes`` from the maximum
-        heart rate at the user's age on that date. Skip a date with no
-        records and leave out a metric the day has no data for. Set only the properties whose value changed. Send Telegram messages only when ``notify`` is true. Return
+        heart rate at the user's age on that date. Write only the properties
+        that the user has turned on. Skip a date with no records and leave
+        out a metric the day has no data for. Set only the properties whose value changed. Send Telegram messages only when ``notify`` is true. Return
         the number of notes written.
         """
         if not dates:
+            return 0
+        config: UserConfig = await self.get_config(user)
+        properties = [
+            prop
+            for prop in HEART_RATE_PROPERTIES
+            if config.daily_note_fields.writes(prop)
+        ]
+        if not properties:
             return 0
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         store = HealthConnectStore(user)
@@ -555,12 +679,12 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 await store.get_resting_heart_rate(date),
                 max_hr=max_heart_rate(age) if age is not None else None,
             )
-            if not metrics:
+            if not any(prop in metrics for prop in properties):
                 continue
             daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
             changed: dict[str, int] = {}
             try:
-                for prop in HEART_RATE_PROPERTIES:
+                for prop in properties:
                     if prop not in metrics:
                         continue
                     if await obsidian.get_property(daily_note, prop) == metrics[prop]:
