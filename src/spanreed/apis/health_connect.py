@@ -62,6 +62,13 @@ _TYPE_NAME_RE = re.compile(r"[A-Za-z0-9_]+")
 # name; the rest is a digest of the record.
 _DIGEST_FIELD_PREFIX = "h:"
 
+# Daily note properties for the minutes in each heart rate zone, and the
+# share of the maximum heart rate at which each zone starts.
+HR_MODERATE_MINUTES = "hr-moderate-minutes"
+HR_VIGOROUS_MINUTES = "hr-vigorous-minutes"
+HR_MODERATE_FROM = 0.64
+HR_VIGOROUS_FROM = 0.77
+
 # Inbox poll timeout; the drain loop wakes up this often even when idle so a
 # cancellation is noticed promptly.
 INBOX_POLL_TIMEOUT_S = 60
@@ -230,26 +237,65 @@ def percentile(values: list[int], pct: float) -> float:
     return ordered[low] + (ordered[high] - ordered[low]) * (rank - low)
 
 
+def max_heart_rate(age: float) -> float:
+    """Estimate the maximum heart rate at an age in years, in bpm.
+
+    Use the formula of Tanaka et al.: 208 − 0.7 × age.
+    """
+    return 208 - 0.7 * age
+
+
+def heart_rate_zone_minutes(
+    heart_rate: Iterable[HeartRateSample], max_hr: float
+) -> dict[str, int]:
+    """Count the minutes of moderate and of vigorous heart rate.
+
+    Return ``hr-moderate-minutes`` and ``hr-vigorous-minutes``. A clock
+    minute counts once, by the average of its samples, so a minute with many
+    samples weighs the same as a minute with one. A minute with no samples
+    is not counted. Moderate is from 64% of ``max_hr`` up to, but not
+    including, 77%. Vigorous is 77% and above.
+    """
+    by_minute: dict[int, list[int]] = {}
+    for sample in heart_rate:
+        by_minute.setdefault(int(sample.time.timestamp() // 60), []).append(sample.bpm)
+    minutes = {HR_MODERATE_MINUTES: 0, HR_VIGOROUS_MINUTES: 0}
+    for bpm in by_minute.values():
+        average = sum(bpm) / len(bpm)
+        if average >= HR_VIGOROUS_FROM * max_hr:
+            minutes[HR_VIGOROUS_MINUTES] += 1
+        elif average >= HR_MODERATE_FROM * max_hr:
+            minutes[HR_MODERATE_MINUTES] += 1
+    return minutes
+
+
 def daily_heart_rate_metrics(
     heart_rate: Iterable[HeartRateSample],
     resting_heart_rate: Iterable[HeartRateSample],
+    max_hr: float | None = None,
 ) -> dict[str, int]:
-    """Summarize one local date of heart rate as whole bpm values.
+    """Summarize one local date of heart rate as whole numbers.
 
     Return ``heart-rate-p5``, ``heart-rate-avg``, ``heart-rate-p95``,
-    ``heart-rate-p98`` and ``heart-rate-p99`` from the heart rate samples, and ``resting-heart-rate`` from the last resting
-    heart rate record of the day. The keys are the daily note property names.
-    Leave out a key when the day has no data for it. Every sample counts
-    once, so periods with denser samples (such as a workout) weigh more.
+    ``heart-rate-p98`` and ``heart-rate-p99`` from the heart rate samples,
+    and ``resting-heart-rate`` from the last resting heart rate record of
+    the day. If ``max_hr`` is given, also return the keys of
+    ``heart_rate_zone_minutes``. The keys are the daily note property names.
+    Leave out a key when the day has no data for it. For the bpm values,
+    every sample counts once, so periods with denser samples (such as a
+    workout) weigh more.
     """
+    samples = list(heart_rate)
     metrics: dict[str, int] = {}
-    bpm = [sample.bpm for sample in heart_rate]
+    bpm = [sample.bpm for sample in samples]
     if bpm:
         metrics["heart-rate-p5"] = round(percentile(bpm, 5))
         metrics["heart-rate-avg"] = round(sum(bpm) / len(bpm))
         metrics["heart-rate-p95"] = round(percentile(bpm, 95))
         metrics["heart-rate-p98"] = round(percentile(bpm, 98))
         metrics["heart-rate-p99"] = round(percentile(bpm, 99))
+        if max_hr is not None:
+            metrics.update(heart_rate_zone_minutes(samples, max_hr))
     resting = sorted(resting_heart_rate, key=lambda sample: sample.time)
     if resting:
         metrics["resting-heart-rate"] = resting[-1].bpm

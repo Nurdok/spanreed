@@ -36,6 +36,8 @@ def mock_user_find_by_id(user_id: int) -> MagicMock:
     # machine that runs them.
     mock_user.timezone = "UTC"
     mock_user.tzinfo = datetime.timezone.utc
+    mock_user.birth_date = None
+    mock_user.age_on = lambda date: User.age_on(mock_user, date)
     return mock_user
 
 

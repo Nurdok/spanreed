@@ -12,6 +12,8 @@ from spanreed.apis.health_connect import (
     HeartRateSample,
     StepsRecord,
     daily_heart_rate_metrics,
+    heart_rate_zone_minutes,
+    max_heart_rate,
     daily_step_total,
     local_date,
     parse_instant,
@@ -553,6 +555,57 @@ def test_daily_heart_rate_metrics() -> None:
         "heart-rate-p98": 158,
         "heart-rate-p99": 159,
         "resting-heart-rate": 54,
+    }
+
+
+def test_max_heart_rate_uses_the_tanaka_formula() -> None:
+    assert max_heart_rate(40) == pytest.approx(180)
+    assert max_heart_rate(0) == pytest.approx(208)
+
+
+def test_heart_rate_zone_minutes_counts_each_clock_minute_once() -> None:
+    start = datetime.datetime(2026, 5, 9, 8, 0, tzinfo=UTC)
+
+    def at(minute: int, second: int, bpm: int) -> HeartRateSample:
+        return HeartRateSample(
+            start + datetime.timedelta(minutes=minute, seconds=second), bpm
+        )
+
+    samples = [
+        at(0, 0, 100),  # below 64% of 180 (115.2)
+        at(1, 0, 115),  # just below moderate
+        at(2, 0, 116),  # moderate
+        at(3, 0, 138),  # moderate: just below 77% (138.6)
+        at(4, 0, 139),  # vigorous
+        # Sixty samples in one minute are one vigorous minute, not sixty.
+        *[at(5, second, 160) for second in range(60)],
+        # The average of a minute decides: (100 + 150) / 2 = 125 is moderate.
+        at(6, 0, 100),
+        at(6, 30, 150),
+    ]
+
+    assert heart_rate_zone_minutes(samples, max_hr=180) == {
+        "hr-moderate-minutes": 3,
+        "hr-vigorous-minutes": 2,
+    }
+    assert heart_rate_zone_minutes([], max_hr=180) == {
+        "hr-moderate-minutes": 0,
+        "hr-vigorous-minutes": 0,
+    }
+
+
+def test_daily_heart_rate_metrics_adds_zone_minutes_for_a_max_hr() -> None:
+    t = datetime.datetime(2026, 5, 9, 8, 0, tzinfo=UTC)
+    hr = [HeartRateSample(t + datetime.timedelta(minutes=i), 150) for i in range(4)]
+
+    metrics = daily_heart_rate_metrics(hr, [], max_hr=180)
+
+    assert metrics["hr-moderate-minutes"] == 0
+    assert metrics["hr-vigorous-minutes"] == 4
+    assert "hr-vigorous-minutes" not in daily_heart_rate_metrics(hr, [])
+    # No heart rate samples: no zone minutes, even with a resting record.
+    assert daily_heart_rate_metrics([], [HeartRateSample(t, 50)], max_hr=180) == {
+        "resting-heart-rate": 50
     }
 
 

@@ -14,6 +14,8 @@ class User:
         # IANA timezone name, for example "Asia/Jerusalem". None until the
         # user sets it.
         self.timezone: str | None = None
+        # Date of birth. None until the user sets it.
+        self.birth_date: datetime.date | None = None
 
     def __str__(self) -> str:
         return f"{self.name} (id {self.id})"
@@ -61,6 +63,52 @@ class User:
             return None
         return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
 
+    @staticmethod
+    def parse_birth_date(text: str) -> datetime.date:
+        """Return the date for a date of birth written as ``YYYY-MM-DD``.
+
+        Raise ``ValueError`` if the text is not such a date, or if the date
+        is in the future or more than 130 years ago.
+        """
+        try:
+            birth_date = datetime.date.fromisoformat(text.strip())
+        except ValueError as e:
+            raise ValueError(f"Not a date in the form YYYY-MM-DD: {text!r}") from e
+        today = datetime.date.today()
+        if birth_date > today or today.year - birth_date.year > 130:
+            raise ValueError(f"Not a plausible date of birth: {text!r}")
+        return birth_date
+
+    def age_on(self, date: datetime.date) -> int | None:
+        """Return the user's age in whole years on ``date``.
+
+        Return ``None`` if the date of birth is not set, or is after ``date``.
+        """
+        if self.birth_date is None or date < self.birth_date:
+            return None
+        had_birthday = (date.month, date.day) >= (
+            self.birth_date.month,
+            self.birth_date.day,
+        )
+        return date.year - self.birth_date.year - (0 if had_birthday else 1)
+
+    async def set_birth_date(self, text: str) -> None:
+        """Validate and store the user's date of birth, written as ``YYYY-MM-DD``."""
+        self.birth_date = self.parse_birth_date(text)
+        await redis_api.set(f"user:{self.id}:birth_date", self.birth_date.isoformat())
+
+    @classmethod
+    async def get_user_birth_date(cls, user_id: int) -> datetime.date | None:
+        """Return the stored date of birth of a user, or ``None`` if not set."""
+        raw = await redis_api.get(f"user:{user_id}:birth_date")
+        if raw is None:
+            return None
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        try:
+            return datetime.date.fromisoformat(text)
+        except ValueError:
+            return None
+
     async def set_plugins(self, plugins: list[str]) -> None:
         self.plugins = plugins
         for plugin in plugins:
@@ -89,6 +137,7 @@ class User:
         self.id = user_id
         self.name = await cls.get_user_name(user_id)
         self.timezone = await cls.get_user_timezone(user_id)
+        self.birth_date = await cls.get_user_birth_date(user_id)
         self.plugins = [
             name.decode("utf-8")
             for name in await redis_api.smembers(f"user:{self.id}:plugins")

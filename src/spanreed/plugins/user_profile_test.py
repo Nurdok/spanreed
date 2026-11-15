@@ -97,3 +97,41 @@ def test_existing_users_are_registered_at_startup() -> None:
 
     get_plugin.assert_awaited_once_with(TelegramBotPlugin)
     register.assert_awaited_once_with(old_user)
+
+
+@patch_user_interaction("spanreed.plugins.user_profile")
+def test_set_birth_date_stores_a_valid_date(mock_bot: AsyncMock) -> None:
+    Plugin.reset_registry()
+    plugin = UserProfilePlugin()
+    fake = FakeRedis()
+    user = _user()
+    mock_bot.request_user_input.return_value = "1990-04-23"
+
+    with patch("spanreed.user.redis_api", new=fake):
+        asyncio.run(plugin._set_birth_date(user))
+
+    assert fake.strings["user:4:birth_date"] == "1990-04-23"
+    assert "not set" in mock_bot.request_user_input.await_args.args[0]
+    confirmation = mock_bot.send_message.await_args.args[0]
+    assert "1990-04-23" in confirmation
+    assert "years old" in confirmation
+
+
+@patch_user_interaction("spanreed.plugins.user_profile")
+def test_set_birth_date_rejects_other_text_and_keeps_the_old_date(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = UserProfilePlugin()
+    fake = FakeRedis()
+    user = _user()
+    mock_bot.request_user_input.return_value = "23 April"
+
+    with patch("spanreed.user.redis_api", new=fake):
+        asyncio.run(user.set_birth_date("1990-04-23"))
+        asyncio.run(plugin._set_birth_date(user))
+
+    assert fake.strings["user:4:birth_date"] == "1990-04-23"
+    # The prompt shows the current value.
+    assert "1990-04-23" in mock_bot.request_user_input.await_args.args[0]
+    assert "YYYY-MM-DD" in mock_bot.send_message.await_args.args[0]
