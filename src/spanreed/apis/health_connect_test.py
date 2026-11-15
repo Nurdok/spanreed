@@ -12,6 +12,7 @@ from spanreed.apis.health_connect import (
     HeartRateSample,
     StepsRecord,
     daily_heart_rate_metrics,
+    daily_vo2_max,
     heart_rate_zone_minutes,
     max_heart_rate,
     daily_step_total,
@@ -556,6 +557,38 @@ def test_daily_heart_rate_metrics() -> None:
         "heart-rate-p99": 159,
         "resting-heart-rate": 54,
     }
+
+
+def test_daily_vo2_max_takes_the_last_well_formed_measurement() -> None:
+    records = [
+        {"ml_per_kg_per_min": 45.26, "time": "2026-05-09T18:00:00Z"},
+        {"ml_per_kg_per_min": 44.8, "time": "2026-05-09T07:00:00Z"},
+        # Skipped: no value, a value that is not a number, no time, not a dict.
+        {"time": "2026-05-09T20:00:00Z"},
+        {"ml_per_kg_per_min": "high", "time": "2026-05-09T21:00:00Z"},
+        {"ml_per_kg_per_min": True, "time": "2026-05-09T22:00:00Z"},
+        {"ml_per_kg_per_min": 99},
+        7,
+    ]
+
+    assert daily_vo2_max(records) == 45.3
+    assert (
+        daily_vo2_max([{"ml_per_kg_per_min": 45, "time": "2026-05-09T07:00:00Z"}])
+        == 45.0
+    )
+    assert daily_vo2_max([]) is None
+    assert daily_vo2_max([{"bpm": 60, "time": "2026-05-09T07:00:00Z"}]) is None
+
+
+def test_parse_payload_does_not_list_vo2_max_as_unknown() -> None:
+    payload = parse_payload(
+        {
+            "vo2_max": [{"ml_per_kg_per_min": 45.3, "time": "2026-05-09T07:00:00Z"}],
+            "sleep": [],
+        }
+    )
+
+    assert payload.unknown_types == ["sleep"]
 
 
 def test_max_heart_rate_uses_the_tanaka_formula() -> None:

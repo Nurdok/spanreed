@@ -19,12 +19,13 @@ The bridge app sends this payload shape (see its ``docs/webhook.md``)::
       "app_version": "1.2.3",
       "steps": [{"count": 8421, "start_time": "...", "end_time": "..."}],
       "heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z"}],
-      "resting_heart_rate": [{"bpm": 58, "time": "..."}]
+      "resting_heart_rate": [{"bpm": 58, "time": "..."}],
+      "vo2_max": [{"ml_per_kg_per_min": 45.3, "time": "..."}]
     }
 
 Each record-type key is optional. It is present only when the batch has at
 least one record of that type. Timestamps are ISO-8601 UTC instants. The app
-can send more record types than the three shown. Those are stored too, but
+can send more record types than the ones shown. Those are stored too, but
 no metric is computed from them.
 """
 
@@ -111,6 +112,11 @@ class HealthConnectPayload:
 # Top-level keys that are metadata rather than record arrays.
 _METADATA_KEYS = {"timestamp", "app_version"}
 _PARSED_TYPES = {"heart_rate", "resting_heart_rate", "steps"}
+# Record types that a daily metric is computed from. The first three are
+# parsed into typed records; ``vo2_max`` is read back from the stored records.
+_METRIC_TYPES = _PARSED_TYPES | {"vo2_max"}
+# Record type of the store that holds the VO2 max measurements.
+VO2_MAX_RECORD_TYPE = "vo2-max"
 
 
 def parse_instant(value: Any) -> datetime.datetime:
@@ -194,7 +200,7 @@ def parse_payload(data: Any) -> HealthConnectPayload:
                     payload.skipped_records += 1
 
     payload.unknown_types = sorted(
-        key for key in data if key not in _METADATA_KEYS and key not in _PARSED_TYPES
+        key for key in data if key not in _METADATA_KEYS and key not in _METRIC_TYPES
     )
     return payload
 
@@ -211,6 +217,29 @@ def local_date(
 
 
 # --- Daily metrics -----------------------------------------------------------
+
+
+def daily_vo2_max(records: Iterable[Any]) -> float | None:
+    """Return the last VO2 max measurement among ``records``.
+
+    The caller passes the stored ``vo2_max`` records of one local date, as
+    the JSON the phone sent: ``{"ml_per_kg_per_min": 45.3, "time": "..."}``.
+    Return the value in mL/(kg·min), rounded to one decimal place. Skip a
+    record that does not have this shape. Return ``None`` if no record is
+    left.
+    """
+    latest: tuple[datetime.datetime, float] | None = None
+    for record in records:
+        try:
+            time = parse_instant(record["time"])
+            value = record["ml_per_kg_per_min"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if latest is None or time >= latest[0]:
+            latest = (time, float(value))
+    return None if latest is None else round(latest[1], 1)
 
 
 def daily_step_total(records: Iterable[StepsRecord]) -> int:

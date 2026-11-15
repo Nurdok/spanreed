@@ -1304,6 +1304,7 @@ def test_daily_note_fields_cover_every_property_and_default_to_on() -> None:
         "heart-rate-p99",
         "hr-moderate-minutes",
         "hr-vigorous-minutes",
+        "vo2-max",
     ]
     fields.set("heart-rate-p5", False)
     assert not fields.writes("heart-rate-p5")
@@ -1329,7 +1330,7 @@ def test_settings_form_has_a_checkbox_for_each_daily_note_property() -> None:
     saved = {"token": "abc", "raw_data_folder": "Health/raw"}
 
     assert fields["kind"] == "object"
-    assert [f["kind"] for f in fields["fields"]] == ["boolean"] * 9
+    assert [f["kind"] for f in fields["fields"]] == ["boolean"] * 10
     assert fields["fields"][1]["label"] == "Resting heart rate"
     value = config_form.form_value(UserConfig, saved)
     assert value["daily_note_fields"]["steps"] is True
@@ -1348,7 +1349,7 @@ def test_setup_lets_the_user_turn_properties_off_and_on(
     user = mock_user_find_by_id(4)
     # Keep the folder; choose properties; turn steps off, p5 off, p5 on
     # again, p99 off; Done.
-    mock_bot.request_user_choice.side_effect = [0, 1, 0, 2, 2, 6, 9]
+    mock_bot.request_user_choice.side_effect = [0, 1, 0, 2, 2, 6, 10]
 
     with _patch_redis(fake):
         asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
@@ -1450,3 +1451,150 @@ def test_sync_commands_say_when_their_properties_are_turned_off(
     assert "heart rate property is turned off" in heart_rate_message
     mock_bot.request_user_choice.assert_not_called()
     mock_obsidian.set_value_of_property.assert_not_called()
+
+
+# --- VO2 max in the daily note ------------------------------------------------
+
+
+def _vo2_payload(*records: dict) -> str:
+    return json.dumps({"vo2_max": list(records)})
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_vo2_max_from_a_payload_is_written_to_the_daily_note(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    mock_obsidian.get_daily_note.return_value = NOTE
+    mock_obsidian.get_property.return_value = None
+    raw = _vo2_payload(
+        {"ml_per_kg_per_min": 44.84, "time": "2026-05-09T07:00:00Z"},
+        # The last measurement of the day is the one written.
+        {"ml_per_kg_per_min": 45.26, "time": "2026-05-09T18:00:00Z"},
+    )
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        summary = asyncio.run(plugin._ingest(user, raw))
+        written = asyncio.run(
+            plugin._write_vo2_max(user, sorted(summary.vo2_max_dates), notify=True)
+        )
+        again = asyncio.run(plugin._write_vo2_max(user, [DATE], notify=False))
+
+    assert summary.vo2_max_dates == {DATE}
+    assert summary.heart_rate_dates == set()
+    assert written == 1
+    mock_obsidian.set_value_of_property.assert_any_await(NOTE, "vo2-max", 45.3)
+    assert "45.3" in mock_bot.notify.await_args.args[0]
+    # The mock note still reads as empty, so a second write happens; with
+    # the value in the note it does not.
+    assert again == 1
+    mock_obsidian.get_property.return_value = 45.3
+    with _patch_redis(fake):
+        assert asyncio.run(plugin._write_vo2_max(user, [DATE], notify=False)) == 0
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_write_vo2_max_skips_days_without_measurements_and_when_turned_off(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    mock_obsidian.get_daily_note.return_value = NOTE
+    mock_obsidian.get_property.return_value = None
+    raw = _vo2_payload({"ml_per_kg_per_min": 45, "time": "2026-05-09T07:00:00Z"})
+    other_day = datetime.date(2026, 5, 10)
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._ingest(user, raw))
+        assert asyncio.run(plugin._write_vo2_max(user, [other_day], notify=True)) == 0
+        asyncio.run(
+            HealthConnectPlugin.set_config(
+                user,
+                UserConfig(
+                    token="abc", daily_note_fields=DailyNoteFields(vo2_max=False)
+                ),
+            )
+        )
+        assert asyncio.run(plugin._write_vo2_max(user, [DATE], notify=True)) == 0
+
+    mock_obsidian.set_value_of_property.assert_not_called()
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_sync_vo2_max_now_writes_every_stored_day(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    mock_obsidian.get_daily_note.side_effect = lambda _folder, date: (
+        f"Daily/{date.isoformat()}.md"
+    )
+    mock_obsidian.get_property.return_value = None
+    raw = _vo2_payload(
+        {"ml_per_kg_per_min": 44.8, "time": "2026-05-02T07:00:00Z"},
+        {"ml_per_kg_per_min": 45.1, "time": "2026-05-09T07:00:00Z"},
+    )
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._sync_vo2_max_now(user))
+        assert "No VO2 max measurements" in mock_bot.send_message.await_args.args[0]
+        asyncio.run(plugin._ingest(user, raw))
+        asyncio.run(plugin._sync_vo2_max_now(user))
+
+    calls = [c.args for c in mock_obsidian.set_value_of_property.await_args_list]
+    assert calls == [
+        ("Daily/2026-05-02.md", "vo2-max", 44.8),
+        ("Daily/2026-05-09.md", "vo2-max", 45.1),
+    ]
+    assert "2 daily notes, out of 2 stored days" in mock_bot.notify.await_args.args[0]
+
+
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_run_for_user_writes_vo2_max_for_the_days_of_a_payload(
+    mock_bot: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    raw = _vo2_payload({"ml_per_kg_per_min": 45.1, "time": "2026-05-09T07:00:00Z"})
+
+    class StopLoop(Exception):
+        pass
+
+    deliveries: list[str | Exception] = [raw, StopLoop()]
+
+    async def fake_dequeue(_user: object) -> str:
+        item = deliveries.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    with (
+        _patch_redis(fake),
+        patch.object(HealthConnectApi, "dequeue_payload", side_effect=fake_dequeue),
+        patch.object(plugin, "_write_steps", new=AsyncMock(return_value=0)),
+        patch.object(plugin, "_write_heart_rate", new=AsyncMock(return_value=0)),
+        patch.object(plugin, "_write_raw_files", new=AsyncMock(return_value=1)),
+        patch.object(plugin, "_write_vo2_max", new=AsyncMock(return_value=1)) as write,
+    ):
+        _configure(fake, user)
+        try:
+            asyncio.run(plugin.run_for_user(user))
+        except StopLoop:
+            pass
+
+    write.assert_awaited_once_with(user, [DATE], notify=False)

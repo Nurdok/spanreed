@@ -27,7 +27,9 @@ from spanreed.apis.health_connect import (
     HR_MODERATE_MINUTES,
     HR_VIGOROUS_MINUTES,
     daily_heart_rate_metrics,
+    VO2_MAX_RECORD_TYPE,
     daily_step_total,
+    daily_vo2_max,
     dump_record,
     max_heart_rate,
     parse_payload,
@@ -48,6 +50,7 @@ HEART_RATE_PROPERTIES = (
     HR_MODERATE_MINUTES,
     HR_VIGOROUS_MINUTES,
 )
+VO2_MAX_PROPERTY = "vo2-max"
 # Folder holding the daily notes (matches the other daily-note plugins).
 DAILY_NOTE_FOLDER = "Daily"
 # Default vault folder of the raw data files. It holds one JSON Lines file for
@@ -72,11 +75,12 @@ class DailyNoteFields:
     heart_rate_p99: bool = True
     hr_moderate_minutes: bool = True
     hr_vigorous_minutes: bool = True
+    vo2_max: bool = True
 
     @staticmethod
     def properties() -> list[str]:
         """Return every property name, in the order it is written."""
-        return [STEPS_PROPERTY, *HEART_RATE_PROPERTIES]
+        return [STEPS_PROPERTY, *HEART_RATE_PROPERTIES, VO2_MAX_PROPERTY]
 
     def writes(self, prop: str) -> bool:
         """Return whether the daily note property ``prop`` is written."""
@@ -148,6 +152,7 @@ class IngestSummary:
     touched_dates: set[datetime.date] = field(default_factory=set)
     steps_dates: set[datetime.date] = field(default_factory=set)
     heart_rate_dates: set[datetime.date] = field(default_factory=set)
+    vo2_max_dates: set[datetime.date] = field(default_factory=set)
     # Changed local dates for each record type of the store, including the
     # types that no metric is computed from.
     stored_dates: dict[str, set[datetime.date]] = field(default_factory=dict)
@@ -182,7 +187,7 @@ def setup_instructions(token: str) -> str:
         "Install the <b>Health Connect Webhook</b> app on your phone "
         "(github.com/mcnaveen/health-connect-webhook), grant it the "
         "Health Connect permissions for the data you want synced "
-        "(heart rate, steps), and add a webhook with:\n\n"
+        "(heart rate, steps, VO2 max), and add a webhook with:\n\n"
         f"URL: <code>{WEBHOOK_URL}</code>\n"
         "Custom header name: <code>Authorization</code>\n"
         "Custom header value: <code>Bearer</code>, a space, then this token:\n"
@@ -328,6 +333,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         )
         await UserInteractionApi.register_command(
             self,
+            PluginCommand(text="Sync VO2 max", callback=self._sync_vo2_max_now),
+        )
+        await UserInteractionApi.register_command(
+            self,
             PluginCommand(
                 text="Export Health Connect raw data", callback=self._export_raw_now
             ),
@@ -364,6 +373,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 await self._write_heart_rate(
                     user, sorted(summary.heart_rate_dates), notify=False
                 )
+                await self._write_vo2_max(
+                    user, sorted(summary.vo2_max_dates), notify=False
+                )
                 await self._write_raw_files(user)
             except asyncio.CancelledError:
                 raise
@@ -399,6 +411,8 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 summary.steps_dates |= dates
             elif record_type in ("heart-rate", "resting-heart-rate"):
                 summary.heart_rate_dates |= dates
+            elif record_type == VO2_MAX_RECORD_TYPE:
+                summary.vo2_max_dates |= dates
 
         self._logger.info(
             f"Ingested Health Connect payload for user {user.id} "
@@ -637,6 +651,90 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             self._logger.info(f"Wrote {STEPS_PROPERTY}={total} for {date.isoformat()}")
             if notify:
                 await bot.notify(f"Logged steps for {date.isoformat()}: {total}.")
+        return written
+
+    async def _sync_vo2_max_now(self, user: User) -> None:
+        """Write VO2 max into daily notes, on request from the user.
+
+        Cover every date that still has stored measurements, and report one
+        total. There is no choice of range, because a watch gives a VO2 max
+        only now and then.
+        """
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        if not config.daily_note_fields.writes(VO2_MAX_PROPERTY):
+            await bot.send_message(
+                "The VO2 max property is turned off in the Health Connect settings."
+            )
+            return
+        dates = [
+            date
+            for record_type, date in await HealthConnectStore(user).get_stored_days()
+            if record_type == VO2_MAX_RECORD_TYPE
+        ]
+        if not dates:
+            await bot.send_message(
+                "No VO2 max measurements are stored. Check that VO2 max is "
+                "turned on in the phone app and allowed in Health Connect."
+            )
+            return
+        await bot.notify("Syncing VO2 max…")
+        written = await self._write_vo2_max(user, dates, notify=False)
+        if written == 0:
+            await bot.notify("No new VO2 max values found.")
+        else:
+            await bot.notify(
+                f"Logged VO2 max in {written} daily "
+                f"{'note' if written == 1 else 'notes'}, out of "
+                f"{len(dates)} stored {'day' if len(dates) == 1 else 'days'}."
+            )
+
+    async def _write_vo2_max(
+        self, user: User, dates: list[datetime.date], *, notify: bool
+    ) -> int:
+        """Write the VO2 max of each date into its daily note.
+
+        Do nothing if the user turned the property off. Take the last
+        measurement of each date from the stored records, and skip a date
+        that has none. Set the property only when the value changed. Send
+        Telegram messages only when ``notify`` is true. Return the number
+        of notes written.
+        """
+        if not dates:
+            return 0
+        config: UserConfig = await self.get_config(user)
+        if not config.daily_note_fields.writes(VO2_MAX_PROPERTY):
+            return 0
+        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        store = HealthConnectStore(user)
+        obsidian = await ObsidianApi.for_user(user)
+        await obsidian.safe_generate_today_note()
+
+        written = 0
+        for date in dates:
+            value = daily_vo2_max(
+                await store.get_raw_records(VO2_MAX_RECORD_TYPE, date)
+            )
+            if value is None:
+                continue
+            daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
+            try:
+                if await obsidian.get_property(daily_note, VO2_MAX_PROPERTY) == value:
+                    continue
+                await obsidian.set_value_of_property(
+                    daily_note, VO2_MAX_PROPERTY, value
+                )
+            except FileNotFoundError:
+                if notify:
+                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
+                continue
+
+            written += 1
+            self._logger.info(
+                f"Wrote {VO2_MAX_PROPERTY}={value} for {date.isoformat()}"
+            )
+            if notify:
+                await bot.notify(f"Logged VO2 max for {date.isoformat()}: {value}.")
         return written
 
     async def _write_heart_rate(
