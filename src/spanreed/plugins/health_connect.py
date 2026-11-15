@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
-from spanreed.plugins.user_profile import ask_for_birthday, ask_for_timezone
+from spanreed.plugins.user_profile import ask_for_birth_date, ask_for_timezone
 from spanreed.apis.obsidian import ObsidianApi, ObsidianPlugin
 from spanreed.apis.health_connect import (
     HealthConnectApi,
@@ -223,11 +223,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             raise RuntimeError("User timezone not set.")
 
         # The heart rate zone minutes need the user's age. They are an
-        # extra, so setup goes on without the birthday.
-        if user.birthday is None and not await ask_for_birthday(user, bot):
+        # extra, so setup goes on without the date of birth.
+        if user.birth_date is None and not await ask_for_birth_date(user, bot):
             await bot.send_message(
                 "Heart rate zone minutes are skipped until you set your "
-                "birthday with “Set birthday”."
+                "date of birth with “Set date of birth”."
             )
 
         # Reconfiguring keeps the token unless the user asks for a new one,
@@ -521,11 +521,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         if (
             choice in (0, 1, 2)
             and zone_minutes
-            and await User.get_user_birthday(user.id) is None
+            and await User.get_user_birth_date(user.id) is None
         ):
             await bot.notify(
                 "Heart rate zone minutes are skipped until you set your "
-                "birthday with “Set birthday”."
+                "date of birth with “Set date of birth”."
             )
         if choice == 2:  # All time
             dates = await HealthConnectStore(user).get_heart_rate_dates()
@@ -646,7 +646,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
 
         Compute ``resting-heart-rate``, ``heart-rate-p5``, ``heart-rate-avg``,
         ``heart-rate-p95``, ``heart-rate-p98`` and ``heart-rate-p99`` from the
-        stored records. If the user's birthday is set, also compute
+        stored records. If the user's date of birth is set, also compute
         ``hr-moderate-minutes`` and ``hr-vigorous-minutes`` from the maximum
         heart rate at the user's age on that date. Write only the properties
         that the user has turned on. Skip a date with no records and leave
@@ -667,9 +667,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         store = HealthConnectStore(user)
         obsidian = await ObsidianApi.for_user(user)
         await obsidian.safe_generate_today_note()
-        # Read the birthday now: ``user`` may have been loaded before the
+        # Read the date of birth now: ``user`` may have been loaded before the
         # user set it.
-        user.birthday = await User.get_user_birthday(user.id)
+        user.birth_date = await User.get_user_birth_date(user.id)
 
         written = 0
         for date in dates:

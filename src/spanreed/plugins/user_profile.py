@@ -37,30 +37,30 @@ async def ask_for_timezone(user: User, bot: UserInteractionApi) -> bool:
     return True
 
 
-async def ask_for_birthday(user: User, bot: UserInteractionApi) -> bool:
-    """Ask the user for their birthday and store it.
+async def ask_for_birth_date(user: User, bot: UserInteractionApi) -> bool:
+    """Ask the user for their date of birth and store it.
 
     Return True if a valid date was stored. Return False if the user gave
-    something else; the user's birthday is then unchanged. Plugins that need
-    the user's age can call this when the birthday is not set yet.
+    something else; the user's date of birth is then unchanged. Plugins that need
+    the user's age can call this when the date of birth is not set yet.
     """
-    current = user.birthday.isoformat() if user.birthday else "not set"
+    current = user.birth_date.isoformat() if user.birth_date else "not set"
     text = await bot.request_user_input(
-        f"Your birthday is {current}.\n"
+        f"Your date of birth is {current}.\n"
         "Enter your date of birth as YYYY-MM-DD (for example 1990-04-23):"
     )
     try:
-        await user.set_birthday(text)
+        await user.set_birth_date(text)
     except ValueError:
         await bot.send_message(
-            f"'{text.strip()}' is not a birthday I can use. "
+            f"'{text.strip()}' is not a date of birth I can use. "
             "Write the date as YYYY-MM-DD, such as 1990-04-23."
         )
         return False
-    assert user.birthday is not None
+    assert user.birth_date is not None
     today = datetime.datetime.now(tz=user.tzinfo).date()
     await bot.send_message(
-        f"Birthday set to {user.birthday.isoformat()}. "
+        f"Date of birth set to {user.birth_date.isoformat()}. "
         f"You are {user.age_on(today)} years old."
     )
     return True
@@ -84,7 +84,7 @@ class UserProfilePlugin(Plugin):
         )
         await UserInteractionApi.register_command(
             self,
-            PluginCommand(text="Set birthday", callback=self._set_birthday),
+            PluginCommand(text="Set date of birth", callback=self._set_birth_date),
         )
         await UserInteractionApi.register_command(
             self,
@@ -97,7 +97,7 @@ class UserProfilePlugin(Plugin):
 
         New users get it at /start, but users who signed up before this
         plugin existed don't, so they never saw its commands ("Set
-        timezone", "Set birthday", "Web UI login link"). Every Spanreed user is a Telegram
+        timezone", "Set date of birth", "Web UI login link"). Every Spanreed user is a Telegram
         user, so the Telegram plugin's user list is the full list.
         """
         from spanreed.apis.telegram_bot import TelegramBotPlugin
@@ -112,9 +112,9 @@ class UserProfilePlugin(Plugin):
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         await ask_for_timezone(user, bot)
 
-    async def _set_birthday(self, user: User) -> None:
+    async def _set_birth_date(self, user: User) -> None:
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        await ask_for_birthday(user, bot)
+        await ask_for_birth_date(user, bot)
 
     async def _web_login_link(self, user: User) -> None:
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)

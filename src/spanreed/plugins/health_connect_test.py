@@ -35,13 +35,13 @@ NOTE = "Daily/2026-05-09.md"
 
 
 @pytest.fixture(autouse=True)
-def stored_birthday() -> Iterator[AsyncMock]:
-    """Stand in for the user's stored birthday, which is not set by default.
+def stored_birth_date() -> Iterator[AsyncMock]:
+    """Stand in for the user's stored date of birth, which is not set by default.
 
-    A test sets ``return_value`` to give the user a birthday.
+    A test sets ``return_value`` to give the user a date of birth.
     """
     with patch(
-        "spanreed.plugins.health_connect.User.get_user_birthday",
+        "spanreed.plugins.health_connect.User.get_user_birth_date",
         new=AsyncMock(return_value=None),
     ) as mock:
         yield mock
@@ -59,10 +59,10 @@ def plugin_config_redis() -> Iterator[FakeRedis]:
 
 
 @pytest.fixture(autouse=True)
-def asked_for_birthday() -> Iterator[AsyncMock]:
-    """Stand in for the birthday question of the setup flow."""
+def asked_for_birth_date() -> Iterator[AsyncMock]:
+    """Stand in for the date of birth question of the setup flow."""
     with patch(
-        "spanreed.plugins.health_connect.ask_for_birthday",
+        "spanreed.plugins.health_connect.ask_for_birth_date",
         new=AsyncMock(return_value=True),
     ) as mock:
         yield mock
@@ -286,7 +286,7 @@ def test_reconfigure_keeps_the_folder_when_the_new_one_is_not_valid(
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
-def test_setup_asks_for_a_missing_birthday_and_goes_on_without_it(
+def test_setup_asks_for_a_missing_birth_date_and_goes_on_without_it(
     mock_bot: AsyncMock,
 ) -> None:
     Plugin.reset_registry()
@@ -295,46 +295,48 @@ def test_setup_asks_for_a_missing_birthday_and_goes_on_without_it(
     user = mock_user_find_by_id(4)
     mock_bot.request_user_choice.return_value = 0  # Keep this folder
     # The user gives something that is not a usable date.
-    asked_for_birthday = AsyncMock(return_value=False)
+    asked_for_birth_date = AsyncMock(return_value=False)
 
     with (
         patch("spanreed.apis.health_connect.redis_api", new=fake),
         patch("spanreed.plugin.redis_api", new=fake),
         patch(
-            "spanreed.plugins.health_connect.ask_for_birthday", new=asked_for_birthday
+            "spanreed.plugins.health_connect.ask_for_birth_date",
+            new=asked_for_birth_date,
         ),
     ):
         asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
         config: UserConfig = asyncio.run(HealthConnectPlugin.get_config(user))
 
-    asked_for_birthday.assert_awaited_once()
+    asked_for_birth_date.assert_awaited_once()
     assert config.token
     messages = [call.args[0] for call in mock_bot.send_message.await_args_list]
-    assert "Set birthday" in messages[0]
+    assert "Set date of birth" in messages[0]
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
-def test_setup_does_not_ask_for_a_birthday_that_is_set(
+def test_setup_does_not_ask_for_a_birth_date_that_is_set(
     mock_bot: AsyncMock,
 ) -> None:
     Plugin.reset_registry()
     HealthConnectPlugin()
     fake = FakeRedis()
     user = mock_user_find_by_id(4)
-    user.birthday = datetime.date(1990, 4, 23)
+    user.birth_date = datetime.date(1990, 4, 23)
     mock_bot.request_user_choice.return_value = 0  # Keep this folder
-    asked_for_birthday = AsyncMock(return_value=True)
+    asked_for_birth_date = AsyncMock(return_value=True)
 
     with (
         patch("spanreed.apis.health_connect.redis_api", new=fake),
         patch("spanreed.plugin.redis_api", new=fake),
         patch(
-            "spanreed.plugins.health_connect.ask_for_birthday", new=asked_for_birthday
+            "spanreed.plugins.health_connect.ask_for_birth_date",
+            new=asked_for_birth_date,
         ),
     ):
         asyncio.run(HealthConnectPlugin.ask_for_user_config(user))
 
-    asked_for_birthday.assert_not_called()
+    asked_for_birth_date.assert_not_called()
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
@@ -903,7 +905,7 @@ def test_write_heart_rate_writes_all_metrics(
 
 @patch_obsidian("spanreed.plugins.health_connect")
 @patch_user_interaction("spanreed.plugins.health_connect")
-def test_write_heart_rate_adds_zone_minutes_when_the_birthday_is_set(
+def test_write_heart_rate_adds_zone_minutes_when_the_birth_date_is_set(
     mock_bot: AsyncMock, mock_obsidian: AsyncMock
 ) -> None:
     Plugin.reset_registry()
@@ -911,7 +913,7 @@ def test_write_heart_rate_adds_zone_minutes_when_the_birthday_is_set(
     fake = FakeRedis()
     user = mock_user_find_by_id(4)
     # 40 years old on DATE: max 180, moderate from 115.2, vigorous from 138.6.
-    birthday = AsyncMock(return_value=datetime.date(1986, 5, 9))
+    birth_date = AsyncMock(return_value=datetime.date(1986, 5, 9))
     # One sample a minute: 3 minutes below, 2 moderate, 1 vigorous.
     _seed_heart_rate(fake, user, [70, 80, 115, 116, 138, 139], resting=[])
     mock_obsidian.get_daily_note.return_value = NOTE
@@ -919,7 +921,9 @@ def test_write_heart_rate_adds_zone_minutes_when_the_birthday_is_set(
 
     with (
         patch("spanreed.apis.health_connect.redis_api", new=fake),
-        patch("spanreed.plugins.health_connect.User.get_user_birthday", new=birthday),
+        patch(
+            "spanreed.plugins.health_connect.User.get_user_birth_date", new=birth_date
+        ),
     ):
         written = asyncio.run(plugin._write_heart_rate(user, [DATE], notify=False))
 
@@ -933,7 +937,7 @@ def test_write_heart_rate_adds_zone_minutes_when_the_birthday_is_set(
 
 @patch_obsidian("spanreed.plugins.health_connect")
 @patch_user_interaction("spanreed.plugins.health_connect")
-def test_write_heart_rate_leaves_out_zone_minutes_without_a_birthday(
+def test_write_heart_rate_leaves_out_zone_minutes_without_a_birth_date(
     mock_bot: AsyncMock, mock_obsidian: AsyncMock
 ) -> None:
     Plugin.reset_registry()
@@ -952,7 +956,7 @@ def test_write_heart_rate_leaves_out_zone_minutes_without_a_birthday(
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
-def test_sync_heart_rate_now_says_when_the_birthday_is_missing(
+def test_sync_heart_rate_now_says_when_the_birth_date_is_missing(
     mock_bot: AsyncMock,
 ) -> None:
     Plugin.reset_registry()
@@ -961,16 +965,18 @@ def test_sync_heart_rate_now_says_when_the_birthday_is_missing(
     mock_bot.request_user_choice.return_value = 0  # Today
 
     def hints() -> list:
-        return [c for c in mock_bot.notify.await_args_list if "birthday" in c.args[0]]
+        return [
+            c for c in mock_bot.notify.await_args_list if "date of birth" in c.args[0]
+        ]
 
     with patch.object(plugin, "_write_heart_rate", new=AsyncMock(return_value=1)):
         asyncio.run(plugin._sync_heart_rate_now(user))
         assert len(hints()) == 1
 
         mock_bot.notify.reset_mock()
-        birthday = AsyncMock(return_value=datetime.date(1990, 4, 23))
+        birth_date = AsyncMock(return_value=datetime.date(1990, 4, 23))
         with patch(
-            "spanreed.plugins.health_connect.User.get_user_birthday", new=birthday
+            "spanreed.plugins.health_connect.User.get_user_birth_date", new=birth_date
         ):
             asyncio.run(plugin._sync_heart_rate_now(user))
         assert hints() == []
