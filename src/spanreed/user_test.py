@@ -77,3 +77,55 @@ def test_find_by_id_without_timezone() -> None:
         user = asyncio.run(User.find_by_id(4))
 
     assert user.timezone is None
+
+
+def test_parse_birthday_accepts_iso_dates() -> None:
+    assert User.parse_birthday(" 1990-04-23 ") == datetime.date(1990, 4, 23)
+
+
+@pytest.mark.parametrize(
+    "text", ["", "23/04/1990", "1990-13-01", "2999-01-01", "1800-01-01"]
+)
+def test_parse_birthday_rejects_other_text_and_implausible_dates(text: str) -> None:
+    with pytest.raises(ValueError):
+        User.parse_birthday(text)
+
+
+def test_age_on_counts_whole_years() -> None:
+    user = User()
+    assert user.age_on(datetime.date(2026, 5, 9)) is None
+    user.birthday = datetime.date(1990, 4, 23)
+
+    assert user.age_on(datetime.date(2026, 4, 22)) == 35
+    assert user.age_on(datetime.date(2026, 4, 23)) == 36
+    assert user.age_on(datetime.date(1990, 4, 23)) == 0
+    assert user.age_on(datetime.date(1990, 4, 22)) is None
+
+
+def test_set_birthday_validates_and_persists() -> None:
+    fake = FakeRedis()
+    user = User()
+    user.id = 4
+
+    with patch("spanreed.user.redis_api", new=fake):
+        asyncio.run(user.set_birthday("1990-04-23"))
+        with pytest.raises(ValueError):
+            asyncio.run(user.set_birthday("soon"))
+        stored = asyncio.run(User.get_user_birthday(4))
+        missing = asyncio.run(User.get_user_birthday(5))
+
+    assert user.birthday == datetime.date(1990, 4, 23)
+    assert fake.strings["user:4:birthday"] == "1990-04-23"
+    assert stored == datetime.date(1990, 4, 23)
+    assert missing is None
+
+
+def test_find_by_id_loads_birthday() -> None:
+    fake = FakeRedis()
+    fake.strings["user:4:name"] = b"Test"
+    fake.strings["user:4:birthday"] = b"1990-04-23"
+
+    with patch("spanreed.user.redis_api", new=fake):
+        user = asyncio.run(User.find_by_id(4))
+
+    assert user.birthday == datetime.date(1990, 4, 23)

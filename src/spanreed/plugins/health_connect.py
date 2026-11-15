@@ -16,16 +16,19 @@ from dataclasses import dataclass, field
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
-from spanreed.plugins.user_profile import ask_for_timezone
+from spanreed.plugins.user_profile import ask_for_birthday, ask_for_timezone
 from spanreed.apis.obsidian import ObsidianApi, ObsidianPlugin
 from spanreed.apis.health_connect import (
     HealthConnectApi,
     HealthConnectPayload,
     HealthConnectStore,
     WEBHOOK_URL,
+    HR_MODERATE_MINUTES,
+    HR_VIGOROUS_MINUTES,
     daily_heart_rate_metrics,
     daily_step_total,
     dump_record,
+    max_heart_rate,
     parse_payload,
     type_name_of,
 )
@@ -41,6 +44,8 @@ HEART_RATE_PROPERTIES = (
     "heart-rate-p95",
     "heart-rate-p98",
     "heart-rate-p99",
+    HR_MODERATE_MINUTES,
+    HR_VIGOROUS_MINUTES,
 )
 # Folder holding the daily notes (matches the other daily-note plugins).
 DAILY_NOTE_FOLDER = "Daily"
@@ -157,6 +162,14 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 "Health Connect setup stopped. Set your timezone and try again."
             )
             raise RuntimeError("User timezone not set.")
+
+        # The heart rate zone minutes need the user's age. They are an
+        # extra, so setup goes on without the birthday.
+        if user.birthday is None and not await ask_for_birthday(user, bot):
+            await bot.send_message(
+                "Heart rate zone minutes are skipped until you set your "
+                "birthday with “Set birthday”."
+            )
 
         # Reconfiguring keeps the token unless the user asks for a new one,
         # because a new token must be entered again in the phone app.
@@ -397,6 +410,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             "Sync heart rate for…",
             ["Today", "The last week", "All time", "Cancel"],
         )
+        if choice in (0, 1, 2) and await User.get_user_birthday(user.id) is None:
+            await bot.notify(
+                "Heart rate zone minutes are skipped until you set your "
+                "birthday with “Set birthday”."
+            )
         if choice == 2:  # All time
             dates = await HealthConnectStore(user).get_heart_rate_dates()
             await bot.notify("Syncing heart rate…")
@@ -513,8 +531,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
 
         Compute ``resting-heart-rate``, ``heart-rate-p5``, ``heart-rate-avg``,
         ``heart-rate-p95``, ``heart-rate-p98`` and ``heart-rate-p99`` from the
-        stored records. Skip a date with no records and leave out a metric the
-        day has no data for. Set only the properties whose value changed. Send Telegram messages only when ``notify`` is true. Return
+        stored records. If the user's birthday is set, also compute
+        ``hr-moderate-minutes`` and ``hr-vigorous-minutes`` from the maximum
+        heart rate at the user's age on that date. Skip a date with no
+        records and leave out a metric the day has no data for. Set only the properties whose value changed. Send Telegram messages only when ``notify`` is true. Return
         the number of notes written.
         """
         if not dates:
@@ -523,12 +543,17 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         store = HealthConnectStore(user)
         obsidian = await ObsidianApi.for_user(user)
         await obsidian.safe_generate_today_note()
+        # Read the birthday now: ``user`` may have been loaded before the
+        # user set it.
+        user.birthday = await User.get_user_birthday(user.id)
 
         written = 0
         for date in dates:
+            age = user.age_on(date)
             metrics = daily_heart_rate_metrics(
                 await store.get_heart_rate(date),
                 await store.get_resting_heart_rate(date),
+                max_hr=max_heart_rate(age) if age is not None else None,
             )
             if not metrics:
                 continue
