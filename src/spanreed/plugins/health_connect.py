@@ -485,7 +485,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             )
 
     async def _sync_steps_now(self, user: User) -> None:
-        """Write step totals for recent days, on request from the user."""
+        """Write step totals for recent days, on request from the user.
+
+        Compute them from the stored records and write them even when the
+        note already holds the same value.
+        """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         config: UserConfig = await self.get_config(user)
         if not config.daily_note_fields.writes(STEPS_PROPERTY):
@@ -507,15 +511,16 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         today = datetime.datetime.now(tz=user.tzinfo).date()
         dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
         await bot.notify("Syncing steps…")
-        if await self._write_steps(user, dates, notify=True) == 0:
-            await bot.notify("No new step counts found.")
+        if await self._write_steps(user, dates, notify=True, force=True) == 0:
+            await bot.notify("No stored steps for those days.")
 
     async def _sync_heart_rate_now(self, user: User) -> None:
         """Write heart rate metrics into daily notes, on request from the user.
 
         Offer today, the last week, or all time. All time covers every date
         that still has stored records, and reports one total instead of a
-        message for each day.
+        message for each day. Write the values even when the note already
+        holds the same ones.
         """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         fields = (await self.get_config(user)).daily_note_fields
@@ -544,9 +549,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         if choice == 2:  # All time
             dates = await HealthConnectStore(user).get_heart_rate_dates()
             await bot.notify("Syncing heart rate…")
-            written = await self._write_heart_rate(user, dates, notify=False)
+            written = await self._write_heart_rate(
+                user, dates, notify=False, force=True
+            )
             if written == 0:
-                await bot.notify("No new heart rate values found.")
+                await bot.notify("No stored heart rate to write.")
             else:
                 await bot.notify(
                     f"Logged heart rate in {written} daily "
@@ -564,8 +571,8 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         today = datetime.datetime.now(tz=user.tzinfo).date()
         dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
         await bot.notify("Syncing heart rate…")
-        if await self._write_heart_rate(user, dates, notify=True) == 0:
-            await bot.notify("No new heart rate values found.")
+        if await self._write_heart_rate(user, dates, notify=True, force=True) == 0:
+            await bot.notify("No stored heart rate for those days.")
 
     async def _delete_data(self, user: User) -> None:
         """Delete stored records of recent days, on request from the user.
@@ -607,15 +614,22 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         )
 
     async def _write_steps(
-        self, user: User, dates: list[datetime.date], *, notify: bool
+        self,
+        user: User,
+        dates: list[datetime.date],
+        *,
+        notify: bool,
+        force: bool = False,
     ) -> int:
         """Write the step total of each date into its daily note.
 
         Do nothing if the user turned the steps property off. Compute each
-        total from the stored records. Skip a date that has no records. Overwrite the property when the total changed, because
-        today's total grows through the day. Leave it alone when it is the
-        same. Send Telegram messages only when ``notify`` is true. Return
-        the number of notes written.
+        total from the stored records. Skip a date that has no records.
+        Overwrite the property when the total changed, because today's total
+        grows through the day. Leave it alone when it is the same, unless
+        ``force`` is true: then write it without reading the note first.
+        Send Telegram messages only when ``notify`` is true. Return the
+        number of notes written.
         """
         if not dates:
             return 0
@@ -638,8 +652,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             total = daily_step_total(records)
             daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
             try:
-                existing = await obsidian.get_property(daily_note, STEPS_PROPERTY)
-                if existing == total:
+                if (
+                    not force
+                    and await obsidian.get_property(daily_note, STEPS_PROPERTY) == total
+                ):
                     continue
                 await obsidian.set_value_of_property(daily_note, STEPS_PROPERTY, total)
             except FileNotFoundError:
@@ -679,9 +695,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             )
             return
         await bot.notify("Syncing VO2 max…")
-        written = await self._write_vo2_max(user, dates, notify=False)
+        written = await self._write_vo2_max(user, dates, notify=False, force=True)
         if written == 0:
-            await bot.notify("No new VO2 max values found.")
+            await bot.notify("No VO2 max could be written.")
         else:
             await bot.notify(
                 f"Logged VO2 max in {written} daily "
@@ -690,13 +706,19 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             )
 
     async def _write_vo2_max(
-        self, user: User, dates: list[datetime.date], *, notify: bool
+        self,
+        user: User,
+        dates: list[datetime.date],
+        *,
+        notify: bool,
+        force: bool = False,
     ) -> int:
         """Write the VO2 max of each date into its daily note.
 
         Do nothing if the user turned the property off. Take the last
         measurement of each date from the stored records, and skip a date
-        that has none. Set the property only when the value changed. Send
+        that has none. Set the property only when the value changed, or
+        always if ``force`` is true. Send
         Telegram messages only when ``notify`` is true. Return the number
         of notes written.
         """
@@ -719,7 +741,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 continue
             daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
             try:
-                if await obsidian.get_property(daily_note, VO2_MAX_PROPERTY) == value:
+                if (
+                    not force
+                    and await obsidian.get_property(daily_note, VO2_MAX_PROPERTY)
+                    == value
+                ):
                     continue
                 await obsidian.set_value_of_property(
                     daily_note, VO2_MAX_PROPERTY, value
@@ -738,7 +764,12 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         return written
 
     async def _write_heart_rate(
-        self, user: User, dates: list[datetime.date], *, notify: bool
+        self,
+        user: User,
+        dates: list[datetime.date],
+        *,
+        notify: bool,
+        force: bool = False,
     ) -> int:
         """Write heart rate metrics of each date into its daily note.
 
@@ -748,7 +779,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         ``hr-moderate-minutes`` and ``hr-vigorous-minutes`` from the maximum
         heart rate at the user's age on that date. Write only the properties
         that the user has turned on. Skip a date with no records and leave
-        out a metric the day has no data for. Set only the properties whose value changed. Send Telegram messages only when ``notify`` is true. Return
+        out a metric the day has no data for. Set only the properties whose value changed, or
+        every one of them if ``force`` is true. Send Telegram messages only
+        when ``notify`` is true. Return
         the number of notes written.
         """
         if not dates:
@@ -785,7 +818,11 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 for prop in properties:
                     if prop not in metrics:
                         continue
-                    if await obsidian.get_property(daily_note, prop) == metrics[prop]:
+                    if (
+                        not force
+                        and await obsidian.get_property(daily_note, prop)
+                        == metrics[prop]
+                    ):
                         continue
                     await obsidian.set_value_of_property(
                         daily_note, prop, metrics[prop]

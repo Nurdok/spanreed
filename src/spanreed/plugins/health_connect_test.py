@@ -654,7 +654,7 @@ def test_sync_steps_now_today(mock_bot: AsyncMock) -> None:
     with patch.object(plugin, "_write_steps", new=AsyncMock(return_value=1)) as write:
         asyncio.run(plugin._sync_steps_now(user))
 
-    write.assert_awaited_once_with(user, [today], notify=True)
+    write.assert_awaited_once_with(user, [today], notify=True, force=True)
     assert "No new" not in mock_bot.notify.await_args.args[0]
 
 
@@ -674,7 +674,7 @@ def test_sync_steps_now_last_week_reports_nothing_new(mock_bot: AsyncMock) -> No
     assert len(dates) == 7
     assert dates[0] == today - datetime.timedelta(days=6)
     assert dates[-1] == today
-    assert "No new step counts" in mock_bot.notify.await_args.args[0]
+    assert "No stored steps" in mock_bot.notify.await_args.args[0]
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
@@ -713,7 +713,7 @@ def test_sync_heart_rate_now_today(mock_bot: AsyncMock) -> None:
         "All time",
         "Cancel",
     ]
-    write.assert_awaited_once_with(user, [today], notify=True)
+    write.assert_awaited_once_with(user, [today], notify=True, force=True)
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
@@ -738,7 +738,9 @@ def test_sync_heart_rate_now_all_time_covers_every_stored_date(
             asyncio.run(plugin._sync_heart_rate_now(user))
 
     # One summary replaces the per-day messages.
-    write.assert_awaited_once_with(user, [old.date(), recent.date()], notify=False)
+    write.assert_awaited_once_with(
+        user, [old.date(), recent.date()], notify=False, force=True
+    )
     assert "1 daily note, out of 2 stored days" in mock_bot.notify.await_args.args[0]
 
 
@@ -757,8 +759,8 @@ def test_sync_heart_rate_now_all_time_reports_nothing_new(
         ) as write:
             asyncio.run(plugin._sync_heart_rate_now(user))
 
-    write.assert_awaited_once_with(user, [], notify=False)
-    assert "No new heart rate" in mock_bot.notify.await_args.args[0]
+    write.assert_awaited_once_with(user, [], notify=False, force=True)
+    assert "No stored heart rate" in mock_bot.notify.await_args.args[0]
 
 
 @patch_user_interaction("spanreed.plugins.health_connect")
@@ -1598,3 +1600,57 @@ def test_run_for_user_writes_vo2_max_for_the_days_of_a_payload(
             pass
 
     write.assert_awaited_once_with(user, [DATE], notify=False)
+
+
+# --- Sync commands write even when the note is already up to date -------------
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_force_writes_values_the_note_already_has(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    _seed_steps(fake, user, 100, 200)
+    _seed_heart_rate(fake, user, [70, 80, 90], resting=[55])
+    mock_obsidian.get_daily_note.return_value = NOTE
+    # The note already holds exactly the computed values.
+    in_note = {
+        "steps": 300,
+        "resting-heart-rate": 55,
+        "heart-rate-p5": 71,
+        "heart-rate-avg": 80,
+        "heart-rate-p95": 89,
+        "heart-rate-p98": 90,
+        "heart-rate-p99": 90,
+        "vo2-max": 45.3,
+    }
+    mock_obsidian.get_property.side_effect = lambda _note, prop: in_note.get(prop)
+    vo2 = json.dumps(
+        {"vo2_max": [{"ml_per_kg_per_min": 45.3, "time": "2026-05-09T07:00:00Z"}]}
+    )
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._ingest(user, vo2))
+        # Without force nothing is written, as the background sync does.
+        assert asyncio.run(plugin._write_steps(user, [DATE], notify=False)) == 0
+        assert asyncio.run(plugin._write_heart_rate(user, [DATE], notify=False)) == 0
+        assert asyncio.run(plugin._write_vo2_max(user, [DATE], notify=False)) == 0
+        mock_obsidian.set_value_of_property.assert_not_called()
+
+        for write in (
+            plugin._write_steps,
+            plugin._write_heart_rate,
+            plugin._write_vo2_max,
+        ):
+            assert asyncio.run(write(user, [DATE], notify=False, force=True)) == 1
+
+    written = {
+        c.args[1]: c.args[2]
+        for c in mock_obsidian.set_value_of_property.await_args_list
+    }
+    assert written == in_note
