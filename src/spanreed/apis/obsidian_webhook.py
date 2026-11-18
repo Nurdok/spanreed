@@ -54,7 +54,10 @@ class ObsidianWebhookApi:
                 },
                 data=content,
             ) as response:
-                self._logger.info(f"{response.url=} resulted in {response.status=}")
+                # The webhook URL is a secret, so it is not logged.
+                self._logger.info(
+                    f"Appending to note {note_path} resulted in {response.status=}"
+                )
                 if response.status != 200:
                     self._logger.error(
                         f"Failed to append to note {note_path}: " f"{response.status=}"
