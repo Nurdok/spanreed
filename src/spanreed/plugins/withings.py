@@ -2,6 +2,7 @@ import asyncio
 import datetime
 
 from spanreed.plugin import Plugin
+from spanreed.storage import redis_api
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.daily_note_fields import ask_for_daily_note_fields
@@ -14,6 +15,11 @@ from spanreed.apis.withings import (
 )
 from spanreed.apis.obsidian import ObsidianApi
 import logging
+
+
+# How long Spanreed remembers that it has handled a measurement. The manual
+# sync reaches back a week, so this only has to be longer than that.
+HANDLED_TTL = datetime.timedelta(days=90)
 
 
 MEASUREMENT_TYPE_TO_STR = {
@@ -126,15 +132,40 @@ class WithingsPlugin(Plugin):
             return
 
         await bot.notify("Syncing Withings data…")
-        if await self._sync(user, days=days) == 0:
+        if await self._sync(user, days=days, report_removed=True) == 0:
             await bot.notify("No new Withings measurements found.")
 
-    async def _sync(self, user: User, *, days: int = 1) -> int:
+    @staticmethod
+    def _handled_key(user: User, date: datetime.date) -> str:
+        return f"withings:{user.id}:handled:{date.isoformat()}"
+
+    @classmethod
+    async def _is_handled(cls, user: User, date: datetime.date, marker: str) -> bool:
+        """Return whether this measurement was in the note before."""
+        return bool(await redis_api.sismember(cls._handled_key(user, date), marker))
+
+    @classmethod
+    async def _mark_handled(cls, user: User, date: datetime.date, marker: str) -> None:
+        """Remember that this measurement is, or was, in the note."""
+        key = cls._handled_key(user, date)
+        await redis_api.sadd(key, marker)
+        await redis_api.expire(key, int(HANDLED_TTL.total_seconds()))
+
+    async def _sync(
+        self, user: User, *, days: int = 1, report_removed: bool = False
+    ) -> int:
         """Write measurements into the daily notes for the last ``days`` days.
 
         Write only the properties that the user has turned on. Existing
         property values are left untouched. Returns the number of
         measurement values newly written.
+
+        Write each measurement to a note once only. Withings goes on
+        returning a measurement after the user deletes it in the Withings
+        app, so a property that the user removes from the note would
+        otherwise come back with the next sync. A measurement whose property
+        is gone from the note is left out; if ``report_removed`` is true,
+        tell the user how many were.
         """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         config: UserConfig = await self.get_config(user)
@@ -157,21 +188,40 @@ class WithingsPlugin(Plugin):
         await obsidian.safe_generate_today_note()
 
         written = 0
+        removed = 0
         for date in sorted(measurements_by_date):
             daily_note: str = await obsidian.get_daily_note("Daily", date)
             for measurement_type, value in measurements_by_date[date].items():
                 name = MEASUREMENT_TYPE_TO_STR[measurement_type]
                 if not fields.writes(name):
                     continue
+                # The value identifies the measurement: a new reading on the
+                # same day has another value and is written.
+                marker = f"{name}={value!r}"
                 try:
                     existing_value = await obsidian.get_property(daily_note, name)
                     if existing_value is not None:
+                        await self._mark_handled(user, date, marker)
+                        continue
+                    if await self._is_handled(user, date, marker):
+                        removed += 1
+                        self._logger.info(
+                            f"Not writing {name} for {date.isoformat()} again: "
+                            "it was removed from the note."
+                        )
                         continue
                     await obsidian.set_value_of_property(daily_note, name, value)
                 except FileNotFoundError:
                     await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
                     break
 
+                await self._mark_handled(user, date, marker)
                 written += 1
                 await bot.notify(f"Logged {name} for {date.isoformat()}: {value}.")
+        if removed and report_removed:
+            await bot.notify(
+                f"Left out {removed} "
+                f"{'measurement' if removed == 1 else 'measurements'} that you "
+                "removed from your notes."
+            )
         return written
