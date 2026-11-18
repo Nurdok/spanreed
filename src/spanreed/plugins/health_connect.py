@@ -14,6 +14,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 
+from spanreed.daily_note_fields import (
+    DailyNoteFieldsBase,
+    ask_for_daily_note_fields,
+)
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
@@ -59,7 +63,7 @@ DEFAULT_RAW_DATA_FOLDER = "Health/raw"
 
 
 @dataclass
-class DailyNoteFields:
+class DailyNoteFields(DailyNoteFieldsBase):
     """Which properties are written into the daily note.
 
     Each field is one property; its name is the property name with ``_``
@@ -76,23 +80,6 @@ class DailyNoteFields:
     hr_moderate_minutes: bool = True
     hr_vigorous_minutes: bool = True
     vo2_max: bool = True
-
-    @staticmethod
-    def properties() -> list[str]:
-        """Return every property name, in the order it is written."""
-        return [STEPS_PROPERTY, *HEART_RATE_PROPERTIES, VO2_MAX_PROPERTY]
-
-    def writes(self, prop: str) -> bool:
-        """Return whether the daily note property ``prop`` is written."""
-        return bool(getattr(self, prop.replace("-", "_")))
-
-    def set(self, prop: str, write: bool) -> None:
-        """Turn the daily note property ``prop`` on or off."""
-        setattr(self, prop.replace("-", "_"), write)
-
-    def written(self) -> list[str]:
-        """Return the names of the properties that are written."""
-        return [prop for prop in self.properties() if self.writes(prop)]
 
 
 @dataclass
@@ -129,14 +116,7 @@ class UserConfig:
         """
         self.raw_data_folder = normalize_vault_folder(self.raw_data_folder)
         if isinstance(self.daily_note_fields, dict):
-            known = {f.name for f in dataclasses.fields(DailyNoteFields)}
-            self.daily_note_fields = DailyNoteFields(
-                **{
-                    name: bool(value)
-                    for name, value in self.daily_note_fields.items()
-                    if name in known
-                }
-            )
+            self.daily_note_fields = DailyNoteFields.from_saved(self.daily_note_fields)
 
 
 @dataclass
@@ -254,7 +234,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             bot, config.raw_data_folder
         )
 
-        await cls._ask_for_daily_note_fields(bot, config.daily_note_fields)
+        await ask_for_daily_note_fields(bot, config.daily_note_fields)
 
         await HealthConnectApi.register_token(user, config.token)
         await cls.set_config(user, config)
@@ -286,37 +266,6 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         except ValueError as e:
             await bot.send_message(f"Folder not changed. {e}")
             return current
-
-    @staticmethod
-    async def _ask_for_daily_note_fields(
-        bot: UserInteractionApi, fields: DailyNoteFields
-    ) -> None:
-        """Ask which properties to write into the daily note.
-
-        Change ``fields`` in place. Let the user turn properties on and off
-        one at a time until they are done.
-        """
-        properties = fields.properties()
-        choice = await bot.request_user_choice(
-            f"{len(fields.written())} of {len(properties)} daily note "
-            "properties are written.",
-            ["Keep these", "Choose properties"],
-        )
-        if choice != 1:  # Keep these
-            return
-        while True:
-            choice = await bot.request_user_choice(
-                "Choose a property to turn it on or off. Turning one off "
-                "does not remove values already in your notes.",
-                [
-                    f"{'✅' if fields.writes(prop) else '⬜'} {prop}"
-                    for prop in properties
-                ]
-                + ["Done"],
-            )
-            if not 0 <= choice < len(properties):  # Done
-                return
-            fields.set(properties[choice], not fields.writes(properties[choice]))
 
     async def run(self) -> None:
         await UserInteractionApi.register_command(

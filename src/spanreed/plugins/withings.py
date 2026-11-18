@@ -4,8 +4,10 @@ import datetime
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
+from spanreed.daily_note_fields import ask_for_daily_note_fields
 from spanreed.apis.withings import (
     WithingsApi,
+    DailyNoteFields,
     UserConfig,
     MeasurementType,
     AuthenticationFlow,
@@ -37,9 +39,44 @@ class WithingsPlugin(Plugin):
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
+        """Log in to Withings and choose the daily note properties.
+
+        A user who is already logged in can keep the login, so that the
+        properties can be changed without logging in again.
+        """
         logging.info("Asking for Withings user config.")
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
+        config: UserConfig
+        if await cls.get_saved_config_data(user) is not None:
+            config = await cls.get_config(user)
+            choice = await bot.request_user_choice(
+                "You are logged in to Withings.",
+                ["Keep the current login", "Log in again"],
+            )
+            if choice == 1:  # Log in again
+                config = await cls._authenticate(user, bot, config.daily_note_fields)
+        else:
+            config = await cls._authenticate(user, bot, DailyNoteFields())
+
+        await ask_for_daily_note_fields(bot, config.daily_note_fields)
+        # Take the tokens as they are now: a sync may have refreshed them
+        # while the user was choosing.
+        saved = await cls.get_saved_config_data(user)
+        if saved is not None:
+            fields = config.daily_note_fields
+            config = await cls.get_config(user)
+            config.daily_note_fields = fields
+        await cls.set_config(user, config)
+
+    @classmethod
+    async def _authenticate(
+        cls, user: User, bot: UserInteractionApi, fields: DailyNoteFields
+    ) -> UserConfig:
+        """Run the Withings login and save the config it gives.
+
+        Keep ``fields`` as the daily note properties of the new config.
+        """
         auth: AuthenticationFlow
         async with WithingsApi.start_authentication(user) as auth:
             auth_done: asyncio.Event = await auth.get_done_event()
@@ -51,7 +88,10 @@ class WithingsPlugin(Plugin):
 
             await auth_done.wait()
 
-            await WithingsPlugin.set_config(user, auth.get_user_config())
+            config = auth.get_user_config()
+            config.daily_note_fields = fields
+            await cls.set_config(user, config)
+            return config
 
     async def run(self) -> None:
         await UserInteractionApi.register_command(
@@ -68,6 +108,12 @@ class WithingsPlugin(Plugin):
     async def _sync_now(self, user: User) -> None:
         """Manually triggered sync via the Telegram command."""
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        if not config.daily_note_fields.written():
+            await bot.send_message(
+                "Every Withings property is turned off in the Withings settings."
+            )
+            return
         choice = await bot.request_user_choice(
             "Sync Withings data for…",
             ["Today", "The last week", "Cancel"],
@@ -86,10 +132,15 @@ class WithingsPlugin(Plugin):
     async def _sync(self, user: User, *, days: int = 1) -> int:
         """Write measurements into the daily notes for the last ``days`` days.
 
-        Existing property values are left untouched. Returns the number of
+        Write only the properties that the user has turned on. Existing
+        property values are left untouched. Returns the number of
         measurement values newly written.
         """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+        config: UserConfig = await self.get_config(user)
+        fields = config.daily_note_fields
+        if not fields.written():
+            return 0
         withings = await WithingsApi.for_user(user)
         obsidian = await ObsidianApi.for_user(user)
 
@@ -110,6 +161,8 @@ class WithingsPlugin(Plugin):
             daily_note: str = await obsidian.get_daily_note("Daily", date)
             for measurement_type, value in measurements_by_date[date].items():
                 name = MEASUREMENT_TYPE_TO_STR[measurement_type]
+                if not fields.writes(name):
+                    continue
                 try:
                     existing_value = await obsidian.get_property(daily_note, name)
                     if existing_value is not None:
