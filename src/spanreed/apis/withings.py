@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 from yaml import YAMLError
 
@@ -107,10 +107,14 @@ class AuthenticationFlow:
             "code": code,
             "redirect_uri": self.REDIRECT_URI,
         }
-        logging.info(f"Sending request: {data}")
+        # Never log the request or the response: they hold the client
+        # secret, the authorization code and the tokens.
+        self._logger.info("Requesting Withings tokens with an authorization code.")
         response = requests.post(request_token_url, data=data)
         response.raise_for_status()
-        self._logger.info(f"Got response: {response.json()}")
+        self._logger.info(
+            f"Withings token request: status {response.json().get('status')}"
+        )
         body = response.json()["body"]
         self._user_config = UserConfig(
             userid=body["userid"],
@@ -137,9 +141,11 @@ class AuthenticationFlow:
             "grant_type": "refresh_token",
             "refresh_token": user_config.refresh_token,
         }
-        logging.info(f"Sending request: {data}")
+        # Never log the request or the response: they hold the client
+        # secret and the tokens.
+        logging.info(f"Refreshing the Withings tokens of user {user.id}.")
         response = requests.post(request_token_url, data=data)
-        logging.info(f"Got response: {response.json()}")
+        logging.info(f"Withings token refresh: status {response.json().get('status')}")
         response.raise_for_status()
         status = response.json()["status"]
         if status != 0 and (status < 200 or status >= 300):
@@ -167,6 +173,34 @@ class AuthenticationFlow:
 
         await WithingsPlugin.set_config(user, user_config)
         return user_config
+
+
+def summarize_measurements(data: Any) -> str:
+    """Describe a ``getmeas`` response for the log, without the values.
+
+    Name each measure group by its id, time, ``attrib`` and measure types.
+    That is enough to follow which measurements Withings returns, and it
+    keeps the user's health data out of the log.
+    """
+    if not isinstance(data, dict):
+        return f"unexpected {type(data).__name__}"
+    body = data.get("body")
+    if not isinstance(body, dict):
+        return f"status={data.get('status')}"
+    groups = [
+        {
+            "grpid": group.get("grpid"),
+            "date": group.get("date"),
+            "modified": group.get("modified"),
+            "attrib": group.get("attrib"),
+            "types": [measure.get("type") for measure in group.get("measures", [])],
+        }
+        for group in body.get("measuregrps", [])
+    ]
+    return (
+        f"status={data.get('status')} updatetime={body.get('updatetime')} "
+        f"measuregrps={groups}"
+    )
 
 
 class MeasurementType(IntEnum):
@@ -247,10 +281,10 @@ class WithingsApi:
             "startdate": int(start_dt.timestamp()),
             "enddate": int(end_dt.timestamp()),
         }
-        self._logger.info(f"Sending request: {url=} {headers=} {data=}")
+        # The headers hold the access token, so they are not logged.
+        self._logger.info(f"Sending request: {url=} {data=}")
         response = requests.post(url, headers=headers, data=data)
         response.raise_for_status()
-        self._logger.info(f"Got response: {response.json()}")
         if response.json()["status"] == 401:
             self._logger.info("Refreshing token.")
             async with suppress_and_log_exception(
@@ -266,12 +300,12 @@ class WithingsApi:
                 "Authorization": f"{self._user_config.token_type} {self._user_config.access_token}",
             }
             response = requests.post(url, headers=headers, data=data)
-        self._logger.info(f"Got response: {response.json()}")
+        self._logger.info(f"Got response: {summarize_measurements(response.json())}")
 
         try:
             return self.extract_measurements_from_json(response.json())
         except YAMLError:
-            self._logger.exception(f"Failed to parse response: {response.text}")
+            self._logger.exception("Failed to parse the Withings response.")
             return {}
 
     def extract_measurements_from_json(

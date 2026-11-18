@@ -228,3 +228,109 @@ def test_token_refresh_keeps_the_latest_choice_of_properties() -> None:
     assert refreshed.access_token == "fresh"
     assert saved.access_token == "fresh"
     assert saved.daily_note_fields == DailyNoteFields(weight=False)
+
+
+# --- Secrets and health values stay out of the log ----------------------------
+
+
+def _response(payload: dict) -> MagicMock:
+    response = MagicMock()
+    response.json.return_value = payload
+    response.text = str(payload)
+    return response
+
+
+TOKEN_BODY = {
+    "userid": "u",
+    "access_token": "ACCESS-SECRET",
+    "refresh_token": "REFRESH-SECRET",
+    "expires_in": "3600",
+    "scope": "s",
+    "token_type": "Bearer",
+}
+MEASURE_RESPONSE = {
+    "status": 0,
+    "body": {
+        "updatetime": 1794995597,
+        "measuregrps": [
+            {
+                "grpid": 8823953042,
+                "attrib": 0,
+                "date": 1794987283,
+                "modified": 1794987327,
+                "measures": [{"value": 64344, "type": 1, "unit": -3}],
+            }
+        ],
+    },
+}
+
+
+def test_token_refresh_logs_no_secrets(caplog: pytest.LogCaptureFixture) -> None:
+    plugin, user = _plugin_and_user(_config(refresh_token="OLD-REFRESH-SECRET"))
+    config = asyncio.run(WithingsPlugin.get_config(user))
+    caplog.set_level("DEBUG")
+
+    with (
+        patch(
+            "spanreed.apis.withings.requests.post",
+            return_value=_response({"status": 0, "body": TOKEN_BODY}),
+        ),
+        patch.object(
+            AuthenticationFlow,
+            "get_client_secret",
+            new=AsyncMock(return_value="CLIENT-SECRET"),
+        ),
+    ):
+        asyncio.run(AuthenticationFlow.refresh_token(user, config))
+
+    assert "Withings token refresh: status 0" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+def test_login_logs_no_secrets(caplog: pytest.LogCaptureFixture) -> None:
+    plugin, user = _plugin_and_user(None)
+    caplog.set_level("DEBUG")
+
+    async def run() -> None:
+        flow = AuthenticationFlow(user)
+        await flow.get_done_event()
+        await flow.authenticate("AUTH-CODE-SECRET")
+
+    with (
+        patch(
+            "spanreed.apis.withings.requests.post",
+            return_value=_response({"status": 0, "body": TOKEN_BODY}),
+        ),
+        patch.object(
+            AuthenticationFlow,
+            "get_client_secret",
+            new=AsyncMock(return_value="CLIENT-SECRET"),
+        ),
+    ):
+        asyncio.run(run())
+
+    assert "Withings token request: status 0" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+def test_get_measurements_logs_no_token_and_no_values(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from spanreed.apis.withings import WithingsApi
+
+    user = mock_user_find_by_id(4)
+    api = WithingsApi(user, _config(access_token="ACCESS-SECRET"))
+    caplog.set_level("DEBUG")
+
+    with patch(
+        "spanreed.apis.withings.requests.post",
+        return_value=_response(MEASURE_RESPONSE),
+    ):
+        measurements = asyncio.run(api.get_measurements())
+
+    assert measurements
+    assert "SECRET" not in caplog.text
+    # The log names the groups, but holds none of the measured values.
+    assert "8823953042" in caplog.text
+    assert "updatetime=1794995597" in caplog.text
+    assert "64344" not in caplog.text

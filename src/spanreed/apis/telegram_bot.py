@@ -374,8 +374,12 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             self._logger.error("No message found in update")
             return
 
-        self._logger.info(f"Received message: {update.message.text=}")
         message_text = update.message.text
+        # The text is not logged: setup flows ask for API keys in chat.
+        self._logger.info(
+            "Received a message "
+            f"({'no text' if message_text is None else f'{len(message_text)} characters'})"
+        )
         if message_text is None:
             # Non-text message (sticker, photo, ...): nothing to route.
             self._logger.info("Ignoring non-text message")
