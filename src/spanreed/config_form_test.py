@@ -265,5 +265,29 @@ def test_health_connect_form_hides_the_token_and_keeps_it() -> None:
         health_connect.UserConfig(token="abc", raw_data_folder="../x")
 
 
-def test_withings_config_has_nothing_to_edit() -> None:
-    assert form_schema(withings.UserConfig)["fields"] == []
+def test_withings_form_shows_only_the_daily_note_fields() -> None:
+    saved = {
+        "userid": "u",
+        "access_token": "a",
+        "refresh_token": "r",
+        "expires_in": "3600",
+        "scope": "s",
+        "token_type": "Bearer",
+    }
+    schema = form_schema(withings.UserConfig)
+
+    assert [f["name"] for f in schema["fields"]] == ["daily_note_fields"]
+    assert [f["name"] for f in schema["fields"][0]["fields"]] == [
+        "weight",
+        "fat_percentage",
+        "fat_mass",
+        "heart_pulse",
+    ]
+    value = form_value(withings.UserConfig, saved)
+    assert "access_token" not in json.dumps(value)
+    value["daily_note_fields"]["fat_mass"] = False
+    data = config_data_from_form(withings.UserConfig, value, saved)
+    # The login is kept, and the choice is saved with it.
+    config = withings.UserConfig(**data)
+    assert config.access_token == "a"
+    assert config.daily_note_fields == withings.DailyNoteFields(fat_mass=False)
