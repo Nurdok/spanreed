@@ -79,7 +79,14 @@ class UserInteraction:
         self.event.set()
 
     async def wait_to_run(self) -> None:
-        await self.event.wait()
+        """Wait until this interaction has the turn."""
+        while True:
+            await self.event.wait()
+            if _current.get(self.user_id) is self:
+                break
+            # The turn was granted and taken back before this task woke up
+            # (see ``_preempt_user_interaction_if_needed``). The event is
+            # clear again, so wait for the next grant.
         self.running = True
         self.start_time = datetime.datetime.now()
 
@@ -296,9 +303,18 @@ def _preempt_user_interaction_if_needed(user_id: int) -> None:
         if current_interaction.running:
             current_interaction.preempt()
         else:
-            # If this task was preempted before starting to run, re-add it
-            # to the queue instead of cancelling it.
-            _add_to_user_interaction_queue(user_id, current_interaction)
+            # This interaction was granted the turn but its task has not
+            # woken up to use it. Take the turn back and put it first in
+            # its queue, instead of cancelling it. Giving up the turn here
+            # matters: an interaction that is both current and queued runs
+            # now and is granted the turn a second time later, when nothing
+            # is left to give it back, and then every later interaction of
+            # the user waits forever.
+            current_interaction.event.clear()
+            _clear_current_user_interaction(user_id)
+            user_interaction_queues[current_interaction.priority].insert(
+                0, current_interaction
+            )
         return
 
     _logger.info(
@@ -357,7 +373,13 @@ async def user_interaction(
         await interaction.wait_to_run()
     except asyncio.CancelledError:
         _logger.info("User interaction was cancelled")
-        _remove_from_user_interaction_queue(user_id, interaction)
+        if get_current_user_interaction(user_id) is interaction:
+            # Cancelled after getting the turn but before using it: give
+            # the turn to the next interaction, or it is never given up.
+            _clear_current_user_interaction(user_id)
+            await _try_to_allow_next_user_interaction(user_id)
+        elif interaction in _get_user_interaction_queues(user_id)[priority]:
+            _remove_from_user_interaction_queue(user_id, interaction)
         raise
     log("Got user interaction permission")
     async with lock:

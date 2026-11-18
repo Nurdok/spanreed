@@ -244,3 +244,96 @@ def test_input_prompt_routing() -> None:
         assert engine.get_current_input_prompt(USER_ID) is None
 
     asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# A turn that is granted and taken back before the interaction starts
+# ---------------------------------------------------------------------------
+
+
+def test_turn_taken_back_before_start_does_not_block_later_interactions() -> None:
+    """A new flow arrives just as a waiting low-priority one gets the turn.
+
+    The engine takes the turn back from the low-priority interaction, which
+    has not started yet. That interaction must wait again, run exactly once
+    later, and leave nothing behind that holds the turn.
+    """
+    order: list[str] = []
+
+    async def flow(name: str, release: asyncio.Event) -> None:
+        async with engine.user_interaction(
+            USER_ID, priority=UserInteractionPriority.HIGH
+        ):
+            order.append(name)
+            await release.wait()
+
+    async def low() -> None:
+        async with engine.user_interaction(
+            USER_ID, priority=UserInteractionPriority.LOW
+        ):
+            order.append("low")
+
+    async def run() -> None:
+        release = asyncio.Event()
+        engine.start_user_flow(USER_ID, flow("first", asyncio.Event()))
+        await asyncio.sleep(0.01)
+        low_task = asyncio.create_task(low())
+        await asyncio.sleep(0.01)
+        assert order == ["first"]
+
+        # Cancels "first", which hands the turn to "low", and starts
+        # "second" before "low" wakes up.
+        second = engine.start_user_flow(USER_ID, flow("second", release))
+        await asyncio.sleep(0.01)
+        assert order == ["first", "second"]
+
+        release.set()
+        async with asyncio.timeout(1):
+            await asyncio.gather(second, low_task)
+        assert order == ["first", "second", "low"]
+        assert engine.get_pending_interaction_count(USER_ID) == 0
+        assert engine.get_current_user_interaction(USER_ID) is None
+
+        # Nothing is left holding the turn: a later flow runs at once.
+        third_release = asyncio.Event()
+        third_release.set()
+        async with asyncio.timeout(1):
+            await engine.start_user_flow(USER_ID, flow("third", third_release))
+        assert order == ["first", "second", "low", "third"]
+
+    asyncio.run(run())
+
+
+def test_interaction_cancelled_after_getting_the_turn_gives_it_up() -> None:
+    """An interaction is cancelled between getting the turn and starting."""
+    order: list[str] = []
+
+    async def convo(name: str, release: asyncio.Event) -> None:
+        async with engine.user_interaction(USER_ID):
+            order.append(name)
+            await release.wait()
+
+    async def run() -> None:
+        release_a = asyncio.Event()
+        task_a = asyncio.create_task(convo("a", release_a))
+        await asyncio.sleep(0.01)
+        task_b = asyncio.create_task(convo("b", asyncio.Event()))
+        await asyncio.sleep(0.01)
+
+        # "a" ends and hands the turn to "b"; "b" is cancelled before it
+        # wakes up to use it.
+        release_a.set()
+        await asyncio.sleep(0)
+        assert task_a.done() and not order[1:]
+        task_b.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task_b
+        assert engine.get_current_user_interaction(USER_ID) is None
+
+        release_c = asyncio.Event()
+        release_c.set()
+        async with asyncio.timeout(1):
+            await asyncio.create_task(convo("c", release_c))
+        assert order == ["a", "c"]
+
+    asyncio.run(run())
