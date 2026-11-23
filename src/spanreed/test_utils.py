@@ -114,6 +114,7 @@ def patch_obsidian(
                 mock_obsidian.read_binary_file = AsyncMock()
                 mock_obsidian.write_binary_file = AsyncMock()
                 mock_obsidian.move_file = AsyncMock()
+                mock_obsidian.delete_file = AsyncMock()
 
                 args = (mock_obsidian,) + args
                 return f(*args, **kwargs)
@@ -247,6 +248,9 @@ class FakeRedis:
             if field in stored:
                 del stored[field]
                 removed += 1
+        if key in self.hashes and not stored:
+            # Like Redis, drop a hash that has no fields left.
+            del self.hashes[key]
         return removed
 
     async def sadd(self, key: str, *members: Any) -> int:

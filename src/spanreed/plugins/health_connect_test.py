@@ -1654,3 +1654,172 @@ def test_force_writes_values_the_note_already_has(
         for c in mock_obsidian.set_value_of_property.await_args_list
     }
     assert written == in_note
+
+
+# --- timezone and deleted ------------------------------------------------------
+
+
+def _steps_record(record_id: str, hour: int, count: int) -> dict:
+    """Return a steps record of DATE as the bridge app sends it."""
+    return {
+        "count": count,
+        "start_time": f"2026-05-09T{hour:02d}:00:00Z",
+        "end_time": f"2026-05-09T{hour:02d}:10:00Z",
+        "metadata": {"id": record_id},
+    }
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+def test_timezone_is_not_written_as_a_raw_data_file(
+    mock_obsidian: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    raw = json.dumps(
+        {
+            "timestamp": "2026-05-09T14:00:00Z",
+            "app_version": "1.2.3",
+            "timezone": "Asia/Kolkata",
+            "steps": [_steps_record("a", 8, 100)],
+        }
+    )
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        summary = asyncio.run(plugin._ingest(user, raw))
+        asyncio.run(plugin._write_raw_files(user))
+
+    assert set(summary.stored_dates) == {"steps"}
+    assert list(_written_files(mock_obsidian)) == ["Health/raw/steps/2026-05-09.jsonl"]
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+def test_ingest_applies_deletions_and_rewrites_the_raw_files(
+    mock_obsidian: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    kept, gone = _steps_record("keep", 8, 100), _steps_record("gone", 9, 250)
+    first = json.dumps({"timestamp": "2026-05-09T14:00:00Z", "steps": [kept, gone]})
+    entries = [{"type": "steps", "id": "gone"}, {"type": "sleep", "id": "unknown"}]
+    second = json.dumps({"timestamp": "2026-05-10T14:00:00Z", "deleted": entries})
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._ingest(user, first))
+        asyncio.run(plugin._write_raw_files(user))
+        mock_obsidian.write_binary_file.reset_mock()
+        with patch.object(plugin._logger, "info") as log_info:
+            summary = asyncio.run(plugin._ingest(user, second))
+        logged = "\n".join(call.args[0] for call in log_info.call_args_list)
+        asyncio.run(plugin._write_raw_files(user))
+        steps = asyncio.run(HealthConnectStore(user).get_steps(DATE))
+
+    assert [record.count for record in steps] == [100]
+    assert summary.deleted_records == 1
+    assert summary.unmatched_deletions == 1
+    # The step total of the day must be written again.
+    assert summary.steps_dates == {DATE}
+    files = _written_files(mock_obsidian)
+    assert files["Health/raw/steps/2026-05-09.jsonl"] == (
+        json.dumps(kept, separators=(",", ":")) + "\n"
+    )
+    # All data is kept: the entries as sent, and the record that was removed.
+    assert sorted(files["Health/raw/deleted/2026-05-10.jsonl"].splitlines()) == sorted(
+        json.dumps(entry, separators=(",", ":")) for entry in entries
+    )
+    assert files["Health/raw/deleted_records/2026-05-10.jsonl"] == (
+        json.dumps({"type": "steps", "record": gone}, separators=(",", ":")) + "\n"
+    )
+    assert len(files) == 3
+    mock_obsidian.delete_file.assert_not_called()
+    assert "1 deleted on the phone (1 deleted ids not found)" in logged
+    # ``deleted`` is not named as a health record type.
+    assert "no metrics" not in logged
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+def test_deleting_the_last_record_of_a_day_deletes_its_raw_file(
+    mock_obsidian: AsyncMock,
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    weight = {
+        "kilograms": 70.5,
+        "time": "2026-05-09T07:00:00Z",
+        "metadata": {"id": "w"},
+    }
+    deletion = json.dumps(
+        {
+            "timestamp": "2026-05-09T14:00:00Z",
+            "deleted": [{"type": "weight", "id": "w"}],
+        }
+    )
+    mock_obsidian.delete_file.side_effect = [TimeoutError("offline"), None]
+
+    with _patch_redis(fake):
+        _configure(fake, user)
+        asyncio.run(plugin._ingest(user, json.dumps({"weight": [weight]})))
+        asyncio.run(plugin._write_raw_files(user))
+        asyncio.run(plugin._ingest(user, deletion))
+        # The first try fails, and the next run deletes the file.
+        with pytest.raises(TimeoutError):
+            asyncio.run(plugin._write_raw_files(user))
+        asyncio.run(plugin._write_raw_files(user))
+        store = HealthConnectStore(user)
+        pending = asyncio.run(store.get_export_pending())
+        emptied = asyncio.run(store.is_export_emptied("weight", DATE))
+
+    path = "Health/raw/weight/2026-05-09.jsonl"
+    assert [call.args for call in mock_obsidian.delete_file.await_args_list] == [
+        (path,),
+        (path,),
+    ]
+    assert pending == []
+    assert emptied is False
+
+
+@patch_obsidian("spanreed.plugins.health_connect")
+@patch_user_interaction("spanreed.plugins.health_connect")
+def test_run_for_user_rewrites_the_step_total_after_a_deletion(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = HealthConnectPlugin()
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    payloads = [
+        json.dumps({"steps": [_steps_record("a", 8, 100), _steps_record("b", 9, 250)]}),
+        json.dumps({"deleted": [{"type": "steps", "id": "b"}]}),
+    ]
+    mock_obsidian.get_daily_note.return_value = NOTE
+    mock_obsidian.get_property.return_value = None
+
+    class StopLoop(Exception):
+        pass
+
+    async def fake_dequeue(_user: object) -> str:
+        if not payloads:
+            raise StopLoop()
+        return payloads.pop(0)
+
+    with (
+        _patch_redis(fake),
+        patch.object(HealthConnectApi, "dequeue_payload", side_effect=fake_dequeue),
+    ):
+        _configure(fake, user)
+        with pytest.raises(StopLoop):
+            asyncio.run(plugin.run_for_user(user))
+
+    totals = [
+        call.args[2]
+        for call in mock_obsidian.set_value_of_property.await_args_list
+        if call.args[1] == "steps"
+    ]
+    assert totals == [350, 100]

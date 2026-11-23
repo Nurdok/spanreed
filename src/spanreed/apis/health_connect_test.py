@@ -17,12 +17,12 @@ from spanreed.apis.health_connect import (
     max_heart_rate,
     daily_step_total,
     local_date,
+    parse_deletions,
     parse_instant,
     parse_payload,
     percentile,
 )
 from spanreed.test_utils import FakeRedis, mock_user_find_by_id
-
 
 UTC = datetime.timezone.utc
 
@@ -648,3 +648,223 @@ def test_daily_heart_rate_metrics_leaves_out_missing_data() -> None:
     assert daily_heart_rate_metrics([], [HeartRateSample(t, 50)]) == {
         "resting-heart-rate": 50
     }
+
+
+# --- timezone and deleted ------------------------------------------------------
+
+
+def _steps(record_id: str, hour: int, count: int = 100) -> dict:
+    """Return a steps record of 2026-05-09 as the bridge app sends it."""
+    return {
+        "count": count,
+        "start_time": f"2026-05-09T{hour:02d}:00:00Z",
+        "end_time": f"2026-05-09T{hour:02d}:10:00Z",
+        "metadata": {"id": record_id, "data_origin": "com.example"},
+    }
+
+
+def test_parse_payload_does_not_list_timezone_or_deleted_as_record_types() -> None:
+    payload = parse_payload(
+        {
+            "timestamp": "2026-05-09T14:00:00Z",
+            "timezone": "Asia/Kolkata",
+            "deleted": [{"type": "steps", "id": "a"}],
+            "sleep": [{}],
+        }
+    )
+
+    assert payload.unknown_types == ["sleep"]
+    assert payload.is_empty()
+
+
+def test_parse_deletions_groups_ids_by_type_and_skips_bad_entries() -> None:
+    assert parse_deletions(
+        {
+            "deleted": [
+                {"type": "steps", "id": "a"},
+                {"type": "steps", "id": "b"},
+                {"type": "heart_rate", "id": "c"},
+                {"type": "steps"},
+                {"type": "steps", "id": ""},
+                {"type": 5, "id": "d"},
+                {"type": "steps", "id": 7},
+                "steps",
+            ]
+        }
+    ) == {"steps": {"a", "b"}, "heart_rate": {"c"}}
+    assert parse_deletions({}) == {}
+    assert parse_deletions({"deleted": {"type": "steps", "id": "a"}}) == {}
+
+
+def test_store_add_payload_does_not_store_timezone() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        touched = asyncio.run(
+            store.add_payload(
+                {
+                    "timestamp": "2026-05-09T14:00:00Z",
+                    "app_version": "1.2.3",
+                    "timezone": "UTC",
+                }
+            )
+        )
+
+    assert touched == {}
+    assert fake.hashes == {}
+
+
+def test_store_add_payload_keeps_deleted_as_raw_data() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    entries = [{"type": "steps", "id": "a"}, {"type": "sleep", "id": "b"}]
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        touched = asyncio.run(
+            store.add_payload({"timestamp": "2026-05-09T14:00:00Z", "deleted": entries})
+        )
+        stored = asyncio.run(store.get_raw_records("deleted", day))
+
+    assert touched == {"deleted": {day}}
+    assert sorted(stored, key=lambda entry: entry["id"]) == entries
+
+
+def test_store_apply_deletions_removes_matching_records_and_keeps_a_copy() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    received_day = datetime.date(2026, 5, 11)
+    kept, gone = _steps("keep", 8, 100), _steps("gone", 9, 250)
+    # Same id as the deleted steps record, but another type: not touched.
+    weight = {
+        "kilograms": 70.5,
+        "time": "2026-05-09T07:00:00Z",
+        "metadata": {"id": "gone"},
+    }
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(store.add_payload({"steps": [kept, gone], "weight": [weight]}))
+        result = asyncio.run(
+            store.apply_deletions(
+                {
+                    "timestamp": "2026-05-11T10:00:00Z",
+                    "deleted": [
+                        {"type": "steps", "id": "gone"},
+                        {"type": "steps", "id": "never-sent"},
+                    ],
+                }
+            )
+        )
+        steps = asyncio.run(store.get_steps(day))
+        raw_weight = asyncio.run(store.get_raw_records("weight", day))
+        copies = asyncio.run(store.get_raw_records("deleted-records", received_day))
+
+    assert [record.count for record in steps] == [100]
+    assert raw_weight == [weight]
+    assert copies == [{"type": "steps", "record": gone}]
+    assert result.removed_records == 1
+    assert result.unmatched_ids == 1
+    assert result.touched == {"steps": {day}, "deleted-records": {received_day}}
+    assert result.emptied == set()
+
+
+def test_store_apply_deletions_removes_every_record_with_the_id() -> None:
+    """An edited record of a type with no known shape is stored twice."""
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    other_day = datetime.date(2026, 5, 10)
+    first = {"kilograms": 70.5, "time": "2026-05-09T07:00:00Z", "metadata": {"id": "w"}}
+    edited = {**first, "kilograms": 70.1}
+    later = {"kilograms": 71, "time": "2026-05-10T07:00:00Z", "metadata": {"id": "x"}}
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(store.add_payload({"weight": [first, later]}))
+        asyncio.run(store.add_payload({"weight": [edited]}))
+        result = asyncio.run(
+            store.apply_deletions({"deleted": [{"type": "weight", "id": "w"}]})
+        )
+        days = asyncio.run(store.get_stored_days())
+
+    assert result.removed_records == 2
+    assert result.unmatched_ids == 0
+    assert result.emptied == {("weight", day)}
+    assert ("weight", day) not in days
+    assert ("weight", other_day) in days
+
+
+def test_store_apply_deletions_leaves_records_that_carry_no_id() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    day = datetime.date(2026, 5, 9)
+    records = [
+        {"bpm": 72, "time": "2026-05-09T08:15:00Z"},
+        # An id at the top level is not the Health Connect id.
+        {"bpm": 80, "time": "2026-05-09T08:16:00Z", "id": "a"},
+        {"bpm": 90, "time": "2026-05-09T08:17:00Z", "metadata": "a"},
+    ]
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(store.add_payload({"heart_rate": records}))
+        result = asyncio.run(
+            store.apply_deletions(
+                {
+                    "deleted": [
+                        {"type": "heart_rate", "id": "a"},
+                        {"type": "bad:name", "id": "a"},
+                    ]
+                }
+            )
+        )
+        stored = asyncio.run(store.get_raw_records("heart-rate", day))
+
+    assert stored == records
+    assert result.removed_records == 0
+    assert result.unmatched_ids == 2
+    assert result.touched == {}
+
+
+def test_store_apply_deletions_cannot_remove_the_deletion_records() -> None:
+    fake = FakeRedis()
+    store = HealthConnectStore(mock_user_find_by_id(4), tz=UTC)
+    payload = {
+        "timestamp": "2026-05-09T14:00:00Z",
+        "deleted": [
+            {"type": "deleted", "id": "a", "metadata": {"id": "a"}},
+            {"type": "deleted_records", "id": "a"},
+        ],
+    }
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(store.add_records("deleted_records", [{"metadata": {"id": "a"}}]))
+        asyncio.run(store.add_payload(payload))
+        before = {key: dict(value) for key, value in fake.hashes.items()}
+        result = asyncio.run(store.apply_deletions(payload))
+
+    assert result.removed_records == 0
+    assert fake.hashes == before
+
+
+def test_handle_webhook_logs_record_types_without_timezone_and_deleted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake = FakeRedis()
+    user = mock_user_find_by_id(4)
+    body = json.dumps(
+        {
+            "timestamp": "2026-05-09T14:00:00Z",
+            "timezone": "UTC",
+            "steps": [_steps("a", 8)],
+            "deleted": [{"type": "steps", "id": "b"}, {"type": "sleep", "id": "c"}],
+        }
+    )
+
+    with patch("spanreed.apis.health_connect.redis_api", new=fake):
+        asyncio.run(HealthConnectApi.register_token(user, "t0k3n"))
+        with caplog.at_level("INFO", logger="spanreed.apis.health_connect"):
+            status = asyncio.run(HealthConnectApi.handle_webhook("t0k3n", body))
+
+    assert status == 202
+    assert "types=['steps'], deletions=2" in caplog.text

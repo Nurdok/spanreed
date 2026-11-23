@@ -40,7 +40,6 @@ from spanreed.apis.health_connect import (
     type_name_of,
 )
 
-
 # Frontmatter properties written into the daily note.
 STEPS_PROPERTY = "steps"
 # Keys of daily_heart_rate_metrics, written in this order.
@@ -136,6 +135,10 @@ class IngestSummary:
     # Changed local dates for each record type of the store, including the
     # types that no metric is computed from.
     stored_dates: dict[str, set[datetime.date]] = field(default_factory=dict)
+    # Stored records removed because the phone reported them as deleted, and
+    # deleted ids that matched no stored record.
+    deleted_records: int = 0
+    unmatched_deletions: int = 0
 
 
 def raw_file_path(folder: str, record_type: str, date: datetime.date) -> str:
@@ -336,8 +339,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
     async def _ingest(self, user: User, raw: str) -> IngestSummary:
         """Store the records of one raw payload and return a summary.
 
-        Store every record, of every type. Mark the raw data files of the
-        changed days as out of date.
+        Store every record, of every type. Then remove the stored records
+        that the payload reports as deleted on the phone. Mark the raw data
+        files of the changed days as out of date.
         """
         data = json.loads(raw)
         payload: HealthConnectPayload = parse_payload(data)
@@ -349,6 +353,14 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             skipped_records=payload.skipped_records,
         )
         summary.stored_dates = await store.add_payload(data)
+        # After the new records, so that a record which is both sent and
+        # reported as deleted does not stay.
+        deletions = await store.apply_deletions(data)
+        summary.deleted_records = deletions.removed_records
+        summary.unmatched_deletions = deletions.unmatched_ids
+        for record_type, dates in deletions.touched.items():
+            summary.stored_dates.setdefault(record_type, set()).update(dates)
+        await store.mark_export_emptied(deletions.emptied)
         await store.mark_export_pending(
             (record_type, date)
             for record_type, dates in summary.stored_dates.items()
@@ -370,6 +382,8 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             f"{summary.resting_heart_rate_samples} resting-heart-rate, "
             f"{summary.steps_records} steps records; "
             f"{summary.skipped_records} skipped; "
+            f"{summary.deleted_records} deleted on the phone "
+            f"({summary.unmatched_deletions} deleted ids not found); "
             f"dates={sorted(d.isoformat() for d in summary.touched_dates)}"
         )
         if payload.unknown_types:
@@ -382,9 +396,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         """Bring the raw data file of every out-of-date day up to date.
 
         Rewrite each file from the stored records, one JSON record on each
-        line. Keep a day marked as out of date if its file cannot be
-        written, so that the next run writes it. Return the number of files
-        written.
+        line. Delete the file of a day that deletions on the phone left with
+        no records. Keep a day marked as out of date if its file cannot be
+        written or deleted, so that the next run does it. Return the number
+        of files written.
         """
         store = HealthConnectStore(user)
         pending = await store.get_export_pending()
@@ -400,14 +415,26 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             await store.clear_export_pending(record_type, date)
             try:
                 records = await store.get_raw_records(record_type, date)
+                path = raw_file_path(config.raw_data_folder, record_type, date)
                 if not records:
-                    continue  # the stored records expired or were deleted
+                    # Leave the file alone if the stored records expired or
+                    # the user deleted them here. Delete it only if the
+                    # phone deleted every record of the day.
+                    if await store.is_export_emptied(record_type, date):
+                        try:
+                            await obsidian.delete_file(path)
+                        except FileNotFoundError:
+                            pass  # never written
+                        await store.clear_export_emptied(record_type, date)
+                        self._logger.info(
+                            f"Deleted the {record_type} file of {date.isoformat()}"
+                        )
+                    continue
                 content = "".join(f"{dump_record(record)}\n" for record in records)
                 await obsidian.write_binary_file(
-                    raw_file_path(config.raw_data_folder, record_type, date),
-                    content.encode("utf-8"),
-                    overwrite=True,
+                    path, content.encode("utf-8"), overwrite=True
                 )
+                await store.clear_export_emptied(record_type, date)
             except BaseException:
                 await store.mark_export_pending([(record_type, date)])
                 raise
