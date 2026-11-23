@@ -4,7 +4,15 @@
 and the Obsidian palette, in a browser. It exists for when Telegram flood
 control blocks the bot: a command started here never touches Telegram.
 
-![Web UI on desktop, mid-flow in Manage plugins](images/web-ui-desktop.png)
+![Web UI on desktop, mid-flow in Sync steps](images/web-ui-desktop.png)
+
+On a phone the messages fill the screen. The command list is a drawer: tap
+☰ or swipe right to pull it out, and it closes when you pick a command. In
+Settings the same drawer holds the list of plugins. On a wider screen the
+list stays beside the messages.
+
+![Web UI on a phone](images/web-ui-phone.png)
+![The command drawer on a phone](images/web-ui-phone-drawer.png)
 
 ## How it fits
 

@@ -7,6 +7,10 @@ committing and pushing your work to the feature branch, create a PR against
 `main` without waiting to be asked. If the branch already has an open PR, push
 to it instead of opening a new one.
 
+For a change to anything the user sees (the web UI, its pages and styles),
+include screenshots of the result in the pull request description. Take them
+on the screen sizes the change affects, such as a phone and a desktop.
+
 ## Checks
 
 Run these before pushing:
