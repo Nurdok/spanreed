@@ -17,16 +17,33 @@ The bridge app sends this payload shape (see its ``docs/webhook.md``)::
     {
       "timestamp": "2026-05-09T14:00:00.123Z",
       "app_version": "1.2.3",
-      "steps": [{"count": 8421, "start_time": "...", "end_time": "..."}],
-      "heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z"}],
+      "timezone": "UTC",
+      "steps": [{"count": 8421, "start_time": "...", "end_time": "...",
+                 "metadata": {"id": "0a1b...", "data_origin": "..."}}],
+      "heart_rate": [{"bpm": 72, "time": "2026-05-09T08:15:00Z",
+                      "metadata": {"id": "2c3d..."}}],
       "resting_heart_rate": [{"bpm": 58, "time": "..."}],
-      "vo2_max": [{"ml_per_kg_per_min": 45.3, "time": "..."}]
+      "vo2_max": [{"ml_per_kg_per_min": 45.3, "time": "..."}],
+      "deleted": [{"type": "steps", "id": "4e5f..."}]
     }
 
+``timestamp``, ``app_version`` and ``timezone`` are metadata. ``timezone`` is
+a string that names the zone the app writes the payload times in: ``UTC`` or
+the zone of the phone.
+
 Each record-type key is optional. It is present only when the batch has at
-least one record of that type. Timestamps are ISO-8601 UTC instants. The app
+least one record of that type. Timestamps are ISO-8601 instants. The app
 can send more record types than the ones shown. Those are stored too, but
-no metric is computed from them.
+no metric is computed from them. A record carries a ``metadata`` object,
+and ``metadata.id`` is the Health Connect id of the record. Older versions
+of the app did not send it.
+
+``deleted`` is optional too. It lists the records that were deleted on the
+phone since the last sync. ``type`` is the record-type key and ``id`` is the
+``metadata.id`` of a record sent before. A payload can hold only deletions.
+
+The keys and their shapes were read from the app's ``docs/webhook.md`` and
+``SyncManager.kt``. They were not checked against a payload from a phone.
 """
 
 import datetime
@@ -40,7 +57,6 @@ from typing import Any, Iterable
 
 from spanreed.storage import redis_api
 from spanreed.user import User
-
 
 # Public URL the bridge app POSTs to (served by the Web UI plugin behind the
 # reverse proxy, like the OAuth redirect routes).
@@ -110,7 +126,15 @@ class HealthConnectPayload:
 
 
 # Top-level keys that are metadata rather than record arrays.
-_METADATA_KEYS = {"timestamp", "app_version"}
+_METADATA_KEYS = {"timestamp", "app_version", "timezone"}
+# Top-level key that lists the records deleted on the phone. It is not a
+# health record type, so it is left out of the record types that are logged.
+DELETED_KEY = "deleted"
+# Payload-style name under which the store keeps each record that a deletion
+# removed, so that no data the phone sent is lost.
+DELETED_RECORDS_TYPE_NAME = "deleted_records"
+# Top-level keys that are not health record types.
+_NON_RECORD_KEYS = _METADATA_KEYS | {DELETED_KEY}
 _PARSED_TYPES = {"heart_rate", "resting_heart_rate", "steps"}
 # Record types that a daily metric is computed from. The first three are
 # parsed into typed records; ``vo2_max`` is read back from the stored records.
@@ -199,10 +223,38 @@ def parse_payload(data: Any) -> HealthConnectPayload:
                     _logger.warning(f"Skipping malformed steps record {record!r}: {e}")
                     payload.skipped_records += 1
 
-    payload.unknown_types = sorted(
-        key for key in data if key not in _METADATA_KEYS and key not in _METRIC_TYPES
-    )
+    payload.unknown_types = [
+        key for key in record_type_keys(data) if key not in _METRIC_TYPES
+    ]
     return payload
+
+
+def record_type_keys(data: dict[str, Any]) -> list[str]:
+    """Return the sorted keys of a payload that name health record types.
+
+    Leave out the metadata keys and ``deleted``.
+    """
+    return sorted(key for key in data if key not in _NON_RECORD_KEYS)
+
+
+def parse_deletions(data: dict[str, Any]) -> dict[str, set[str]]:
+    """Return the record ids that a payload reports as deleted, by type.
+
+    Read the ``deleted`` list of the payload. Each key of the result is a
+    record-type key of the payload. Skip an entry that is not an object
+    with a string ``type`` and a non-empty string ``id``.
+    """
+    entries = data.get(DELETED_KEY)
+    deletions: dict[str, set[str]] = {}
+    if not isinstance(entries, list):
+        return deletions
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        type_name, record_id = entry.get("type"), entry.get("id")
+        if isinstance(type_name, str) and isinstance(record_id, str) and record_id:
+            deletions.setdefault(type_name, set()).add(record_id)
+    return deletions
 
 
 def local_date(
@@ -424,7 +476,8 @@ class HealthConnectApi:
         await cls.enqueue_payload(user_id, body)
         _logger.info(
             f"Queued Health Connect payload for user {user_id} "
-            f"({len(body)} bytes, types={sorted(data.keys() - _METADATA_KEYS)})"
+            f"({len(body)} bytes, types={record_type_keys(data)}, "
+            f"deletions={sum(map(len, parse_deletions(data).values()))})"
         )
         return 202
 
@@ -505,6 +558,43 @@ def _known_record_start(type_name: str, record: Any) -> datetime.datetime | None
     except (KeyError, TypeError, ValueError):
         pass
     return None
+
+
+def _record_id(record: Any) -> str | None:
+    """Return the Health Connect id of a record, if the record carries one.
+
+    The bridge app writes it as ``metadata.id``.
+    """
+    if not isinstance(record, dict):
+        return None
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    record_id = metadata.get("id")
+    return record_id if isinstance(record_id, str) and record_id else None
+
+
+def _received_instant(data: dict[str, Any]) -> datetime.datetime | None:
+    """Return the ``timestamp`` of a payload, or ``None`` if it has none."""
+    try:
+        return parse_instant(data.get("timestamp"))
+    except ValueError:
+        return None
+
+
+@dataclass
+class AppliedDeletions:
+    """What the deletions of one payload changed in the store."""
+
+    # Number of stored records that were removed.
+    removed_records: int = 0
+    # Number of deleted ids that matched no stored record.
+    unmatched_ids: int = 0
+    # Changed local dates for each record type of the store. This includes
+    # the record type that keeps the removed records.
+    touched: dict[str, set[datetime.date]] = field(default_factory=dict)
+    # Record type and local date of each day that has no records left.
+    emptied: set[tuple[str, datetime.date]] = field(default_factory=set)
 
 
 def record_type_of(type_name: str) -> str:
@@ -600,14 +690,14 @@ class HealthConnectStore:
         value that is not a list as one record. Return the changed local
         dates for each record type of the store.
         """
-        try:
-            received: datetime.datetime | None = parse_instant(data.get("timestamp"))
-        except ValueError:
-            received = None
+        received = _received_instant(data)
         touched: dict[str, set[datetime.date]] = {}
         for type_name, value in data.items():
             if type_name in _METADATA_KEYS:
                 continue
+            # ``deleted`` is not a health record type, but it is stored like
+            # one, as raw data: the owner wants everything the phone sends
+            # kept. ``apply_deletions`` acts on it.
             if not _TYPE_NAME_RE.fullmatch(type_name):
                 _logger.warning(f"Not storing record type {type_name!r}: bad name.")
                 continue
@@ -616,6 +706,68 @@ class HealthConnectStore:
             if dates:
                 touched[record_type_of(type_name)] = dates
         return touched
+
+    async def apply_deletions(self, data: dict[str, Any]) -> AppliedDeletions:
+        """Remove the stored records that a payload reports as deleted.
+
+        Match the ``id`` of each entry of ``deleted`` to the ``metadata.id``
+        of the stored records of that type, on every stored date. Remove
+        every match, because one Health Connect record can be sent as many
+        records, and an edited record can be stored twice. Before a record
+        is removed, store it under ``DELETED_RECORDS_TYPE_NAME`` as
+        ``{"type": ..., "record": ...}``, on the local date of the payload,
+        so that no data is lost.
+
+        An id can match nothing: the record may never have been sent, may
+        have expired, or may come from a version of the app that sent no
+        ids. Count it in ``unmatched_ids`` and do nothing else.
+        """
+        result = AppliedDeletions()
+        deletions = parse_deletions(data)
+        if not deletions:
+            return result
+        received = _received_instant(data)
+        kept_types = {DELETED_KEY, DELETED_RECORDS_TYPE_NAME}
+        stored_days = await self.get_stored_days()
+        for type_name, ids in sorted(deletions.items()):
+            matched: set[str] = set()
+            record_type = record_type_of(type_name)
+            # The phone cannot delete the record of what was deleted.
+            usable = _TYPE_NAME_RE.fullmatch(type_name) and type_name not in kept_types
+            for stored_type, date in stored_days if usable else []:
+                if stored_type != record_type:
+                    continue
+                key = self._key(record_type, date)
+                raw: dict = await redis_api.hgetall(key)
+                fields: list[str] = []
+                removed: list[Any] = []
+                for k, v in raw.items():
+                    try:
+                        record = json.loads(_decode(v))
+                    except ValueError:
+                        continue
+                    record_id = _record_id(record)
+                    if record_id in ids:
+                        fields.append(_decode(k))
+                        removed.append(record)
+                        matched.add(record_id)
+                if not fields:
+                    continue
+                kept_dates = await self.add_records(
+                    DELETED_RECORDS_TYPE_NAME,
+                    [{"type": type_name, "record": record} for record in removed],
+                    received,
+                )
+                await redis_api.hdel(key, *fields)
+                result.removed_records += len(fields)
+                result.touched.setdefault(record_type, set()).add(date)
+                result.touched.setdefault(
+                    record_type_of(DELETED_RECORDS_TYPE_NAME), set()
+                ).update(kept_dates)
+                if len(fields) == len(raw):
+                    result.emptied.add((record_type, date))
+            result.unmatched_ids += len(ids - matched)
+        return result
 
     async def add_heart_rate(
         self, samples: Iterable[HeartRateSample], record_type: str = "heart-rate"
@@ -671,6 +823,36 @@ class HealthConnectStore:
         """Forget that the raw data file of this day is out of date."""
         await redis_api.srem(
             self._export_pending_key, f"{record_type}|{date.isoformat()}"
+        )
+
+    @property
+    def _export_emptied_key(self) -> str:
+        return f"health-connect:export-emptied:{self._user.id}"
+
+    async def mark_export_emptied(
+        self, days: Iterable[tuple[str, datetime.date]]
+    ) -> None:
+        """Remember that deletions on the phone left these days with no records.
+
+        The raw data file of such a day is deleted when the day is exported.
+        A day that has no records for another reason keeps its file.
+        """
+        members = [f"{record_type}|{date.isoformat()}" for record_type, date in days]
+        if members:
+            await redis_api.sadd(self._export_emptied_key, *members)
+
+    async def is_export_emptied(self, record_type: str, date: datetime.date) -> bool:
+        """Return whether deletions on the phone left this day with no records."""
+        return bool(
+            await redis_api.sismember(
+                self._export_emptied_key, f"{record_type}|{date.isoformat()}"
+            )
+        )
+
+    async def clear_export_emptied(self, record_type: str, date: datetime.date) -> None:
+        """Forget that deletions on the phone left this day with no records."""
+        await redis_api.srem(
+            self._export_emptied_key, f"{record_type}|{date.isoformat()}"
         )
 
     async def get_export_pending(self) -> list[tuple[str, datetime.date]]:
