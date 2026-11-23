@@ -279,3 +279,61 @@ def test_recover_inflight_returns_messages_to_queue_tail() -> None:
         assert fake.lists[QUEUE][-1] == "stranded"
 
     asyncio.run(go())
+
+
+def test_ban_log_names_the_refused_send_and_counts_earlier_ones(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def go() -> None:
+        fake = FakeRedis()
+        send_text = AsyncMock(side_effect=[None, RetryAfter(5000)])
+        dispatcher = make_dispatcher(fake, send_text)
+        ok = asyncio.create_task(dispatcher.enqueue("send_choice_prompt", AsyncMock()))
+        await asyncio.sleep(0)
+        await dispatcher._process_next()
+        await ok
+        for text in ("Logged weight for 2026-05-09: 80.5.", "Second notification"):
+            await fake.lpush(QUEUE, json.dumps({"text": text, "enqueued_at": "T1"}))
+
+        await dispatcher._process_next()
+        await dispatcher._process_next()
+
+    caplog.set_level("INFO")
+    asyncio.run(go())
+
+    assert "Sending (interactive): send_choice_prompt" in caplog.text
+    assert "Sending (notification 'Logged weight for 2026-0'" in caplog.text
+    (ban,) = [r.message for r in caplog.records if "Flood control" in r.message]
+    assert "Refused: notification 'Second notification'" in ban
+    assert "queued T1" in ban
+    # One interactive send and one notification went through before it.
+    assert "Sends since the last pause: 2." in ban
+    # The log shows the start of a notification, not the value in it.
+    assert "80.5" not in caplog.text
+
+
+def test_high_job_whose_caller_was_cancelled_does_not_break_the_loop() -> None:
+    async def go() -> None:
+        dispatcher = make_dispatcher(FakeRedis())
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def api_call() -> str:
+            started.set()
+            await finish.wait()
+            return "sent"
+
+        caller = asyncio.create_task(dispatcher.enqueue("send", api_call))
+        await asyncio.sleep(0)
+        processing = asyncio.create_task(dispatcher._process_next())
+        await started.wait()
+        # The caller gives up while Telegram is still answering.
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        finish.set()
+
+        # Used to raise InvalidStateError from setting the cancelled future.
+        await processing
+
+    asyncio.run(go())
