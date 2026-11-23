@@ -96,6 +96,9 @@ class OutboundDispatcher:
         # fail fast instead of queueing so interactive callers don't hang for
         # hours holding the user-interaction lock.
         self._banned = False
+        # Telegram calls that went through since the last flood-control
+        # pause, for the log line that reports the next one.
+        self._sends_since_pause = 0
 
     def _outbound_key(self) -> str:
         return f"outbound-messages:{self._chat_id}"
@@ -193,12 +196,20 @@ class OutboundDispatcher:
         async with self._global_limiter:
             self._last_send_at = self._now()
 
-    def _enter_pause(self, retry_after: float) -> None:
+    def _enter_pause(self, retry_after: float, what: str) -> None:
+        """Stop sending for ``retry_after`` seconds after a flood-control reply.
+
+        ``what`` names the send that Telegram refused. It goes in the log
+        with the number of sends since the last pause, so that the log shows
+        what a ban followed.
+        """
         jitter = random.uniform(*self._resume_jitter)
         self._paused_until = self._now() + retry_after + jitter
         self._logger.warning(
             f"Flood control: pausing sends for {retry_after:.0f}s (+{jitter:.1f}s jitter)."
+            f" Refused: {what}. Sends since the last pause: {self._sends_since_pause}."
         )
+        self._sends_since_pause = 0
         if retry_after > self._ban_fail_threshold:
             self._banned = True
             self._fail_queued_high(retry_after)
@@ -221,10 +232,13 @@ class OutboundDispatcher:
             return
         while True:
             await self._pace()
+            # Log every call: without this the log cannot show what the bot
+            # sent before Telegram banned it.
+            self._logger.info(f"Sending (interactive): {job.description}")
             try:
                 result = await job.run()
             except RetryAfter as e:
-                self._enter_pause(e.retry_after)
+                self._enter_pause(e.retry_after, f"interactive {job.description!r}")
                 if self._banned:
                     if not job.future.done():
                         job.future.set_exception(e)
@@ -235,9 +249,15 @@ class OutboundDispatcher:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                job.future.set_exception(e)
+                # The caller may have been cancelled while the call ran;
+                # its future is then done, and setting it again would raise
+                # InvalidStateError.
+                if not job.future.done():
+                    job.future.set_exception(e)
                 return
-            job.future.set_result(result)
+            self._sends_since_pause += 1
+            if not job.future.done():
+                job.future.set_result(result)
             return
 
     async def _deliver_low(self, raw: bytes | str) -> None:
@@ -252,14 +272,21 @@ class OutboundDispatcher:
             await self._ack_low(raw)
             return
 
+        # Enough of the text to tell which notification it is, but not the
+        # values that follow.
+        what = (
+            f"notification {text[:24]!r} ({len(text)} characters,"
+            f" queued {message.get('enqueued_at', 'at an unknown time')})"
+        )
         try:
             await self._pace()
+            self._logger.info(f"Sending ({what})")
             await self._send_text(text, parse_html, parse_markdown)
         except asyncio.CancelledError:
             raise
         except RetryAfter as e:
             # Keep the entry reserved; the pause delays the next attempt.
-            self._enter_pause(e.retry_after)
+            self._enter_pause(e.retry_after, what)
             return
         except (BadRequest, Forbidden):
             # Permanent (bad markup, message too long, bot blocked):
@@ -279,6 +306,8 @@ class OutboundDispatcher:
             # Any other error (unexpected / non-Telegram): drop rather than
             # wedge the queue.
             self._logger.exception(f"Dropping undeliverable outbound message: {text!r}")
+        else:
+            self._sends_since_pause += 1
         # Delivered or permanently dropped.
         self._low_backoff = LOW_INITIAL_BACKOFF_S
         await self._ack_low(raw)
