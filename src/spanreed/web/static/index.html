@@ -103,15 +103,30 @@
   @media (max-width: 720px) { #google .email { display: none; } }
   /* On a phone the header holds the title and the buttons, on one line. */
   @media (max-width: 720px) { #who { display: none; } header { gap: 8px; padding: 10px 12px; } }
+  /* On a phone the messages fill the screen, and the list on the left
+     (commands, or the plugins in Settings) is a drawer that slides in. */
+  #drawer-toggle { display: none; font-size: 22px; line-height: 1; padding: 2px 6px; color: var(--fg); }
+  #scrim { display: none; }
   @media (max-width: 720px) {
-    .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-    aside { border-right: 0; border-bottom: 1px solid var(--line); max-height: 34vh; }
+    #drawer-toggle { display: inline-block; }
+    .layout { grid-template-columns: 1fr; }
+    aside { position: fixed; z-index: 20; top: 0; bottom: 0; left: 0; width: min(84vw, 320px);
+            padding-top: calc(12px + env(safe-area-inset-top));
+            transform: translateX(-100%); visibility: hidden;
+            transition: transform .2s ease, visibility 0s linear .2s; }
+    body.drawer-open aside { transform: none; visibility: visible; transition: transform .2s ease;
+                             box-shadow: 0 0 24px rgba(0, 0, 0, .25); }
+    #scrim { display: block; position: fixed; z-index: 15; inset: 0; background: rgba(0, 0, 0, .4);
+             opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+    body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
   }
+  @media (prefers-reduced-motion: reduce) { aside, #scrim { transition: none !important; } }
 </style>
 </head>
 <body>
 <div class="app">
   <header>
+    <button id="drawer-toggle" class="link" aria-label="Commands" aria-expanded="false">☰</button>
     <h1>Spanreed</h1>
     <span id="conn" class="conn" hidden>Reconnecting…</span>
     <span id="who" class="who"></span>
@@ -138,6 +153,7 @@
     </aside>
     <div id="settings-main"></div>
   </div>
+  <div id="scrim"></div>
 </div>
 <script>
 "use strict";
@@ -263,6 +279,7 @@ function renderCommands() {
 async function run(c) {
   if ((activeFlowId || openPrompt) &&
       !confirm(`Stop what's running and start "${c.text}"?`)) return;
+  setDrawer(false);
   const res = await post("commands/" + encodeURIComponent(c.id) + "/run");
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -374,7 +391,7 @@ async function loadState() {
   openPrompt = null;
   if (!s.events.length) {
     $("log").append(el("p", "empty",
-      "Pick a command on the left. Its questions and messages show up here, " +
+      "Pick a command from the list. Its questions and messages show up here, " +
       "without going through Telegram."));
   }
   for (const ev of s.events) apply(ev);
@@ -649,6 +666,7 @@ function renderSettingsForm(data) {
 }
 
 async function openSettings(id) {
+  setDrawer(false);
   currentSettings = id;
   renderSettingsNav();
   const main = $("settings-main");
@@ -663,6 +681,7 @@ async function showSettings(show) {
   $("settings").hidden = !show;
   $("commands-view").hidden = show;
   $("settings-toggle").textContent = show ? "Commands" : "Settings";
+  $("drawer-toggle").setAttribute("aria-label", show ? "Plugins" : "Commands");
   if (!show) { scrollDown(); return; }
   const res = await api("settings");
   settingsPlugins = res.ok ? (await res.json()).plugins : [];
@@ -673,7 +692,37 @@ async function showSettings(show) {
   else $("settings-main").replaceChildren(el("p", "empty", "None of your plugins has settings."));
 }
 
-$("settings-toggle").onclick = () => showSettings($("settings").hidden);
+// --- The drawer: on a phone, the list on the left slides in over the messages. ---
+
+function setDrawer(open) {
+  document.body.classList.toggle("drawer-open", open);
+  $("drawer-toggle").setAttribute("aria-expanded", String(open));
+}
+const drawerIsOpen = () => document.body.classList.contains("drawer-open");
+
+$("drawer-toggle").onclick = () => setDrawer(!drawerIsOpen());
+$("scrim").onclick = () => setDrawer(false);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setDrawer(false); });
+
+// Swipe right to pull the drawer out, left to push it back. The swipe may
+// start anywhere, because Android keeps the screen edge for its own "back"
+// gesture. Only a mostly horizontal swipe counts, so scrolling is unaffected.
+let swipe = null;
+document.addEventListener("touchstart", (e) => {
+  const t = e.touches[0];
+  const typing = e.target.closest("input, textarea, select");
+  swipe = e.touches.length === 1 && !typing ? { x: t.clientX, y: t.clientY } : null;
+}, { passive: true });
+document.addEventListener("touchend", (e) => {
+  if (!swipe || !window.matchMedia("(max-width: 720px)").matches) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+  swipe = null;
+  if (Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) / 2) return;
+  setDrawer(dx > 0);
+}, { passive: true });
+
+$("settings-toggle").onclick = () => { setDrawer(false); showSettings($("settings").hidden); };
 $("filter").oninput = renderCommands;
 $("logout").onclick = async () => { await post("logout"); location.reload(); };
 loadState().then(poll, () => { $("conn").hidden = false; setTimeout(() => location.reload(), 5000); });
