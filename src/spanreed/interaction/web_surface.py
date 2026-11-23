@@ -11,9 +11,11 @@ Like the engine's pending prompts, the feed is process-local and does not
 survive a restart; ``notify()`` is the exception and is also written to a
 small Redis inbox so it stays durable.
 
-The surface is reachable only while a browser for that user polled within
-``PRESENCE_TTL_S``, so broadcast (proactive) traffic reaches the web UI only
-when it is actually open.
+The surface is reachable while a browser for that user polled within
+``PRESENCE_TTL_S``, or while one of the user's browsers has push
+notifications turned on (see ``spanreed.web.push``). With push on, what a
+plugin sends unprompted is kept in the feed and announced by a notification
+that opens the app.
 """
 
 from __future__ import annotations
@@ -28,14 +30,17 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from spanreed.interaction import engine
 from spanreed.interaction.engine import PendingPrompt
 from spanreed.interaction.surface import (
     Content,
     PromptSpec,
+    SurfaceScope,
     UserInteractionSurface,
 )
 from spanreed.storage import redis_api
 from spanreed.user import User
+from spanreed.web import push
 
 SURFACE_NAME = "web"
 
@@ -44,6 +49,8 @@ PRESENCE_TTL_S = 60
 FEED_MAX_EVENTS = 300
 DOCUMENTS_MAX = 20
 INBOX_MAX = 50
+# Longest text shown in a push notification.
+PUSH_BODY_MAX = 240
 
 
 def inbox_key(user_id: int) -> str:
@@ -110,6 +117,20 @@ def render_html(content: Content) -> str:
     return _TAG_RE.sub(restore, escaped)
 
 
+_ANY_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def plain_text(content: Content) -> str:
+    """Return plugin content as one line of plain text, for a notification."""
+    text = content.text
+    if content.parse_html:
+        text = html.unescape(_ANY_TAG_RE.sub("", text))
+    text = " ".join(text.split())
+    if len(text) > PUSH_BODY_MAX:
+        text = text[: PUSH_BODY_MAX - 1] + "…"
+    return text
+
+
 def choice_rows(
     choices: list[str] | list[str | list[str]], columns: int
 ) -> list[list[dict[str, Any]]]:
@@ -156,6 +177,8 @@ class WebSurface(UserInteractionSurface):
 
     def __init__(self) -> None:
         self._feeds: dict[int, _Feed] = {}
+        # Pushes in flight; held so the tasks are not garbage collected.
+        self._push_tasks: set[asyncio.Task] = set()
 
     def _feed(self, user_id: int) -> _Feed:
         feed = self._feeds.get(user_id)
@@ -214,9 +237,37 @@ class WebSurface(UserInteractionSurface):
 
     # -- surface contract -------------------------------------------------
 
-    async def is_reachable(self, user: User) -> bool:
-        feed = self._feeds.get(user.id)
+    def _page_is_open(self, user_id: int) -> bool:
+        feed = self._feeds.get(user_id)
         return feed is not None and time.monotonic() - feed.last_seen < PRESENCE_TTL_S
+
+    async def is_reachable(self, user: User) -> bool:
+        return self._page_is_open(user.id) or await push.has_subscription(user.id)
+
+    async def reaches_unattended(self, user: User) -> bool:
+        return await push.has_subscription(user.id)
+
+    def _announce(
+        self, user: User, kind: str, content: Content, tag: str | None = None
+    ) -> None:
+        """Push a notification about something that was just published.
+
+        Skip it inside a flow the user started from the web UI: they are
+        looking at the page, and the reply is on it. The push is sent in the
+        background, so a slow push service never holds up a plugin.
+        """
+        scope = engine.get_current_scope(user.id)
+        if isinstance(scope, SurfaceScope) and scope.origin_surface == self.name:
+            return
+        payload = {
+            "kind": kind,
+            "title": "Spanreed asks" if kind == "prompt" else "Spanreed",
+            "body": plain_text(content),
+            "tag": tag,
+        }
+        task = asyncio.create_task(push.send(user.id, payload))
+        self._push_tasks.add(task)
+        task.add_done_callback(self._push_tasks.discard)
 
     async def send_message(self, user: User, content: Content) -> str:
         message_id = uuid.uuid4().hex
@@ -224,6 +275,7 @@ class WebSurface(UserInteractionSurface):
             user.id,
             {"type": "message", "id": message_id, "html": render_html(content)},
         )
+        self._announce(user, "message", content)
         return message_id
 
     async def edit_message(self, user: User, message: Any, content: Content) -> None:
@@ -241,12 +293,23 @@ class WebSurface(UserInteractionSurface):
         await redis_api.rpush(inbox_key(user.id), json.dumps(entry))
         await redis_api.ltrim(inbox_key(user.id), -INBOX_MAX, -1)
         self._publish(user.id, {"type": "notification", **entry})
+        self._announce(user, "notification", content)
 
     async def send_multiple_messages(
         self, user: User, contents: list[Content], delay: int
     ) -> None:
-        for content in contents:
-            await self.send_message(user, content)
+        for content in contents[:-1]:
+            self._publish(
+                user.id,
+                {
+                    "type": "message",
+                    "id": uuid.uuid4().hex,
+                    "html": render_html(content),
+                },
+            )
+        # One notification for the batch, about its last message.
+        if contents:
+            await self.send_message(user, contents[-1])
 
     async def send_document(self, user: User, file_name: str, data: bytes) -> str:
         feed = self._feed(user.id)
@@ -258,6 +321,7 @@ class WebSurface(UserInteractionSurface):
             user.id,
             {"type": "document", "id": document_id, "name": file_name},
         )
+        self._announce(user, "message", Content(f"File: {file_name}", parse_html=False))
         return document_id
 
     async def render_prompt(
@@ -279,6 +343,8 @@ class WebSurface(UserInteractionSurface):
         )
         self._feed(user.id).open_prompt = event
         prompt.surface_state[self.name] = {"rendered": True}
+        # The same tag on a re-prompt replaces the earlier notification.
+        self._announce(user, "prompt", spec.prompt, tag=f"prompt-{spec.interaction_id}")
 
     async def _close_prompt(
         self, user: User, prompt: PendingPrompt, reason: str

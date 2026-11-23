@@ -184,7 +184,11 @@ class FakeRedis:
 
     # -- string/hash/set ops used by the Obsidian surface protocol --------
 
-    async def set(self, key: str, value: Any, ex: int | None = None) -> bool:
+    async def set(
+        self, key: str, value: Any, ex: int | None = None, nx: bool = False
+    ) -> bool | None:
+        if nx and key in self.strings:
+            return None
         self.strings[key] = value
         return True
 
@@ -240,6 +244,12 @@ class FakeRedis:
 
     async def hgetall(self, key: str) -> dict:
         return dict(self.hashes.get(key, {}))
+
+    async def hlen(self, key: str) -> int:
+        return len(self.hashes.get(key, {}))
+
+    async def hexists(self, key: str, field: str) -> bool:
+        return field in self.hashes.get(key, {})
 
     async def hdel(self, key: str, *fields: str) -> int:
         stored = self.hashes.get(key, {})

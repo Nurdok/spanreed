@@ -32,7 +32,7 @@ from spanreed.interaction.surface import SurfaceScope
 from spanreed.interaction.web_surface import SURFACE_NAME, WebSurface, read_inbox
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.web import auth, google_auth
+from spanreed.web import auth, google_auth, push
 
 _logger = logging.getLogger(__name__)
 
@@ -120,6 +120,46 @@ async def index() -> Any:
     if await _current_user() is None:
         return await _login_page()
     return _no_store(Response(_page("index.html"), mimetype="text/html"))
+
+
+# Files of the installable app. They are public: the browser fetches the
+# manifest and the icons without the session cookie.
+_APP_FILES = {
+    "manifest.webmanifest": "application/manifest+json",
+    "sw.js": "text/javascript",
+    "icons/icon-192.png": "image/png",
+    "icons/icon-512.png": "image/png",
+    "icons/icon-maskable-512.png": "image/png",
+}
+
+
+def _app_file(name: str) -> Response:
+    data = (_STATIC_DIR / name).read_bytes()
+    response = Response(data, mimetype=_APP_FILES[name])
+    if name == "sw.js":
+        # Let the browser pick up a new service worker on its next check.
+        response.headers["Cache-Control"] = "no-cache"
+    else:
+        response.headers["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
+@blueprint.get("/manifest.webmanifest")
+async def manifest() -> Any:
+    return _app_file("manifest.webmanifest")
+
+
+@blueprint.get("/sw.js")
+async def service_worker() -> Any:
+    return _app_file("sw.js")
+
+
+@blueprint.get("/icons/<name>")
+async def icon(name: str) -> Any:
+    path = f"icons/{name}"
+    if path not in _APP_FILES:
+        return jsonify({"error": "not found"}), 404
+    return _app_file(path)
 
 
 async def _invalid_link_page() -> Response:
@@ -327,6 +367,7 @@ async def state() -> Any:
                 "active_flow_id": active_web_flow_id(user.id),
                 "inbox": await read_inbox(user.id),
                 "google": await _google_state(user.id),
+                "push": {"public_key": await push.public_key()},
             }
         )
     )
@@ -450,6 +491,53 @@ async def cancel() -> Any:
     if pending is not None and engine.preempt_current_interaction(user.id):
         return jsonify({"ok": True})
     return jsonify({"ok": False})
+
+
+# ---------------------------------------------------------------------------
+# Push notifications
+# ---------------------------------------------------------------------------
+
+
+@blueprint.post("/api/push/subscribe")
+@api_auth
+async def push_subscribe() -> Any:
+    """Turn notifications on for the browser that sends its subscription.
+
+    Safe to repeat: the page sends its subscription on every load, so the
+    server learns it again if it was lost. ``test`` asks for a notification
+    that confirms it works.
+    """
+    user: User = g.user
+    body = await request.get_json(silent=True) or {}
+    try:
+        await push.subscribe(user.id, body.get("subscription"))
+    except push.PushError as e:
+        return jsonify({"error": str(e)}), 400
+    if body.get("test"):
+        await push.send(
+            user.id,
+            {
+                "kind": "test",
+                "title": "Spanreed",
+                "body": "Notifications are on for this device.",
+                "tag": "test",
+            },
+        )
+        _logger.info(f"User {user.id} turned push notifications on for a device")
+    return jsonify({"ok": True})
+
+
+@blueprint.post("/api/push/unsubscribe")
+@api_auth
+async def push_unsubscribe() -> Any:
+    user: User = g.user
+    body = await request.get_json(silent=True) or {}
+    endpoint = body.get("endpoint")
+    if not isinstance(endpoint, str):
+        return jsonify({"error": "missing endpoint"}), 400
+    removed = await push.unsubscribe(user.id, endpoint)
+    _logger.info(f"User {user.id} turned push notifications off for a device")
+    return jsonify({"ok": True, "removed": removed})
 
 
 # ---------------------------------------------------------------------------

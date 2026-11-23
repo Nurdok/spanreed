@@ -38,6 +38,9 @@ async def _translating(awaitable: Awaitable[T]) -> T:
 
 class TelegramSurface(UserInteractionSurface):
     name = "telegram"
+    # Telegram bans the bot for hours at a time, so it only carries
+    # unprompted traffic for a user whom no other surface can alert.
+    is_fallback = True
 
     def __init__(self) -> None:
         self._bots: dict[int, Any] = {}

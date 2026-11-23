@@ -1,15 +1,21 @@
 import asyncio
-from unittest.mock import patch
+import json
+from collections.abc import Iterator
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from spanreed.interaction import engine
 from spanreed.interaction.engine import PromptKind
-from spanreed.interaction.surface import Content, PromptSpec
+from spanreed.interaction.surface import Content, PromptSpec, SurfaceScope
 from spanreed.interaction.web_surface import (
     WebSurface,
     choice_rows,
+    plain_text,
     read_inbox,
     render_html,
 )
+from spanreed.web import push
 from spanreed.test_utils import FakeRedis, mock_user_find_by_id
 
 USER_ID = 3
@@ -17,6 +23,26 @@ USER_ID = 3
 
 def setup_function() -> None:
     engine.reset_state_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def push_store() -> Iterator[FakeRedis]:
+    """Give push subscriptions an empty Redis: no browser is subscribed."""
+    fake = FakeRedis()
+    with patch("spanreed.web.push.redis_api", new=fake):
+        yield fake
+
+
+SUBSCRIPTION = {
+    "endpoint": "https://fcm.googleapis.com/fcm/send/abc",
+    "keys": {"p256dh": "p", "auth": "a"},
+}
+
+
+async def _settle() -> None:
+    """Let the pushes that a surface call started in the background finish."""
+    for _ in range(5):
+        await asyncio.sleep(0)
 
 
 # ---------------------------------------------------------------------------
@@ -160,4 +186,117 @@ def test_notify_is_durable_in_the_inbox() -> None:
         assert surface.recent_events(USER_ID)[-1]["type"] == "notification"
 
     with patch("spanreed.interaction.web_surface.redis_api", new=fake):
+        asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Push notifications
+# ---------------------------------------------------------------------------
+
+
+def test_plain_text_strips_markup_and_shortens() -> None:
+    assert plain_text(Content("<b>Did you</b>\n  exercise &amp; stretch?")) == (
+        "Did you exercise & stretch?"
+    )
+    assert plain_text(Content("<b>kept</b>", parse_html=False)) == "<b>kept</b>"
+    assert len(plain_text(Content("x" * 1000))) == 240
+
+
+def test_reachable_and_unattended_while_a_browser_is_subscribed() -> None:
+    surface = WebSurface()
+    user = mock_user_find_by_id(USER_ID)
+
+    async def run() -> None:
+        assert not await surface.is_reachable(user)
+        assert not await surface.reaches_unattended(user)
+        # A page that is open makes it reachable, but cannot alert the user.
+        surface.mark_seen(USER_ID)
+        assert await surface.is_reachable(user)
+        assert not await surface.reaches_unattended(user)
+
+        await push.subscribe(USER_ID, SUBSCRIPTION)
+        with patch("spanreed.interaction.web_surface.time.monotonic") as clock:
+            clock.return_value = 10**9  # no page has polled for a long time
+            assert await surface.is_reachable(user)
+            assert await surface.reaches_unattended(user)
+
+    asyncio.run(run())
+
+
+def test_prompts_messages_and_notifications_are_pushed() -> None:
+    surface = WebSurface()
+    user = mock_user_find_by_id(USER_ID)
+    sent: list[dict] = []
+
+    async def sender(_subscription: dict, data: str, _key: str) -> None:
+        sent.append(json.loads(data))
+
+    async def run() -> None:
+        await push.subscribe(USER_ID, SUBSCRIPTION)
+        await surface.send_message(user, Content("<b>Hello</b>"))
+        await surface.notify(user, Content("Logged steps"))
+        prompt = engine.create_prompt(USER_ID, PromptKind.CHOICE)
+        spec = PromptSpec(
+            interaction_id=prompt.interaction_id,
+            generation=0,
+            kind=PromptKind.CHOICE,
+            prompt=Content("Did you exercise?"),
+            choices=["Yes", "No"],
+        )
+        await surface.render_prompt(user, prompt, spec)
+        # Edits, deletions and closing a prompt are not worth a notification.
+        message = await surface.send_message(user, Content("temp"))
+        await surface.edit_message(user, message, Content("changed"))
+        await surface.delete_message(user, message)
+        await surface.cleanup_prompt(user, prompt)
+        await _settle()
+        tag = f"prompt-{prompt.interaction_id}"
+        assert [(p["kind"], p["title"], p["body"], p["tag"]) for p in sent] == [
+            ("message", "Spanreed", "Hello", None),
+            ("notification", "Spanreed", "Logged steps", None),
+            ("prompt", "Spanreed asks", "Did you exercise?", tag),
+            ("message", "Spanreed", "temp", None),
+        ]
+
+    with (
+        patch("spanreed.interaction.web_surface.redis_api", new=FakeRedis()),
+        patch("spanreed.web.push._sender", new=sender),
+    ):
+        asyncio.run(run())
+
+
+def test_nothing_is_pushed_inside_a_flow_started_from_the_web_ui() -> None:
+    surface = WebSurface()
+    user = mock_user_find_by_id(USER_ID)
+    sender = AsyncMock()
+
+    async def run() -> None:
+        await push.subscribe(USER_ID, SUBSCRIPTION)
+        async with engine.user_interaction(
+            USER_ID, scope=SurfaceScope(origin_surface="web")
+        ):
+            await surface.send_message(user, Content("Reply on the page"))
+            await _settle()
+        sender.assert_not_awaited()
+        # The same message outside such a flow is pushed.
+        await surface.send_message(user, Content("Unprompted"))
+        await _settle()
+        sender.assert_awaited_once()
+
+    with patch("spanreed.web.push._sender", new=sender):
+        asyncio.run(run())
+
+
+def test_a_failing_push_does_not_fail_the_message() -> None:
+    surface = WebSurface()
+    user = mock_user_find_by_id(USER_ID)
+
+    async def run() -> None:
+        await push.subscribe(USER_ID, SUBSCRIPTION)
+        message_id = await surface.send_message(user, Content("still delivered"))
+        await _settle()
+        assert message_id
+        assert surface.recent_events(USER_ID)[-1]["type"] == "message"
+
+    with patch("spanreed.web.push._sender", new=AsyncMock(side_effect=OSError("down"))):
         asyncio.run(run())
