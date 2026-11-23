@@ -68,9 +68,21 @@ class MessageHandle:
 
 class UserInteractionSurface(abc.ABC):
     name: str
+    # A fallback surface gets broadcast traffic only while no other surface
+    # can reach the user unattended (see ``reaches_unattended``).
+    is_fallback: bool = False
 
     @abc.abstractmethod
     async def is_reachable(self, user: User) -> bool: ...
+
+    async def reaches_unattended(self, user: User) -> bool:
+        """Return whether this surface can get the user's attention by itself.
+
+        True for a surface that alerts the user when they are not looking at
+        it, such as one that sends push notifications. While any such
+        surface is reachable, fallback surfaces are left out.
+        """
+        return False
 
     @abc.abstractmethod
     async def send_message(self, user: User, content: Content) -> Any:

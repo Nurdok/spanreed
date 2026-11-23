@@ -100,11 +100,35 @@ class UserInteractionApi:
         return list(self._surfaces)
 
     async def _reachable_surfaces(self) -> list[UserInteractionSurface]:
-        return [
-            surface
-            for surface in self._in_scope_surfaces()
-            if await surface.is_reachable(self._user)
-        ]
+        return await self._without_unneeded_fallbacks(
+            [
+                surface
+                for surface in self._in_scope_surfaces()
+                if await surface.is_reachable(self._user)
+            ]
+        )
+
+    async def _without_unneeded_fallbacks(
+        self, surfaces: list[UserInteractionSurface]
+    ) -> list[UserInteractionSurface]:
+        """Leave out fallback surfaces when another one can alert the user.
+
+        A fallback surface (Telegram) is kept only while none of the other
+        surfaces in ``surfaces`` reaches the user unattended. A flow that
+        the user started on a fallback surface is scoped to it, so it has no
+        other surface here and keeps the one it started on.
+        """
+        for surface in surfaces:
+            if surface.is_fallback:
+                continue
+            try:
+                unattended = await surface.reaches_unattended(self._user)
+            except Exception:
+                _logger.exception(f"Could not ask surface {surface.name}")
+                continue
+            if unattended:
+                return [s for s in surfaces if not s.is_fallback]
+        return surfaces
 
     # -- commands ---------------------------------------------------------
 
@@ -161,15 +185,32 @@ class UserInteractionApi:
         parse_markdown: bool = False,
     ) -> None:
         content = Content(text, parse_html, parse_markdown)
-        for surface in self._surfaces:  # durable: ignores reachability
-            await surface.notify(self._user, content)
+        # Durable: ignores reachability and scope. One surface failing must
+        # not keep the notification from the others.
+        for surface in await self._without_unneeded_fallbacks(list(self._surfaces)):
+            try:
+                await surface.notify(self._user, content)
+            except Exception:
+                _logger.exception(f"Surface {surface.name} failed to notify")
 
     async def send_multiple_messages(
         self, *text: str, delay: int = 1, parse_html: bool = True
     ) -> None:
         contents = [Content(t, parse_html=parse_html) for t in text]
+        delivered = False
+        errors: list[Exception] = []
         for surface in await self._reachable_surfaces():
-            await surface.send_multiple_messages(self._user, contents, delay)
+            try:
+                await surface.send_multiple_messages(self._user, contents, delay)
+                delivered = True
+            except Exception as e:
+                errors.append(e)
+        # Same rule as send_message: fail only if no surface delivered.
+        if delivered:
+            for error in errors:
+                _logger.warning(f"Partial delivery failure: {error!r}")
+        elif errors:
+            raise errors[0]
 
     async def send_document(self, file_name: str, data: bytes) -> MessageHandle:
         handle = MessageHandle()
@@ -185,17 +226,49 @@ class UserInteractionApi:
         return self._delivered_or_raise(handle, errors)
 
     async def edit_message_text(self, handle: MessageHandle, text: str) -> None:
+        """Edit a message on every surface that delivered it.
+
+        A surface that fails (Telegram during a ban) does not stop the
+        others. Raise the first error only if no surface could edit.
+        """
+        edited = False
+        errors: list[Exception] = []
         for surface in self._surfaces:
             message = handle.per_surface.get(surface.name)
-            if message is not None:
+            if message is None:
+                continue
+            try:
                 await surface.edit_message(self._user, message, Content(text))
+                edited = True
+            except Exception as e:
+                errors.append(e)
+        if not edited and errors:
+            raise errors[0]
+        for error in errors:
+            _logger.warning(f"Partial edit failure: {error!r}")
 
     async def delete_message(self, handle: MessageHandle) -> bool:
+        """Delete a message on every surface that delivered it.
+
+        Return whether any surface deleted it. Raise the first error only
+        if every surface that had the message failed.
+        """
         deleted = False
+        attempted = False
+        errors: list[Exception] = []
         for surface in self._surfaces:
             message = handle.per_surface.get(surface.name)
-            if message is not None:
+            if message is None:
+                continue
+            try:
                 deleted = await surface.delete_message(self._user, message) or deleted
+                attempted = True
+            except Exception as e:
+                errors.append(e)
+        if not attempted and errors:
+            raise errors[0]
+        for error in errors:
+            _logger.warning(f"Partial delete failure: {error!r}")
         return deleted
 
     # -- prompts ----------------------------------------------------------
@@ -245,7 +318,14 @@ class UserInteractionApi:
         except asyncio.CancelledError:
             _logger.info(f"Prompt {pending.interaction_id} was cancelled")
             for surface in self._surfaces:
-                await surface.dismiss_prompt(self._user, pending)
+                # One surface failing must not leave the prompt open on the
+                # others, or keep the prompt from being finished.
+                try:
+                    await surface.dismiss_prompt(self._user, pending)
+                except Exception:
+                    _logger.exception(
+                        f"Surface {surface.name} failed to dismiss a prompt"
+                    )
             engine.finish_prompt(pending)
             raise
         for surface in self._surfaces:

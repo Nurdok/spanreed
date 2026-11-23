@@ -19,8 +19,8 @@ control blocks the bot: a command started here never touches Telegram.
   `SurfaceScope(origin_surface="web")` so all of the flow's traffic goes to
   the page only.
 - **Proactive prompts too.** While a page is open (it polls at least every
-  25s; presence lasts 60s), broadcast traffic from plugins also reaches the
-  web UI, so it can answer a prompt that Telegram failed to deliver.
+  25s; presence lasts 60s), or while a device has notifications turned on,
+  broadcast traffic from plugins also reaches the web UI.
 - **Transport.** Plain HTTP: JSON calls plus a long-poll on
   `/app/api/events`. No WebSocket, so nothing to change in nginx. The feed
   is in-process memory, like the engine's pending prompts, so it resets on
@@ -30,6 +30,57 @@ control blocks the bot: a command started here never touches Telegram.
 The routes are a Quart blueprint (`spanreed.web.routes`) registered on the
 existing Web UI plugin app on `127.0.0.1:5000`, which nginx already proxies
 for the OAuth callbacks.
+
+## An app on your phone, with notifications
+
+The web UI can be installed as an app and can send push notifications, so
+it can stand in for Telegram on a phone.
+
+**Set it up (Android, Chrome):**
+
+1. Open `https://spanreed.ink/app/` and log in.
+2. Chrome menu → **Add to Home screen** → **Install**.
+3. Open the installed app and tap **🔕 Off** in the header. Allow
+   notifications when asked. The button turns to **🔔 On** and a test
+   notification arrives.
+
+Notifications are per device: turn them on in each browser or phone that
+should get them. If they arrive late, exempt Chrome from battery
+optimisation in Android's settings.
+
+**What gets a notification:** a prompt, a message or a notification that a
+plugin sends on its own. Tapping it opens the app, where the prompt is
+waiting. A prompt that is asked again replaces its earlier notification.
+Nothing is pushed for replies inside a command you started from the web UI,
+or while the app is on screen.
+
+**How it works:**
+
+- `static/manifest.webmanifest` and the icons make the page installable.
+  `static/sw.js` is the service worker: it shows the notifications and opens
+  the app when one is tapped. It caches nothing.
+- `spanreed.web.push` keeps the server's key pair (created on first use,
+  Redis key `web-ui:vapid`) and each user's subscriptions (Redis hash
+  `web-ui:user:{id}:push`), and sends the pushes with `pywebpush`. The
+  payload is encrypted for the browser. A subscription that the push service
+  reports as gone is deleted. Only the push services of Chrome, Firefox,
+  Safari and Edge are accepted as endpoints.
+- `WebSurface` pushes when it publishes a prompt, message or notification.
+  The push is sent in the background and never fails the plugin's call: it
+  is only a hint to open the app.
+
+**Routing, and Telegram as the fallback:**
+
+- With notifications on, the web surface is reachable even when no page is
+  open, and it counts as able to alert the user unattended.
+- Telegram is a fallback surface. While another surface can alert the user
+  unattended, unprompted traffic (prompts, messages and notifications from
+  plugins) does not go to Telegram at all. With notifications off on every
+  device, it goes to Telegram as before.
+- A command started from Telegram's `/do` still talks on Telegram.
+- A surface that fails does not stop the others. During a Telegram ban,
+  every kind of send, edit and delete still reaches the other surfaces; the
+  ban is only reported to the plugin when no other surface delivered.
 
 ## Plugin settings
 

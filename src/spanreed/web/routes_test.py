@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -64,6 +65,7 @@ async def _app() -> AsyncIterator[tuple[Any, FakeRedis, RecordingSurface]]:
         patch("spanreed.web.auth.redis_api", new=fake),
         patch("spanreed.interaction.web_surface.redis_api", new=fake),
         patch("spanreed.web.google_auth.redis_api", new=fake),
+        patch("spanreed.web.push.redis_api", new=fake),
         patch(
             "spanreed.web.routes.User.find_by_id",
             new=AsyncMock(side_effect=_user),
@@ -550,5 +552,112 @@ def test_saving_bad_settings_changes_nothing() -> None:
             assert response.status_code == 403
             config = await HealthConnectPlugin.get_config(user)
             assert (config.token, config.raw_data_folder) == ("tok", "Health/raw")
+
+    asyncio.run(run())
+
+
+# --- Installable app and push notifications -----------------------------------
+
+PUSH_SUBSCRIPTION = {
+    "endpoint": "https://fcm.googleapis.com/fcm/send/abc",
+    "keys": {"p256dh": "p", "auth": "a"},
+}
+
+
+def test_app_files_are_served_without_login() -> None:
+    async def run() -> None:
+        async with _app() as (client, _, _):
+            manifest = await client.get("/app/manifest.webmanifest")
+            assert manifest.status_code == 200
+            assert manifest.mimetype == "application/manifest+json"
+            data = json.loads(await manifest.get_data(as_text=True))
+            assert data["start_url"] == "/app/" and data["display"] == "standalone"
+            for icon in data["icons"]:
+                response = await client.get(icon["src"])
+                assert response.status_code == 200, icon["src"]
+                assert (await response.get_data()).startswith(b"\x89PNG")
+            worker = await client.get("/app/sw.js")
+            assert worker.status_code == 200
+            assert "showNotification" in await worker.get_data(as_text=True)
+            assert (await client.get("/app/icons/nope.png")).status_code == 404
+
+    asyncio.run(run())
+
+
+def test_push_subscribe_test_and_unsubscribe() -> None:
+    async def run() -> None:
+        from spanreed.web import push
+
+        sent: list[dict] = []
+
+        async def sender(_subscription: dict, data: str, _key: str) -> None:
+            sent.append(json.loads(data))
+
+        async with _app() as (client, _, _):
+            with patch("spanreed.web.push._sender", new=sender):
+                response = await client.post(
+                    "/app/api/push/subscribe",
+                    json={"subscription": PUSH_SUBSCRIPTION},
+                    headers=H,
+                )
+                assert response.status_code == 401  # not logged in
+                await _login(client)
+                state = await (await client.get("/app/api/state")).get_json()
+                assert len(state["push"]["public_key"]) > 80
+
+                response = await client.post(
+                    "/app/api/push/subscribe",
+                    json={"subscription": PUSH_SUBSCRIPTION, "test": True},
+                    headers=H,
+                )
+                assert response.status_code == 200
+                assert await push.has_subscription(USER_ID)
+                assert not await push.has_subscription(OTHER_USER_ID)
+                assert [p["kind"] for p in sent] == ["test"]
+
+                # The page repeats this on every load; it stays one device.
+                await client.post(
+                    "/app/api/push/subscribe",
+                    json={"subscription": PUSH_SUBSCRIPTION},
+                    headers=H,
+                )
+                assert len(sent) == 1
+
+                response = await client.post(
+                    "/app/api/push/unsubscribe",
+                    json={"endpoint": PUSH_SUBSCRIPTION["endpoint"]},
+                    headers=H,
+                )
+                assert (await response.get_json())["removed"] is True
+                assert not await push.has_subscription(USER_ID)
+
+    asyncio.run(run())
+
+
+def test_push_subscribe_rejects_what_is_not_a_push_service() -> None:
+    async def run() -> None:
+        async with _app() as (client, _, _):
+            await _login(client)
+            for subscription in (
+                None,
+                {"endpoint": "https://fcm.googleapis.com/x"},
+                {**PUSH_SUBSCRIPTION, "endpoint": "https://evil.example/x"},
+                {**PUSH_SUBSCRIPTION, "endpoint": "http://fcm.googleapis.com/x"},
+                {
+                    **PUSH_SUBSCRIPTION,
+                    "endpoint": "https://notfcm.googleapis.com.evil.example/x",
+                },
+            ):
+                response = await client.post(
+                    "/app/api/push/subscribe",
+                    json={"subscription": subscription},
+                    headers=H,
+                )
+                assert response.status_code == 400, subscription
+            # A write without the CSRF header is refused.
+            response = await client.post(
+                "/app/api/push/subscribe", json={"subscription": PUSH_SUBSCRIPTION}
+            )
+            assert response.status_code == 403
 
     asyncio.run(run())
