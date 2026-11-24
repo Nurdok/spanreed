@@ -375,6 +375,15 @@ class GmailApi:
         date_query = f"after:{since_date.strftime('%Y/%m/%d')}"
         return await self.get_recent_messages(query=date_query)
 
+    async def get_messages_after(self, moment: datetime.datetime) -> List[EmailMessage]:
+        """Return the messages that reached Gmail after a moment, newest first.
+
+        The moment is given to Gmail in seconds, which Gmail takes as it
+        is. A date (``after:2026/05/09``) would be midnight in Pacific
+        time, whatever the timezone of the user.
+        """
+        return await self.get_recent_messages(query=f"after:{int(moment.timestamp())}")
+
     @staticmethod
     def _collect_attachment_parts(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Walk a message payload and return all parts that are attachments.
