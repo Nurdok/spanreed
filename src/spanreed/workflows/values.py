@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import types
 from typing import Any, TypeVar
 
 from spanreed.config_form import ConfigFormError, config_data_from_form
@@ -50,6 +51,8 @@ def to_data(value: Any) -> Any:
             field.name: to_data(getattr(value, field.name))
             for field in dataclasses.fields(value)
         }
+    if isinstance(value, types.SimpleNamespace):
+        return {name: to_data(item) for name, item in vars(value).items()}
     if isinstance(value, dict):
         return {str(key): to_data(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
@@ -58,3 +61,43 @@ def to_data(value: Any) -> Any:
             items.append(f"… and {len(value) - TRACE_MAX_ITEMS} more")
         return items
     return to_data(repr(value))
+
+
+def whole_data(value: Any) -> Any:
+    """Return a value as JSON data with nothing cut off.
+
+    This is for an event that is kept to run a workflow for again:
+    ``to_data`` keeps only the start of a long text or list, and a workflow
+    that ran for that would write the shortened value.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: whole_data(getattr(value, field.name))
+            for field in dataclasses.fields(value)
+        }
+    if isinstance(value, types.SimpleNamespace):
+        return {name: whole_data(item) for name, item in vars(value).items()}
+    if isinstance(value, dict):
+        return {str(key): whole_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [whole_data(item) for item in value]
+    return repr(value)
+
+
+def from_whole_data(data: Any) -> Any:
+    """Return what ``whole_data`` gave as a value that templates can read.
+
+    A mapping becomes an object with a field for each name, so that
+    ``{{ trigger.date }}`` reads it as it reads the event it was made from.
+    """
+    if isinstance(data, dict):
+        return types.SimpleNamespace(
+            **{str(name): from_whole_data(item) for name, item in data.items()}
+        )
+    if isinstance(data, list):
+        return [from_whole_data(item) for item in data]
+    return data

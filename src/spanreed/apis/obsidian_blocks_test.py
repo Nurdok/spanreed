@@ -366,3 +366,22 @@ def test_write_note_can_refuse_to_replace_a_note(mock_obsidian: AsyncMock) -> No
     _note(mock_obsidian, body="x", if_exists="fail")
 
     assert mock_obsidian.write_binary_file.await_args.kwargs == {"overwrite": False}
+
+
+def test_the_blocks_name_what_they_write() -> None:
+    # From the inputs as they are stored: the templates are not filled in.
+    assert SetNoteProperties().writes(
+        {
+            "note": "Daily/{{ trigger.date }}.md",
+            "properties": {"weight": "x", "steps": 1},
+        }
+    ) == [
+        "the property “weight” of Daily/{{ trigger.date }}.md",
+        "the property “steps” of Daily/{{ trigger.date }}.md",
+    ]
+    assert SetNoteProperties().writes({"properties": {"weight": "x"}}) == []
+    # A note is a file: the two blocks can write the same one.
+    assert WriteFile().writes({"path": "Notes/a.md"}) == ["the file Notes/a.md"]
+    assert WriteNote().writes({"path": "Notes/a.md"}) == ["the file Notes/a.md"]
+    assert WriteNote().writes({}) == []
+    assert CreateDailyNote().writes({}) == []

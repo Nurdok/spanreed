@@ -1013,6 +1013,122 @@ def test_cancelling_the_question_runs_nothing(mock_bot: AsyncMock) -> None:
     mock_bot.send_message.assert_not_awaited()
 
 
+# -- trying a workflow out -----------------------------------------------------
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_the_event_of_the_last_run_is_kept_whole(mock_bot: AsyncMock) -> None:
+    record = Record()
+    long_text = "x" * 5000
+    workflow = workflow_of(_record("one", "seen"), events=["first", long_text])
+
+    async def scenario() -> tuple[Any, Any]:
+        engine = _engine(record)
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        (run, *_) = await engine.store.recent_runs(workflow.id, 1)
+        return await engine.test_events(workflow), run
+
+    with fake_storage():
+        events, run = asyncio.run(scenario())
+
+    # The trace keeps the start of a long value. The event is all there,
+    # so that a test does not write a shortened value.
+    assert len(run["trigger"]["outputs"]["value"]) < 5000
+    assert events["last"]["event"] == {"value": long_text}
+    assert events["last"]["at"] == run["started_at"]
+    # The fake trigger makes an event without asking.
+    assert events["now"] is True
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_test_runs_the_workflow_it_is_given_for_the_last_event(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    stored = workflow_of(
+        _record("one", "stored {{ trigger.value }}"), events=["monday"]
+    )
+
+    async def scenario() -> dict[str, Any] | None:
+        engine = _engine(record)
+        await engine.save(stored)
+        await drain(engine, stored)
+        # What the editor holds: not saved.
+        draft = workflow_of(
+            _record("new", "draft {{ trigger.value }}"), events=["monday"]
+        )
+        trace = await engine.run_test(draft, mock_user_find_by_id(4), "last")
+        kept = await engine.store.get(stored.id)
+        assert kept is not None and kept.steps[0].id == "one"
+        # The test is in the history, marked. It did not become the last event.
+        newest, oldest = await engine.store.recent_runs(stored.id, 10)
+        assert (newest.get("test"), oldest.get("test")) == (True, None)
+        assert (await engine.test_events(stored))["last"]["at"] == oldest["started_at"]
+        await engine.stop()
+        return trace
+
+    with fake_storage():
+        trace = asyncio.run(scenario())
+
+    assert record.texts == ["stored monday", "draft monday"]
+    assert trace is not None
+    assert (trace["status"], trace["manual"], trace["test"]) == ("finished", True, True)
+    assert trace["steps"][0]["inputs"] == {"text": "draft monday"}
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_test_that_fails_is_not_tried_again(mock_bot: AsyncMock) -> None:
+    record = Record()
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), events=["monday"])
+
+    async def scenario() -> dict[str, Any] | None:
+        engine = _engine(record)
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        record.failures = [RuntimeError("boom")]
+        trace = await engine.run_test(workflow, mock_user_find_by_id(4), "last")
+        await engine.stop()
+        return trace
+
+    with fake_storage(), _sleeps():
+        trace = asyncio.run(scenario())
+
+    assert trace is not None and trace["status"] == "failed"
+    assert record.texts == ["monday"]
+    mock_bot.notify.assert_not_called()
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_workflow_that_never_ran_is_tested_with_an_event_made_now(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), enabled=False)
+    asking = workflow_of(
+        _record("one", "{{ trigger.value }}"), trigger="fake.ranged", enabled=False
+    )
+    asking.id = "wf_2"
+
+    async def scenario() -> None:
+        engine = _engine(record)
+        await engine.save(workflow)
+        await engine.save(asking)
+        user = mock_user_find_by_id(4)
+        assert await engine.test_events(workflow) == {"last": None, "now": True}
+        assert await engine.run_test(workflow, user, "last") is None
+        trace = await engine.run_test(workflow, user, "now")
+        assert trace is not None and trace["status"] == "finished"
+        # A trigger that asks first cannot make an event by itself.
+        assert await engine.test_events(asking) == {"last": None, "now": False}
+        assert await engine.run_test(asking, user, "now") is None
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+    assert record.texts == ["by hand"]
+
+
 @patch_user_interaction("spanreed.workflows.engine")
 def test_a_user_cannot_run_the_workflow_of_another_user(mock_bot: AsyncMock) -> None:
     record = Record()
