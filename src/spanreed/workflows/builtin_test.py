@@ -28,6 +28,8 @@ from spanreed.workflows.builtin import (
     RandomSchedule,
     RandomTimes,
     Schedule,
+    Notify,
+    NotifyInput,
     SendMessage,
     SendMessageInput,
     Tick,
@@ -106,6 +108,7 @@ def test_the_builtin_blocks_are_well_formed() -> None:
         "core.if",
         "core.for-each",
         "core.send-message",
+        "core.notify",
     ]
 
 
@@ -228,6 +231,40 @@ def test_a_message_that_comes_out_empty_is_not_sent(mock_bot: AsyncMock) -> None
         asyncio.run(SendMessage().run(_step_context(), SendMessageInput(message)))
 
     mock_bot.send_message.assert_not_called()
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_notify_leaves_a_notification_in_plain_text(mock_bot: AsyncMock) -> None:
+    message = "Updated 2 <overdue> tasks & more."
+    ctx = _step_context()
+
+    asyncio.run(Notify().run(ctx, NotifyInput(message)))
+
+    mock_bot.notify.assert_awaited_once_with(
+        message, parse_html=False, parse_markdown=False
+    )
+    mock_bot.send_message.assert_not_called()
+    # A run by hand that told the user something is not summed up.
+    assert ctx.interaction.talked
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_notify_can_read_the_message_as_markdown(mock_bot: AsyncMock) -> None:
+    message = "It said:\n\n```python\nValueError: boom\n```"
+
+    asyncio.run(Notify().run(_step_context(), NotifyInput(message, markdown=True)))
+
+    mock_bot.notify.assert_awaited_once_with(
+        message, parse_html=False, parse_markdown=True
+    )
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_notification_that_comes_out_empty_is_not_left(mock_bot: AsyncMock) -> None:
+    for message in ("", "  \n "):
+        asyncio.run(Notify().run(_step_context(), NotifyInput(message)))
+
+    mock_bot.notify.assert_not_called()
 
 
 # -- at random times ---------------------------------------------------------

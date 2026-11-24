@@ -57,6 +57,7 @@ def test_name() -> None:
         "core.if",
         "core.for-each",
         "core.send-message",
+        "core.notify",
         "core.command",
         "core.ask-choice",
         "core.ask-each",
