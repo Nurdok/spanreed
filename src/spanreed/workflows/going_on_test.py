@@ -480,6 +480,38 @@ def test_a_run_goes_on_also_if_its_place_cannot_be_kept(mock_bot: AsyncMock) -> 
     _run(scenario)
 
 
+@patch_user_interaction("spanreed.workflows.engine")
+def test_nothing_goes_on_from_the_place_of_a_run_that_is_over(
+    mock_bot: AsyncMock,
+) -> None:
+    # Two events that are equal: the second must be a run of its own.
+    workflow = _three_steps(events=["monday", "monday"])
+
+    async def scenario(world: World) -> None:
+        world.hold.open = True
+        drop = world.engine.store.drop_place
+        failures = [OSError("Redis is away")]
+
+        async def drop_place(workflow_id: str, run_id: str) -> None:
+            if failures:
+                raise failures.pop()
+            await drop(workflow_id, run_id)
+
+        with patch.object(world.engine.store, "drop_place", drop_place):
+            await world.engine.save(workflow)
+            await world.until(lambda: world.engine._sources[workflow.id].done())
+
+        first, second = await world.runs(workflow)
+        assert first["id"] != second["id"]
+        assert "picked_up" not in second
+        assert len(second["steps"]) == 3
+        assert len(world.record.texts) == 4
+        # The place that was left behind is gone now.
+        assert await world.places(workflow) == {}
+
+    _run(scenario)
+
+
 # -- a run by hand -----------------------------------------------------------
 
 

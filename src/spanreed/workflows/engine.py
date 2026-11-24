@@ -296,8 +296,8 @@ class _Place:
                 f" of workflow {self._workflow.id}."
             )
 
-    async def drop(self) -> None:
-        """Drop the place: the run is over."""
+    async def drop(self) -> bool:
+        """Drop the place: the run is over. Return whether that worked."""
         try:
             await self._store.drop_place(self._workflow.id, self._trace["id"])
         except Exception:
@@ -305,6 +305,8 @@ class _Place:
                 f"Could not drop the place of run {self._trace['id']}"
                 f" of workflow {self._workflow.id}."
             )
+            return False
+        return True
 
 
 def _now() -> str:
@@ -459,6 +461,9 @@ class WorkflowEngine:
         self._going_on: set[asyncio.Task[None]] = set()
         # Whether the engine stops: a run that ends for that keeps its place.
         self._stopping = False
+        # The runs that are over and whose place could not be dropped.
+        # Nothing goes on from those.
+        self._over: set[str] = set()
         self._logger = logging.getLogger("spanreed.workflows.engine")
 
     @property
@@ -833,8 +838,8 @@ class WorkflowEngine:
                     pass
                 else:
                     await self._keep(workflow, trace)
-                    if place is not None:
-                        await place.drop()
+                    if place is not None and not await place.drop():
+                        self._over.add(run.id)
         finally:
             del self._turns[run.id]
             await turn.end()
@@ -860,6 +865,11 @@ class WorkflowEngine:
         found = None
         for run_id, place in places.items():
             if place.get("manual") or run_id in self._turns:
+                continue
+            if run_id in self._over:
+                # Its run ended, and its place is still there.
+                await self._store.drop_place(workflow.id, run_id)
+                self._over.discard(run_id)
                 continue
             if (
                 found is None
