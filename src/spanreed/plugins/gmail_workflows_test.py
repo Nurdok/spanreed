@@ -62,7 +62,7 @@ def _receipts() -> Workflow:
                 inputs={"email": "{{ trigger.id }}"},
             ),
             Step(
-                id="none",
+                id="no_files",
                 block="core.send-message",
                 inputs={
                     "message": "{% if files.count == 0 %}📎 No matching attachment "

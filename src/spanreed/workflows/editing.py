@@ -228,13 +228,17 @@ def _inputs(cls: type[Any], submitted: Any, where: str, found: list[str]) -> dic
 
 
 def _steps(
-    registry: BlockRegistry, submitted: Any, prefix: str, found: list[str]
+    registry: BlockRegistry,
+    submitted: Any,
+    prefix: str,
+    found: list[str],
+    first: int = 1,
 ) -> list[Step]:
     if not isinstance(submitted, list):
         found.append("The steps are missing.")
         return []
     steps = []
-    for number, sent in enumerate(submitted, start=1):
+    for number, sent in enumerate(submitted, start=first):
         where = f"Step {prefix}{number}"
         if not isinstance(sent, dict) or not all(
             isinstance(sent.get(key), str) for key in ("id", "block")
@@ -248,13 +252,20 @@ def _steps(
             inputs = _inputs(block.Input, sent.get("inputs", {}), where, found)
         # A block that is not there is a problem of the workflow, which
         # the check of the whole workflow reports.
+        inside = _steps(registry, sent.get("steps", []), f"{prefix}{number}.", found)
         steps.append(
             Step(
                 id=sent["id"],
                 block=sent["block"],
                 inputs=inputs,
-                steps=_steps(
-                    registry, sent.get("steps", []), f"{prefix}{number}.", found
+                steps=inside,
+                # The second list of a branch goes on counting.
+                otherwise=_steps(
+                    registry,
+                    sent.get("otherwise", []),
+                    f"{prefix}{number}.",
+                    found,
+                    first=len(inside) + 1,
                 ),
             )
         )

@@ -102,12 +102,45 @@ for each set of a Hevy workout:
   from its first step, so the items before are done again.
 - The trace keeps the first 50 rounds of a loop, and the one that failed.
 
+A step whose block is a branch holds two lists of steps and runs one of
+them. `core.if` runs `steps` if its condition holds, and `otherwise` if not:
+
+```json
+{"id": "found", "block": "core.if",
+ "inputs": {"condition": "{{ files.count > 0 }}"},
+ "steps": [
+   {"id": "tell", "block": "core.send-message",
+    "inputs": {"message": "Saved {{ files.count }} files."}}
+ ],
+ "otherwise": [
+   {"id": "nothing", "block": "core.send-message",
+    "inputs": {"message": "There was nothing to save."}}
+ ]}
+```
+
+- The steps on a side can refer to what is before the branch, to the branch
+  (`{{ found.yes }}`) and to the steps before them on the same side. A step
+  after the branch can refer to the branch, and not to a step inside it: only
+  one side ran.
+- The second side goes on counting where the first stopped: 2.1 and 2.2 on
+  the first side, 2.3 on the second.
+- "Only continue if" on a side ends the run, or the round of the loop that
+  the branch is in.
+- A step on a side that fails makes the branch fail: `failed at step 2, If:
+  Write file: …`.
+- The trace says which side ran, and holds its steps.
+- A side can be empty.
+
+A step cannot have an id that templates read as something else: `if`, `not`,
+`in`, `and`, `or`, `is`, `else`, `true`, `false`, `none`.
+
 ## Blocks
 
 | Block | Kind | Published by |
 | --- | --- | --- |
 | `core.schedule` On a schedule | trigger | Workflows |
 | `core.continue-if` Only continue if | logic | Workflows |
+| `core.if` If | logic | Workflows |
 | `core.for-each` For each | logic | Workflows |
 | `core.send-message` Send message | ask | Workflows |
 | `core.send-file` Send file | ask | Workflows |
@@ -169,8 +202,9 @@ The same workflow on a phone, and the blocks for files in the editor's list:
 ![The blocks for files in the list of blocks](images/web-ui-workflow-gmail-blocks-desktop.png)
 
 A message that comes out empty is not sent. So a message that is all inside
-`{% if … %}` is sent only when the condition holds, which stands in for a
-branch until there are branches.
+`{% if … %}` is sent only when the condition holds. The workflows that
+Gmail Monitor's rules became say things this way. A workflow that is made
+now can use "If" in its place.
 
 ### Gmail
 
@@ -234,6 +268,10 @@ class TodoistPlugin(Plugin[UserConfig]):
 A block that holds steps is a `Loop`: an action with a `rounds` method, which
 returns what the steps inside see as the loop's outputs, once for each time
 they run. `run` returns the outputs for the steps after the loop.
+
+A block that chooses between two lists of steps is a `Branch`: an action with
+a `takes_first` method, which says from the inputs whether the first list
+runs or the second.
 
 ### Triggers
 
@@ -409,8 +447,8 @@ surfaces check a command with `get_command_for_user` before they run it.
   ended. A step's inputs and outputs are kept only in the run's trace.
 - **Turning a workflow on or off takes effect at once.**
 
-Not there yet: branches, and blocks that ask the user a question. A question
-a run is waiting on would not survive a restart.
+Not there yet: blocks that ask the user a question. A question a run is
+waiting on would not survive a restart.
 
 ## Editing
 

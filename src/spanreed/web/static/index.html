@@ -266,6 +266,9 @@
   details.round summary::-webkit-details-marker { display: none; }
   details.round summary small { color: var(--muted); }
   details.round .trace { padding: 8px 9px; }
+  .round.side { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  .round.side .side-h { padding: 5px 9px; font-size: 13px; color: var(--muted); }
+  .round.side .trace { padding: 8px 9px; border-top: 1px solid var(--line); }
   @media (max-width: 720px) {
     .lane { flex-direction: column; align-items: stretch; overflow-x: visible; padding-right: 2px;
             -webkit-mask-image: none; mask-image: none; }
@@ -1116,10 +1119,10 @@ function richValue(value, sources, pairs) {
 }
 
 function renderCard(card, badge, sources, edit) {
-  const inside = card.steps || [];
-  // A loop that is being edited shows where its steps go, also while it has none.
-  const holds = inside.length || (edit && "inside_title" in card);
-  const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : "") + (holds ? " holds" : ""));
+  // The lists of steps that the card holds: one for a loop, two for a branch.
+  // While it is edited, a list shows where its steps go, also while it has none.
+  const lanes = (card.lanes || []).filter((lane) => edit || (card[lane.key] || []).length);
+  const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : "") + (lanes.length ? " holds" : ""));
   const head = el("div", "wc-head"), title = el("div", "wc-title");
   title.append(el("small", "", card.app || "Unknown block"), el("strong", "", card.title));
   head.append(glyph(card.app, card.kind), title, el("span", "num", badge));
@@ -1141,13 +1144,13 @@ function renderCard(card, badge, sources, edit) {
     sec.append(el("div", "outs-l", "Outputs"), chips);
     c.append(sec);
   }
-  if (holds) {
-    // The steps of a loop, inside its card.
+  for (const lane of lanes) {
+    const inside = card[lane.key] || [];
     const sec = el("div", "wc-sec"), inner = el("div", "inner");
-    // Inside, the loop offers the item of the round, and each step offers
-    // its outputs to the ones after it.
-    let offers = edit ? [...edit.offers, loopOffer(card, edit.cards)] : null;
-    const list = edit && draftStep(card.id).steps;
+    // Inside, the card offers what it gives (a loop: the item of the round),
+    // and each step offers its outputs to the ones after it in its list.
+    let offers = edit ? [...edit.offers, holderOffer(card, edit.cards)] : null;
+    const list = edit && draftStep(card.id)[lane.key];
     inside.forEach((step, i) => {
       if (edit) inner.append(addStepButton(list, i, "vjoin add"));
       else if (i) inner.append(el("span", "vjoin"));
@@ -1155,14 +1158,15 @@ function renderCard(card, badge, sources, edit) {
       if (edit) offers = [...offers, offerOf(step)];
     });
     if (edit) inner.append(addStepButton(list, inside.length, "vjoin add"));
-    sec.append(el("div", "outs-l", card.inside_title || "Steps inside"), inner);
+    sec.append(el("div", "outs-l", lane.title), inner);
     c.append(sec);
   }
   return c;
 }
 
 // Some steps and the steps inside them, in the order they run.
-const allSteps = (steps) => steps.flatMap((step) => [step, ...allSteps(step.steps || [])]);
+const allSteps = (steps) => steps.flatMap((step) =>
+  [step, ...allSteps(step.steps || []), ...allSteps(step.otherwise || [])]);
 
 // The trigger and the steps, left to right. On a phone, top to bottom.
 function renderLane(d) {
@@ -1178,12 +1182,15 @@ function renderLane(d) {
 // holds the steps as they are now: added, removed and moved.
 // The draft as cards, numbered as the steps are now.
 function draftCards() {
-  const number = (steps, prefix) => steps.forEach((step, i) => {
-    step.number = prefix + (i + 1);
-    number(step.steps, step.number + ".");
+  // The second list of a branch goes on counting where the first stopped.
+  const number = (steps, prefix, first) => steps.forEach((step, i) => {
+    step.number = prefix + (first + i);
+    number(step.steps, step.number + ".", 1);
+    number(step.otherwise, step.number + ".", step.steps.length + 1);
   });
-  number(draft.steps, "");
-  const view = (step) => ({ ...step.card, id: step.id, number: step.number, steps: step.steps.map(view) });
+  number(draft.steps, "", 1);
+  const view = (step) => ({ ...step.card, id: step.id, number: step.number,
+                            steps: step.steps.map(view), otherwise: step.otherwise.map(view) });
   return { trigger: { ...draft.trigger.card, id: "trigger" }, steps: draft.steps.map(view) };
 }
 
@@ -1219,7 +1226,8 @@ const draftInputs = (card) => Object.fromEntries(card.fields.filter((f) => f.edi
 // A step of the draft keeps the card it is drawn from: its title, its
 // inputs and how each is edited, its outputs.
 const draftSteps = (cards) => cards.map((card) =>
-  ({ id: card.id, block: card.block, inputs: draftInputs(card), steps: draftSteps(card.steps || []), card }));
+  ({ id: card.id, block: card.block, inputs: draftInputs(card), steps: draftSteps(card.steps || []),
+     otherwise: draftSteps(card.otherwise || []), card }));
 
 async function startEditing(d) {
   // The blocks that a step can be added from.
@@ -1241,15 +1249,18 @@ function redrawEditor() {
 function draftStep(id, steps = draft.steps) {
   for (const step of steps) {
     if (step.id === id) return step;
-    const inside = draftStep(id, step.steps);
+    const inside = draftStep(id, step.steps) || draftStep(id, step.otherwise);
     if (inside) return inside;
   }
   return null;
 }
 
 // An id for a new step, after its block: write_note, then write_note_2.
+// Words that a template reads as something else than the name of a step.
+const RESERVED_IDS = ["and", "or", "not", "in", "is", "if", "else", "true", "false", "none"];
 function newStepId(block) {
-  const base = block.split(".").pop().replace(/[^a-z0-9]+/g, "_").replace(/^[^a-z]+/, "") || "step";
+  let base = block.split(".").pop().replace(/[^a-z0-9]+/g, "_").replace(/^[^a-z]+/, "") || "step";
+  if (RESERVED_IDS.includes(base)) base += "_step";
   const used = new Set(["trigger", "run", ...allSteps(draft.steps).map((step) => step.id)]);
   let id = base;
   for (let n = 2; used.has(id); n++) id = base + "_" + n;
@@ -1262,7 +1273,8 @@ function addStepButton(list, index, cls) {
   b.type = "button"; b.title = "Add a step here"; b.setAttribute("aria-label", "Add a step here");
   b.onclick = () => openBlockPicker((entry) => {
     const card = structuredClone(entry.card);
-    list.splice(index, 0, { id: newStepId(entry.block), block: entry.block, inputs: draftInputs(card), steps: [], card });
+    list.splice(index, 0, { id: newStepId(entry.block), block: entry.block, inputs: draftInputs(card),
+                            steps: [], otherwise: [], card });
     draft.changed = true;
     redrawEditor();
   });
@@ -1335,9 +1347,10 @@ function inputsOf(card) {
 // What a card gives to the cards after it, for the list of values to insert.
 const offerOf = (card) => ({ id: card.id, badge: card.number, kind: card.kind, title: card.title, names: card.outputs });
 
-// Inside a loop, the loop gives its item. If it loops over a list whose
-// items are known, such as the sets of a workout, it gives their fields too.
-function loopOffer(card, cards) {
+// What a card that holds steps gives to them. A loop gives the item of the
+// round. If it loops over a list whose items are known, such as the sets of
+// a workout, it gives their fields too.
+function holderOffer(card, cards) {
   const names = [...card.outputs];
   const over = /^\s*\{\{\s*([a-z][a-z0-9_]*)\.([A-Za-z_]\w*)\s*\}\}\s*$/.exec(inputsOf(card).items || "");
   const fields = over && cards[over[1]] && (cards[over[1]].item_outputs || {})[over[2]];
@@ -1455,7 +1468,8 @@ function openValueSheet(box, offers) {
 
 // The draft as the server takes it: without the cards it is drawn from.
 function draftForm() {
-  const bare = (steps) => steps.map((step) => ({ id: step.id, block: step.block, inputs: step.inputs, steps: bare(step.steps) }));
+  const bare = (steps) => steps.map((step) => ({ id: step.id, block: step.block, inputs: step.inputs,
+                                                 steps: bare(step.steps), otherwise: bare(step.otherwise) }));
   return { name: draft.name, command_name: draft.command_name,
            trigger: { block: draft.trigger.block, params: draft.trigger.params }, steps: bare(draft.steps) };
 }
@@ -1587,9 +1601,23 @@ function traceStep(step, cards, place) {
   traceLines(row, "got", step.inputs);
   if (step.rounds) row.append(traceRounds(step, cards));
   traceLines(row, "gave", step.outputs);
+  if (step.inside) row.append(traceSide(step, cards));
   if (step.reason) row.append(el("div", "kv", step.reason));
   if (step.error) row.append(el("div", "kv err", step.error));
   return row;
+}
+
+// The side of a branch that ran, with its steps.
+function traceSide(step, cards) {
+  const box = el("div", "rounds"), side = el("div", "round side"), inner = el("div", "trace");
+  const head = el("div", "side-h", step.took_title + (step.inside.length ? "" : ": no steps"));
+  side.append(head);
+  if (step.inside.length) {
+    step.inside.forEach((s, i) => inner.append(traceStep(s, cards, String(i + 1))));
+    side.append(inner);
+  }
+  box.append(side);
+  return box;
 }
 
 function traceRounds(step, cards) {

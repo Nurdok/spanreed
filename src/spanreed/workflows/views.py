@@ -20,7 +20,6 @@ from spanreed.workflows.blocks import (
     Action,
     Block,
     BlockKind,
-    Loop,
     RunInfo,
     Trigger,
 )
@@ -142,23 +141,32 @@ def _item_outputs(outputs: type[Any]) -> dict[str, list[str]]:
     return described
 
 
+def _lanes(block: Block | None) -> list[dict[str, str]]:
+    """Return the lists of steps that a step of a block holds, with their titles."""
+    if not isinstance(block, Action):
+        return []
+    return [{"key": key, "title": title} for key, title in block.lanes()]
+
+
 def _step_cards(
-    engine: WorkflowEngine, steps: list[Step], prefix: str = ""
+    engine: WorkflowEngine, steps: list[Step], prefix: str = "", first: int = 1
 ) -> list[dict[str, Any]]:
     """Return the cards of some steps, each with the cards of its own steps.
 
     ``number`` is what the page and the engine's messages call a step:
-    ``2``, and ``2.1`` for the first step inside it.
+    ``2``, and ``2.1`` for the first step inside it. The second list of a
+    branch goes on counting where the first stopped.
     """
     cards = []
-    for position, step in enumerate(steps, start=1):
+    for position, step in enumerate(steps, start=first):
         number = f"{prefix}{position}"
         card = _card(engine, step.block, step.inputs, step.id, Action)
         card["number"] = number
         card["steps"] = _step_cards(engine, step.steps, prefix=f"{number}.")
-        block = engine.registry.get(step.block)
-        if isinstance(block, Loop):
-            card["inside_title"] = block.inside_title
+        card["otherwise"] = _step_cards(
+            engine, step.otherwise, prefix=f"{number}.", first=len(step.steps) + 1
+        )
+        card["lanes"] = _lanes(engine.registry.get(step.block))
         cards.append(card)
     return cards
 
@@ -169,6 +177,7 @@ def _flat(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for card in cards:
         flat.append(card)
         flat.extend(_flat(card.get("steps", [])))
+        flat.extend(_flat(card.get("otherwise", [])))
     return flat
 
 
@@ -190,8 +199,8 @@ def block_entry(
     expected: type[Block] = Trigger if isinstance(block, Trigger) else Action
     card = _card(engine, block.id, {}, "", expected)
     card["steps"] = []
-    if isinstance(block, Loop):
-        card["inside_title"] = block.inside_title
+    card["otherwise"] = []
+    card["lanes"] = _lanes(block)
     return {
         "block": block.id,
         "title": block.title,
@@ -230,7 +239,7 @@ def _writes(engine: WorkflowEngine, steps: list[Step]) -> set[str]:
         block = engine.registry.get(step.block)
         if isinstance(block, Action):
             written.update(block.writes(step.inputs))
-        written |= _writes(engine, step.steps)
+        written |= _writes(engine, step.steps) | _writes(engine, step.otherwise)
     return written
 
 

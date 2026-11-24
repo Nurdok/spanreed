@@ -52,6 +52,7 @@ def test_name() -> None:
     assert [block.id for block in plugin.blocks()] == [
         "core.schedule",
         "core.continue-if",
+        "core.if",
         "core.for-each",
         "core.send-message",
         "core.download-file",

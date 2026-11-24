@@ -13,6 +13,7 @@ from spanreed.workflows.blocks import (
     Action,
     Block,
     BlockKind,
+    Branch,
     Loop,
     NoOutput,
     NoQuestion,
@@ -114,6 +115,38 @@ class ContinueIf(Action[ContinueIfInput, NoOutput]):
 
 
 @dataclass
+class IfInput:
+    """The input of ``If``."""
+
+    condition: bool
+
+
+@dataclass
+class IfOutput:
+    """What ``If`` gives: which way it went."""
+
+    # Whether the condition held.
+    yes: bool
+
+
+class If(Branch[IfInput, IfOutput]):
+    """Run one list of steps if a condition holds, and another if not."""
+
+    id = "core.if"
+    title = "If"
+    first_title = "If yes"
+    second_title = "Otherwise"
+
+    def takes_first(self, inputs: IfInput) -> bool:
+        """Return whether the condition holds."""
+        return bool(inputs.condition)
+
+    async def run(self, ctx: StepContext, inputs: IfInput) -> IfOutput:
+        """Return which way the branch goes."""
+        return IfOutput(yes=bool(inputs.condition))
+
+
+@dataclass
 class ForEachInput:
     """The input of ``ForEach``."""
 
@@ -182,4 +215,4 @@ class SendMessage(Action[SendMessageInput, NoOutput]):
 
 def builtin_blocks() -> list[Block]:
     """Return the blocks that Spanreed itself publishes."""
-    return [Schedule(), ContinueIf(), ForEach(), SendMessage()]
+    return [Schedule(), ContinueIf(), If(), ForEach(), SendMessage()]
