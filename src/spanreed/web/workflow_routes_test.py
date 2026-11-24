@@ -502,6 +502,290 @@ def test_an_edit_takes_effect_at_once() -> None:
     asyncio.run(run())
 
 
+def test_the_editor_adds_removes_and_moves_steps() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+            catalog = await _json(await client.get("/app/api/workflows/catalog"))
+            (message,) = [
+                b for b in catalog["blocks"] if b["block"] == "core.send-message"
+            ]
+            find, check, move, tell = form["steps"]
+            # A new first step, made from the card that the catalog gives.
+            hello = {
+                "id": "hello",
+                "block": message["block"],
+                "inputs": {
+                    f["name"]: f["edit"]["text"] for f in message["card"]["fields"]
+                },
+                "steps": [],
+            }
+            hello["inputs"]["message"] = "Looking for chores."
+            # The message about what moved goes; the move stays last.
+            form["steps"] = [hello, find, check, move]
+
+            response = await client.put(url, json=form, headers=H)
+
+            assert response.status_code == 200
+            shown = await _json(response)
+            assert [(s["number"], s["id"]) for s in shown["steps"]] == [
+                ("1", "hello"),
+                ("2", "find"),
+                ("3", "any"),
+                ("4", "move"),
+            ]
+            stored = await engine.store.get(workflow.id)
+            assert stored is not None
+            assert stored.steps[0].inputs == {"message": "Looking for chores."}
+
+    asyncio.run(run())
+
+
+def test_a_step_moved_before_what_it_needs_is_refused() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+            find, check, move, tell = form["steps"]
+            form["steps"] = [check, find, move, tell]
+
+            response = await client.put(url, json=form, headers=H)
+
+            assert response.status_code == 400
+            assert (await _json(response))["problems"] == [
+                "Step 1, Only continue if: “find” is not the trigger, the run "
+                "or an earlier step."
+            ]
+
+    asyncio.run(run())
+
+
+def test_the_trigger_of_a_workflow_cannot_be_changed() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+            form["trigger"] = {"block": "core.other-trigger", "params": {}}
+
+            response = await client.put(url, json=form, headers=H)
+
+            assert response.status_code == 400
+            assert (await _json(response))["problems"][0].startswith(
+                "The trigger of a workflow cannot be changed."
+            )
+
+    asyncio.run(run())
+
+
+# -- what a workflow can be made of --------------------------------------------
+
+
+def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            assert (await client.get("/app/api/workflows/catalog")).status_code == 401
+            await _login(client)
+
+            catalog = await _json(await client.get("/app/api/workflows/catalog"))
+
+            blocks = {block["block"]: block for block in catalog["blocks"]}
+            assert list(blocks) == [
+                "core.schedule",
+                "core.continue-if",
+                "core.for-each",
+                "core.send-message",
+                "todoist.find-tasks",
+                "todoist.set-due-date",
+            ]
+            find = blocks["todoist.find-tasks"]
+            assert (find["title"], find["app"], find["kind"]) == (
+                "Find tasks",
+                "Todoist",
+                "action",
+            )
+            assert find["connected"] is True
+            assert find["description"]
+            # The card of a new step: every input at its default.
+            assert [
+                (f["name"], f["edit"]["control"], f["edit"]["required"])
+                for f in find["card"]["fields"]
+            ] == [("label", "text", True), ("due", "choice", False)]
+            assert find["card"]["fields"][1]["edit"]["text"] == "any"
+            assert find["card"]["outputs"] == ["tasks", "count"]
+            assert blocks["core.for-each"]["card"]["inside_title"] == "For each item"
+            schedule = blocks["core.schedule"]
+            assert (schedule["kind"], schedule["by_hand"]) == ("trigger", True)
+
+    asyncio.run(run())
+
+
+def test_the_catalog_says_which_plugins_are_not_set_up() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            await _login(client)
+
+            async def registered(cls: Any, user: Any) -> bool:
+                return bool(cls.canonical_name() != "todoist")
+
+            with patch.object(Plugin, "is_registered", classmethod(registered)):
+                catalog = await _json(await client.get("/app/api/workflows/catalog"))
+
+            connected = {b["block"]: b["connected"] for b in catalog["blocks"]}
+            assert connected["todoist.find-tasks"] is False
+            assert connected["core.send-message"] is True
+            recipes = {recipe["id"]: recipe for recipe in catalog["recipes"]}
+            assert recipes["todoist-no-overdue"]["missing"] == ["Todoist"]
+
+    asyncio.run(run())
+
+
+def test_the_catalog_lists_the_recipes_and_which_the_user_has() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            await _install(engine)
+            await _login(client)
+
+            catalog = await _json(await client.get("/app/api/workflows/catalog"))
+
+            recipes = {recipe["id"]: recipe for recipe in catalog["recipes"]}
+            chores = recipes["todoist-no-overdue"]
+            assert (chores["name"], chores["installed"], chores["missing"]) == (
+                NO_OVERDUE,
+                True,
+                [],
+            )
+            assert chores["description"]
+            # A recipe whose plugins are not loaded here cannot be added.
+            hevy = recipes["hevy-set-notes"]
+            assert hevy["installed"] is False
+            assert hevy["missing"] == ["hevy", "obsidian"]
+
+    asyncio.run(run())
+
+
+# -- new workflows, and deleting one -------------------------------------------
+
+
+def test_a_workflow_can_be_added_from_a_recipe() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            await _login(client)
+
+            response = await client.post(
+                "/app/api/workflows", json={"recipe": "todoist-no-overdue"}, headers=H
+            )
+
+            assert response.status_code == 201
+            shown = await _json(response)
+            assert (shown["name"], shown["enabled"]) == (NO_OVERDUE, True)
+            (stored,) = await engine.store.list_for_user(USER_ID)
+            assert (stored.id, stored.recipe) == (shown["id"], "todoist-no-overdue")
+
+    asyncio.run(run())
+
+
+def test_a_recipe_whose_plugins_are_missing_is_not_added() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            await _login(client)
+
+            async def nothing_registered(cls: Any, user: Any) -> bool:
+                return False
+
+            with patch.object(Plugin, "is_registered", classmethod(nothing_registered)):
+                response = await client.post(
+                    "/app/api/workflows",
+                    json={"recipe": "todoist-no-overdue"},
+                    headers=H,
+                )
+
+            assert response.status_code == 409
+            assert "needs Todoist first" in (await _json(response))["error"]
+            assert await engine.store.list_for_user(USER_ID) == []
+
+    asyncio.run(run())
+
+
+def test_a_workflow_can_start_with_only_a_trigger_and_is_off() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            await _login(client)
+
+            response = await client.post(
+                "/app/api/workflows", json={"trigger": "core.schedule"}, headers=H
+            )
+
+            assert response.status_code == 201
+            shown = await _json(response)
+            assert (shown["name"], shown["enabled"], shown["steps"]) == (
+                "New workflow",
+                False,
+                [],
+            )
+            assert shown["trigger"]["block"] == "core.schedule"
+            assert shown["problems"] == []
+            (stored,) = await engine.store.list_for_user(USER_ID)
+            assert (stored.recipe, stored.user_id) == (None, USER_ID)
+
+    asyncio.run(run())
+
+
+def test_a_new_workflow_needs_a_recipe_or_a_trigger_that_is_there() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            assert (
+                await client.post("/app/api/workflows", json={}, headers=H)
+            ).status_code == 401
+            await _login(client)
+
+            for body, status in (
+                ({}, 400),
+                ({"recipe": "no-such-recipe"}, 404),
+                ({"trigger": "core.no-such-trigger"}, 404),
+                # A step is not a trigger.
+                ({"trigger": "core.send-message"}, 404),
+            ):
+                response = await client.post("/app/api/workflows", json=body, headers=H)
+                assert response.status_code == status, body
+            assert await engine.store.list_for_user(USER_ID) == []
+
+    asyncio.run(run())
+
+
+def test_a_workflow_can_be_deleted_by_its_user_only() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            mine = await _install(engine)
+            theirs = await _install(engine, OTHER_USER_ID)
+            assert (
+                await client.delete(f"/app/api/workflows/{mine.id}", headers=H)
+            ).status_code == 401
+            await _login(client)
+
+            response = await client.delete(f"/app/api/workflows/{theirs.id}", headers=H)
+            assert response.status_code == 404
+            assert await engine.store.get(theirs.id) is not None
+
+            response = await client.delete(f"/app/api/workflows/{mine.id}", headers=H)
+
+            assert response.status_code == 200
+            assert await engine.store.get(mine.id) is None
+            assert await engine.store.list_for_user(USER_ID) == []
+            # Its command goes with it.
+            user = _user(USER_ID)
+            user.plugins = ["workflows"]
+            assert commands.commands_for_user(user) == []
+
+    asyncio.run(run())
+
+
 def test_workflows_are_not_there_until_the_engine_runs() -> None:
     async def run() -> None:
         async with _workflows_app(running=False) as (client, _, _):
