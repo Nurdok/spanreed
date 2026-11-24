@@ -7,6 +7,7 @@ import pytest
 from spanreed.apis.todoist import Task
 from spanreed.interaction import commands
 from spanreed.plugin import Plugin
+from spanreed.apis.audible import AudiblePlugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.hevy import HevyPlugin
@@ -42,6 +43,7 @@ def _real_registry() -> BlockRegistry:
             WithingsPlugin(),
             HevyPlugin(),
             LitNotesPlugin(),
+            AudiblePlugin(),
         ]
     )
 

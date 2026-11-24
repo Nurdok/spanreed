@@ -1,0 +1,104 @@
+{
+  "id": "audible-progress",
+  "name": "Audible progress → book notes",
+  "description": "Writes how far you listened to each book you are reading to its note, and offers to mark a finished book as read.",
+  "requires": ["audible", "obsidian"],
+  "command_name": "Sync book progress",
+  "trigger": {
+    "block": "core.schedule",
+    "params": {"every": 1, "unit": "hours"}
+  },
+  "steps": [
+    {
+      "id": "notes",
+      "block": "obsidian.query-dataview",
+      "inputs": {"query": "table title, asin\nfrom #book\nwhere status = \"reading\""}
+    },
+    {
+      "id": "any",
+      "block": "core.continue-if",
+      "inputs": {"condition": "{{ notes.count > 0 }}"}
+    },
+    {
+      "id": "audible",
+      "block": "audible.get-library",
+      "inputs": {}
+    },
+    {
+      "id": "each",
+      "block": "core.for-each",
+      "inputs": {"items": "{{ notes.rows }}"},
+      "steps": [
+        {
+          "id": "book",
+          "block": "audible.link-note",
+          "inputs": {
+            "note": "{{ each.item.file.path }}",
+            "library": "{{ audible.library }}",
+            "title": "{{ each.item.title }}",
+            "asin": "{{ each.item.asin }}"
+          }
+        },
+        {
+          "id": "linked",
+          "block": "core.continue-if",
+          "inputs": {"condition": "{{ book.linked }}"}
+        },
+        {
+          "id": "progress",
+          "block": "obsidian.set-note-properties",
+          "inputs": {
+            "note": "{{ each.item.file.path }}",
+            "properties": {"progress": "{{ book.percent }}"},
+            "write_when": "changed",
+            "if_note_missing": "fail"
+          }
+        },
+        {
+          "id": "finished",
+          "block": "core.continue-if",
+          "inputs": {"condition": "{{ book.finished }}"}
+        },
+        {
+          "id": "asked",
+          "block": "core.recall",
+          "inputs": {"name": "finish-prompted:{{ book.asin }}"}
+        },
+        {
+          "id": "once",
+          "block": "core.continue-if",
+          "inputs": {"condition": "{{ not asked.found }}"}
+        },
+        {
+          "id": "mark",
+          "block": "core.ask-choice",
+          "inputs": {
+            "question": "Looks like you finished \"{{ book.title }}\" on Audible.\nMark it as read?",
+            "options": ["Yes", "No"],
+            "cancel": ""
+          }
+        },
+        {
+          "id": "keep",
+          "block": "core.remember",
+          "inputs": {"name": "finish-prompted:{{ book.asin }}", "value": "{{ trigger.date }}"}
+        },
+        {
+          "id": "yes",
+          "block": "core.continue-if",
+          "inputs": {"condition": "{{ mark.answer == 'Yes' }}"}
+        },
+        {
+          "id": "read",
+          "block": "obsidian.set-note-properties",
+          "inputs": {
+            "note": "{{ each.item.file.path }}",
+            "properties": {"status": "read", "finish-date": "{{ trigger.date }}"},
+            "write_when": "always",
+            "if_note_missing": "fail"
+          }
+        }
+      ]
+    }
+  ]
+}

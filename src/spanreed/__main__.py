@@ -24,7 +24,6 @@ from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
 from spanreed.plugins.hevy import HevyPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.apis.audible import AudiblePlugin
-from spanreed.plugins.book_progress import BookProgressPlugin
 
 
 def setup_logger() -> None:
@@ -65,7 +64,6 @@ def load_plugins() -> List[Plugin]:
         HevyPlugin(),
         HealthConnectPlugin(),
         AudiblePlugin(),
-        BookProgressPlugin(),
     ]
 
     return core_plugins + optional_plugins
