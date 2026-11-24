@@ -31,6 +31,10 @@ from spanreed.workflows.blocks import Remembered
 from spanreed.workflows.model import Workflow
 
 RUNS_KEPT = 100
+# The name under which a workflow that took the place of a plugin remembers
+# that it was given what the plugin knew. It is the engine's own note, so
+# it is not shown with what the workflow remembers.
+MOVED_MARKER = "moved-from-plugin"
 RUNS_TTL = datetime.timedelta(days=30)
 
 
@@ -103,6 +107,10 @@ class StoredMemory:
     async def names(self) -> list[str]:
         """Return the names that something is kept under, in order."""
         return sorted(_text(name) for name in await redis_api.hgetall(self._key))
+
+    async def shown(self) -> list[str]:
+        """Return the names to show the user: all but the engine's own note."""
+        return [name for name in await self.names() if name != MOVED_MARKER]
 
     async def clear(self) -> None:
         """Drop everything."""

@@ -933,6 +933,51 @@ def test_a_workflow_that_asks_is_a_command_and_is_not_tested() -> None:
     asyncio.run(run())
 
 
+def test_the_page_shows_what_a_workflow_remembers_and_can_make_it_forget() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            theirs = await _install(engine, OTHER_USER_ID)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            shown = await _json(await client.get(url))
+            assert shown["remembers"] == {"count": 0, "names": []}
+
+            memory = engine.store.memory(workflow.id)
+            for name in ("asked:B2", "asked:B1", "skipped", "moved-from-plugin"):
+                await memory.set(name)
+            await engine.store.memory(theirs.id).set("asked:B1")
+
+            # In order, and without the engine's own note.
+            shown = await _json(await client.get(url))
+            assert shown["remembers"] == {
+                "count": 3,
+                "names": ["asked:B1", "asked:B2", "skipped"],
+            }
+
+            one = await client.post(
+                f"{url}/forget", json={"name": "skipped"}, headers=H
+            )
+            assert one.status_code == 200
+            assert (await _json(one))["remembers"]["names"] == ["asked:B1", "asked:B2"]
+            gone = await client.post(
+                f"{url}/forget", json={"name": "skipped"}, headers=H
+            )
+            assert gone.status_code == 404
+
+            everything = await client.post(f"{url}/forget", json={}, headers=H)
+            assert (await _json(everything))["remembers"] == {"count": 0, "names": []}
+            # The engine's note stays, and so does another user's memory.
+            assert await memory.names() == ["moved-from-plugin"]
+            assert await engine.store.memory(theirs.id).names() == ["asked:B1"]
+            other = await client.post(
+                f"/app/api/workflows/{theirs.id}/forget", json={}, headers=H
+            )
+            assert other.status_code == 404
+
+    asyncio.run(run())
+
+
 def test_a_new_workflow_needs_a_recipe_or_a_trigger_that_is_there() -> None:
     async def run() -> None:
         async with _workflows_app() as (client, engine, _):

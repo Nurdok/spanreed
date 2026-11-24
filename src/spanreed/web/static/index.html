@@ -269,6 +269,10 @@
   .round.side { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   .round.side .side-h { padding: 5px 9px; font-size: 13px; color: var(--muted); }
   .round.side .trace { padding: 8px 9px; border-top: 1px solid var(--line); }
+  .sheet .mem { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .sheet .mem-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 4px 4px 10px; }
+  .sheet .mem-row + .mem-row { border-top: 1px solid var(--line); }
+  .sheet .mem-row code { font-size: 12px; overflow-wrap: anywhere; }
   /* What a step asked, and the answer, as the two sides of a chat. */
   .talk { grid-column: 2; display: flex; flex-direction: column; gap: 3px; margin: 4px 0; max-width: 460px; font-size: 13px; }
   .talk-q, .talk-a { padding: 4px 9px; border-radius: 9px; overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -1693,7 +1697,8 @@ async function renderHistory(d, body) {
   const list = el("div", "runs");
   for (const run of runs) {
     const item = el("details", "run"), sum = el("summary");
-    const how = (run.test ? "Test" : run.manual ? "By hand" : "By itself") + (run.attempt > 1 ? ", try " + run.attempt : "");
+    const how = (run.test ? "Test" : run.called_by ? "Run by “" + run.called_by + "”" : run.manual ? "By hand" : "By itself") +
+                (run.attempt > 1 ? ", try " + run.attempt : "");
     sum.append(el("span", "dot " + runDot(run)), el("span", "run-when", when(run.started_at)),
                el("span", "run-how", how), el("span", "run-out", run.outcome));
     item.append(sum, renderTrace(run, d));
@@ -1733,6 +1738,12 @@ function renderWorkflow(d) {
     // A workflow that is off has no command. It can still be run from here.
     sub.append(el("span", "", "It does not run by itself and has no command."));
   }
+  if (d.remembers.count) {
+    const memory = el("span"), show = el("button", "link", "Show");
+    show.onclick = () => openMemory(d);
+    memory.append("Remembers " + d.remembers.count + (d.remembers.count === 1 ? " thing." : " things."), show);
+    sub.append(memory);
+  }
 
   const parts = [head, sub];
   if (d.problems.length) {
@@ -1766,6 +1777,32 @@ function renderWorkflow(d) {
   parts.push(tabs, body);
   main.replaceChildren(...parts);
   show(workflowTab);
+}
+
+// What a workflow remembers between runs: the names, and a way to forget them.
+function openMemory(d) {
+  openSheet("What “" + d.name + "” remembers", (sheet, close) => {
+    sheet.append(el("div", "foot", "Steps keep these from one run to the next: that a question was asked, " +
+                                   "what was skipped. A workflow that forgets one asks, or does, that again."));
+    const list = el("div", "mem");
+    for (const name of d.remembers.names) {
+      const row = el("div", "mem-row"), forget = el("button", "link", "Forget");
+      forget.onclick = () => { close(); changeWorkflow(d.id, "forget", { name }); };
+      row.append(el("code", "", name), forget);
+      list.append(row);
+    }
+    sheet.append(list);
+    if (d.remembers.count > d.remembers.names.length) {
+      sheet.append(el("div", "foot", "…and " + (d.remembers.count - d.remembers.names.length) + " more."));
+    }
+    const all = el("button", "small danger", "Forget all " + d.remembers.count);
+    all.onclick = () => {
+      if (!confirm("Make “" + d.name + "” forget everything it remembers?")) return;
+      close();
+      changeWorkflow(d.id, "forget", {});
+    };
+    sheet.append(all);
+  });
 }
 
 async function changeWorkflow(id, what, body) {
