@@ -132,6 +132,15 @@ def test_the_store_keeps_a_memory_for_each_workflow() -> None:
         assert await one.names() == []
         assert await other.names() == ["asked:B1"]
 
+        # Something a plugin remembered keeps the time it was true at.
+        await one.set("asked", True, at="2026-11-20T09:00:00")
+        carried = await one.get("asked")
+        assert carried is not None and carried.at == "2026-11-20T09:00:00+00:00"
+        await one.set("asked", True, at="not a time")
+        again = await one.get("asked")
+        assert again is not None and again.at.startswith("20")
+        assert again.at != carried.at
+
         # Deleting a workflow deletes what it remembers.
         workflow = workflow_of(id="wf_2")
         await store.save(workflow)
