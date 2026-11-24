@@ -186,6 +186,20 @@ history of a workflow that it ran:
 ![A workflow that runs another on a phone](images/web-ui-workflow-call-phone.png)
 ![The history of the one it ran on a phone](images/web-ui-workflow-called-history-phone.png)
 
+"Kill time" started from the page: it asks which of its four parts to run,
+and the part goes on in the same conversation:
+
+![Kill time asks which one, on desktop](images/web-ui-workflow-kill-time-run-desktop.png)
+![The conversation of the part, on desktop](images/web-ui-workflow-kill-time-run-done-desktop.png)
+
+![Kill time asks which one, on a phone](images/web-ui-workflow-kill-time-run-phone.png)
+![The conversation of the part, on a phone](images/web-ui-workflow-kill-time-run-feelings-phone.png)
+
+The workflow that picks, and one of its parts, on a phone:
+
+![Kill time on a phone](images/web-ui-workflow-kill-time-phone.png)
+![Mood on a phone](images/web-ui-workflow-mood-phone.png)
+
 What a workflow remembers:
 
 ![What a workflow remembers on desktop](images/web-ui-workflow-memory-desktop.png)

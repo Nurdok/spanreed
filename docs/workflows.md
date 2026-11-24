@@ -178,6 +178,9 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `lit-notes.search-books` Search books | action | Lit Notes |
 | `audible.get-library` Get library | action | Audible |
 | `audible.link-note` Link a note to a book | action | Audible |
+| `timekiller.journal` Journaling prompt | ask | Timekiller |
+| `timekiller.reading-check-in` Reading check-in | ask | Timekiller |
+| `timekiller.process-scan` Process a scan | ask | Timekiller |
 
 More arrive with each plugin whose behavior becomes a recipe.
 
@@ -397,6 +400,10 @@ usually hides.
 - **A workflow cannot run itself**, directly or through another.
 - **A part that fails fails the step**, and with it the run. The part is not
   tried again by itself: the run that needed it is.
+- **A part whose conversation ends ends the run that ran it**: another
+  conversation took the turn, or the user did not answer in time. The steps
+  after the part would act on a conversation that never was. A part that
+  ends its own run with "End the run" ends only itself.
 - **A part that is in a run of its own** is waited for, for a minute. Then
   the step fails.
 - **Test** does not run a workflow with one of these steps: the part may ask.
@@ -879,6 +886,52 @@ workflow turned off, with the recipe's example habits.
 plugin did on each, taken by running it before it was removed. The tests run
 the workflow on the same days and compare.
 
+#### Audible Book Progress
+
+The plugin wrote how far each book the user is reading was listened to on
+Audible to the book's note, and offered once to mark a finished book as read.
+It is the recipe "Audible progress → book notes" now, and the plugin is gone.
+Audible, which holds the login, publishes the two blocks.
+
+![Audible progress as a workflow](images/web-ui-workflow-audible-desktop.png)
+
+![A sync that asked twice](images/web-ui-workflow-audible-history-desktop.png)
+
+Where the parts of the plugin went:
+
+| Was | Is now |
+| --- | --- |
+| The query for the notes of the books being read | **Query** on "Query Dataview" |
+| Matching a note to a book, and asking which one it is | "Link a note to a book", one block with the conversation inside |
+| Writing the progress if it changed | "Set note properties", **Write when** `changed` |
+| Asking once whether a finished book is read | Recall, "Ask me to choose", Remember |
+| The names of the properties: `asin`, `progress`, `status`, `finish-date` | Inputs of those steps |
+| Sync book progress | The command of the workflow, with the same name |
+| Every hour | The schedule |
+| Not on Audible, Ask me later, and the books that were offered | The memory of the workflow, under the names the plugin used: `not-audible:<note>`, `link-snooze:<note>`, `finish-prompted:<asin>` |
+
+`spanreed/plugins/book_progress.py` is what is left of the plugin: it hands
+what the plugin remembered for a user to the user's workflow, so that nothing
+is asked a second time.
+
+- **The library is one value.** "Get library" gives `library`, which a trace
+  shows as `<315 Audible books>`. Each note's step gets all of it, and a
+  trace that listed the books each time would be mostly books.
+- **A sync that asks nothing does not take the turn to talk.** It runs every
+  hour, and asks about a book once in a long while.
+- **The date a book was finished** is the date of the run in the user's
+  timezone. The plugin used the server's date.
+- **Run by hand**, the workflow says "Audible progress → book notes:
+  finished." if it asked nothing, and nothing after a question. The plugin's
+  command said "Syncing Audible book progress…" and, if no note changed, "No
+  book progress changes found."
+- **A run that fails is tried again**, as any workflow's. The plugin waited
+  for the next hour.
+
+`spanreed/plugins/book_progress_test_data.py` holds fourteen cases and what
+the plugin did in each, taken by running it before it was removed. The tests
+run the workflow on the same cases and compare.
+
 ### Converted: the plugin stays as the connection
 
 The plugin keeps talking to its service. What it did with the data is now a
@@ -895,6 +948,7 @@ behavior: the setup tells them which recipes to add.
 | Hevy | Holds the API key, and publishes the trigger that asks Hevy | Hevy workouts → set notes |
 | Gmail Monitor | Holds the Gmail login, and publishes the Gmail blocks | None: a workflow for each rule the user had |
 | Lit Notes | Publishes the search of Google Books | Add book note |
+| Timekiller | Publishes three conversations as blocks | Kill time · Journaling Prompt · Mood · Books · Scan Processing |
 
 #### Health Connect
 
@@ -1102,49 +1156,69 @@ Where the parts of the plugin went:
 plugin asked, said and wrote in each, taken by running it before it was
 removed. The tests run the workflow on the same answers and compare.
 
-#### Audible Book Progress
+#### Timekiller
 
-The plugin wrote how far each book the user is reading was listened to on
-Audible to the book's note, and offered once to mark a finished book as read.
-It is the recipe "Audible progress → book notes" now, and the plugin is gone.
-Audible, which holds the login, publishes the two blocks.
+Timekiller pushed, every hour or two during the day, one of four things
+picked at random: a journaling prompt, a question about the mood of the day,
+a check on the books being read, or a scan that waits for a name. Its
+command, "Kill time", let the user pick.
 
-![Audible progress as a workflow](images/web-ui-workflow-audible-desktop.png)
+It is five workflows now. "Kill time" does the picking, and runs one of the
+other four:
 
-![A sync that asked twice](images/web-ui-workflow-audible-history-desktop.png)
+![Kill time as a workflow](images/web-ui-workflow-kill-time-desktop.png)
 
-Where the parts of the plugin went:
+![Its command, in the conversation](images/web-ui-workflow-kill-time-run-done-desktop.png)
+
+| Workflow | Is | What can be changed |
+| --- | --- | --- |
+| Kill time | The schedule, at random times between 08:00 and 22:00, and "Run one workflow" | How often, the hours, which of the four are on offer and when |
+| Journaling Prompt | One block with the conversation inside | The 24 prompts, the note, the heading |
+| Mood | Drawn in steps: read the property, ask, write | The questions, the feelings, the properties |
+| Books | "Query Dataview", then one block with the conversation inside | The query for the notes of the books |
+| Scan Processing | One block with the conversation inside | The folder |
+
+The three blocks are the plugin's conversations as they were: each goes
+back on itself (another prompt, another book, another name for a file),
+which steps on a page do not do. Mood only moves forward, so it is drawn:
+
+![Mood, drawn in steps](images/web-ui-workflow-mood-desktop.png)
+
+A push in the history of the part that ran, with the conversation of the
+block:
+
+![A push in the history of Journaling Prompt](images/web-ui-workflow-journal-history-desktop.png)
+
+Where the rest of the plugin went:
 
 | Was | Is now |
 | --- | --- |
-| The query for the notes of the books being read | **Query** on "Query Dataview" |
-| Matching a note to a book, and asking which one it is | "Link a note to a book", one block with the conversation inside |
-| Writing the progress if it changed | "Set note properties", **Write when** `changed` |
-| Asking once whether a finished book is read | Recall, "Ask me to choose", Remember |
-| The names of the properties: `asin`, `progress`, `status`, `finish-date` | Inputs of those steps |
-| Sync book progress | The command of the workflow, with the same name |
-| Every hour | The schedule |
-| Not on Audible, Ask me later, and the books that were offered | The memory of the workflow, under the names the plugin used: `not-audible:<note>`, `link-snooze:<note>`, `finish-prompted:<asin>` |
+| Kill time, the command | The command of "Kill time". By hand it asks "What's your poison?"; by itself it picks at random |
+| Set journal heading | **Heading** on the step of "Journaling Prompt" |
+| Clear skipped scans | The page of "Scan Processing": what it remembers, and Forget, for one scan or for all |
+| Books at most every three days | A row of "Run one workflow": `run.manual or not books.found or books.age_hours > 72`. "Kill time" remembers when it ran "Books" |
+| Mood once a day | A row: `not mood.found`, from the property of today's note |
+| The folder of the scans, written into the code | **Folder** on the step of "Scan Processing" |
 
-`spanreed/plugins/book_progress.py` is what is left of the plugin: it hands
-what the plugin remembered for a user to the user's workflow, so that nothing
-is asked a second time.
+The four parts have the trigger "When another workflow runs it", and their
+commands are hidden, so the command menu has the one entry it had. Turning a
+part off takes it out of the picking.
 
-- **The library is one value.** "Get library" gives `library`, which a trace
-  shows as `<315 Audible books>`. Each note's step gets all of it, and a
-  trace that listed the books each time would be mostly books.
-- **A sync that asks nothing does not take the turn to talk.** It runs every
-  hour, and asks about a book once in a long while.
-- **The date a book was finished** is the date of the run in the user's
-  timezone. The plugin used the server's date.
-- **Run by hand**, the workflow says "Audible progress → book notes:
-  finished." if it asked nothing, and nothing after a question. The plugin's
-  command said "Syncing Audible book progress…" and, if no note changed, "No
-  book progress changes found."
-- **A run that fails is tried again**, as any workflow's. The plugin waited
-  for the next hour.
+- **The hours are in the user's timezone.** The plugin used the server's
+  clock.
+- **A restart does not push.** The plugin pushed right after every start.
+  "At random times" keeps when the next push is due.
+- **A feeling that was picked is not offered again**, and "stressed" is in
+  the list once. The plugin had it twice, and wrote a feeling as often as it
+  was picked.
+- **A finish date that is not a date is asked for again.** The plugin failed
+  on it.
+- **A push that is taken over by another conversation is dropped**, as the
+  plugin did, and "Kill time" then does not remember that the books were
+  asked about.
+- **Installing only "Kill time" from the recipes does nothing**: it runs the
+  other four by their names. A user of the plugin gets all five.
 
-`spanreed/plugins/book_progress_test_data.py` holds fourteen cases and what
-the plugin did in each, taken by running it before it was removed. The tests
-run the workflow on the same cases and compare.
-
+`spanreed/plugins/timekiller_test_data.py` holds 31 cases and what the plugin
+did in each, taken by running it before it was changed. The tests run the
+workflows on the same cases and compare.
