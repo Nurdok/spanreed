@@ -9,11 +9,14 @@ from spanreed.plugins.recurring_payments import (
     UserConfig,
     RecurringPayment,
     RecurrenceInfo,
+    ObsidianLog,
 )
+from spanreed.apis.obsidian import ObsidianApiTimeoutError
 from spanreed.plugin import Plugin
 from spanreed.test_utils import (
     mock_user_find_by_id,
     EndPluginRun,
+    patch_obsidian,
     patch_user_interaction,
 )
 from spanreed.apis.todoist import Task, Comment, Project
@@ -212,3 +215,69 @@ def test_run_for_single_recurrence(
 
     mock_bot.request_user_choice.assert_called_once()
     assert "add it to the list" in mock_bot.request_user_choice.call_args.args[0]
+
+
+def _payment_with_obsidian_log() -> RecurringPayment:
+    return RecurringPayment(
+        todoist_label="spanreed/recurring",
+        todoist_task_template="Pay {{total_cost}} for {{dates}}",
+        todoist_project_id="pid-A",
+        date_format="%Y-%m-%d",
+        recurrence_cost=100,
+        recurrence_info=RecurrenceInfo(
+            timezone="Asia/Jerusalem",
+            frequency=dateutil.rrule.WEEKLY,
+            week_start_day=dateutil.rrule.SU.weekday,
+            week_day=dateutil.rrule.TU.weekday,
+            hour=14,
+            minute=50,
+            second=0,
+        ),
+        obsidian_log=ObsidianLog(
+            file_location="Therapy",
+            note_title="Therapy Log",
+            note_content_template="## {{date}}\n",
+        ),
+    )
+
+
+@patch_user_interaction("spanreed.plugins.recurring_payments")
+@patch_obsidian("spanreed.plugins.recurring_payments")
+def test_add_to_obsidian_log_appends_to_the_note(
+    mock_obsidian: AsyncMock, mock_bot: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = RecurringPaymentsPlugin()
+    mock_obsidian.append_to_note = AsyncMock()
+
+    asyncio.run(
+        plugin.add_to_obsidian_log(
+            mock_user_find_by_id(4), _payment_with_obsidian_log(), "2026-05-12"
+        )
+    )
+
+    mock_obsidian.append_to_note.assert_awaited_once_with(
+        "Therapy/Therapy Log.md", "## 2026-05-12"
+    )
+    mock_bot.notify.assert_not_awaited()
+
+
+@patch_user_interaction("spanreed.plugins.recurring_payments")
+@patch_obsidian("spanreed.plugins.recurring_payments")
+def test_add_to_obsidian_log_tells_the_user_when_obsidian_is_offline(
+    mock_obsidian: AsyncMock, mock_bot: AsyncMock
+) -> None:
+    Plugin.reset_registry()
+    plugin = RecurringPaymentsPlugin()
+    mock_obsidian.append_to_note = AsyncMock(side_effect=ObsidianApiTimeoutError())
+
+    # Not raised: a lost log entry must not stop the payment schedules.
+    asyncio.run(
+        plugin.add_to_obsidian_log(
+            mock_user_find_by_id(4), _payment_with_obsidian_log(), "2026-05-12"
+        )
+    )
+
+    mock_bot.notify.assert_awaited_once()
+    assert "2026-05-12" in mock_bot.notify.call_args.args[0]
+    assert "Therapy Log" in mock_bot.notify.call_args.args[0]

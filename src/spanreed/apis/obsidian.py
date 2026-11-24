@@ -46,7 +46,7 @@ class ObsidianApi:
         """Background task that shows a Telegram progress bar after 5s delay.
 
         Only runs while a user interaction is active. Background syncs
-        (google-fit, audible, ...) must never message the user just because
+        (health-connect, audible, ...) must never message the user just because
         Obsidian is slow or offline — that unsolicited around-the-clock
         traffic is what repeatedly tripped Telegram flood control.
 

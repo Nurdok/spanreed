@@ -9,9 +9,10 @@ from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.apis.google_books import GoogleBooks, Book
 from spanreed.interaction import UserInteractionApi, PluginCommand
-from spanreed.apis.obsidian_webhook import (
-    ObsidianWebhookApi,
-    ObsidianWebhookPlugin,
+from spanreed.apis.obsidian import (
+    ObsidianApi,
+    ObsidianApiTimeoutError,
+    ObsidianPlugin,
 )
 
 
@@ -167,14 +168,14 @@ class LitNotesPlugin(Plugin):
         note_content = note_content_template.render(template_params)
         self._logger.info(f"{note_content=}")
 
-        if await ObsidianWebhookPlugin.is_registered(user):
-            await self._create_note_with_obsidian_webhook(
+        if await ObsidianPlugin.is_registered(user):
+            await self._create_note_in_vault(
                 user, bot, user_config, note_title, note_content
             )
         else:
             await self._send_obsidian_uri(bot, user_config, note_title, note_content)
 
-    async def _create_note_with_obsidian_webhook(
+    async def _create_note_in_vault(
         self,
         user: User,
         bot: UserInteractionApi,
@@ -182,16 +183,29 @@ class LitNotesPlugin(Plugin):
         note_title: str,
         note_content: str,
     ) -> None:
-        self._logger.info("Creating note with Obsidian webhook")
-        webhook: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(user)
-        await webhook.append_to_note(
-            str(
-                (
-                    pathlib.PurePosixPath(user_config.file_location) / note_title
-                ).with_suffix(".md")
-            ),
-            note_content,
-        )
+        """Write the note into the vault through the Obsidian plugin.
+
+        If Obsidian does not answer, send the link that creates the note
+        instead, so that what the user entered is not lost.
+        """
+        self._logger.info("Creating note through the Obsidian plugin")
+        obsidian: ObsidianApi = await ObsidianApi.for_user(user)
+        try:
+            await obsidian.append_to_note(
+                str(
+                    (
+                        pathlib.PurePosixPath(user_config.file_location) / note_title
+                    ).with_suffix(".md")
+                ),
+                note_content,
+            )
+        except ObsidianApiTimeoutError:
+            await bot.send_message(
+                "Obsidian didn't answer, so the note was not created. "
+                "Use this link to create it:"
+            )
+            await self._send_obsidian_uri(bot, user_config, note_title, note_content)
+            return
 
         await bot.send_message(f"Note created in Obsidian!")
 

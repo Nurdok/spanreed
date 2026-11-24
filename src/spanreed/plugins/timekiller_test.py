@@ -228,3 +228,24 @@ def test_prompt_skip_adds_to_skiplist(mock_bot: AsyncMock) -> None:
     assert "Assets/scans/2026-01-01 Scan.pdf" in asyncio.run(
         plugin._get_skipped_scans(user)
     )
+
+
+@patch_user_interaction("spanreed.plugins.timekiller")
+def test_reading_notes_are_appended_to_the_book_note(mock_bot: AsyncMock) -> None:
+    plugin, _ = _plugin_with_store()
+    book = MagicMock()
+    book.title = "Dune"
+    book.file = {"path": "Books/Dune.md"}
+    obsidian = MagicMock()
+    obsidian.query_dataview = AsyncMock(return_value=[book])
+    obsidian.append_to_note = AsyncMock()
+
+    mock_bot.request_user_choice = AsyncMock(return_value=1)  # "I have notes"
+    mock_bot.request_user_input = AsyncMock(return_value="Great so far")
+
+    user = mock_user_find_by_id(1)
+    asyncio.run(plugin.prompt_for_currently_reading_books(user, mock_bot, obsidian))
+
+    obsidian.append_to_note.assert_awaited_once_with(
+        "Books/Dune.md", "\n\n### Thoughts\nGreat so far"
+    )

@@ -9,12 +9,13 @@ import yaml
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.interaction import UserInteractionApi, PluginCommand
-from spanreed.apis.hevy import HevyApi, Workout, Exercise, WorkoutSet
-from spanreed.apis.obsidian_webhook import (
-    ObsidianWebhookApi,
-    ObsidianWebhookPlugin,
+from spanreed.interaction import (
+    UserInteractionApi,
+    PluginCommand,
+    SurfaceBusyError,
 )
+from spanreed.apis.hevy import HevyApi, Workout, Exercise, WorkoutSet
+from spanreed.apis.obsidian import ObsidianApi, ObsidianPlugin
 from dataclasses import dataclass
 
 # Cursor used the first time we sync for a user (the Unix epoch), which makes
@@ -49,7 +50,7 @@ class HevyPlugin(Plugin):
 
     @classmethod
     def get_prerequisites(cls) -> list[type[Plugin]]:
-        return [ObsidianWebhookPlugin]
+        return [ObsidianPlugin]
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
@@ -93,7 +94,20 @@ class HevyPlugin(Plugin):
     async def run_for_user(self, user: User) -> None:
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         while True:
-            await self._sync(user, bot)
+            try:
+                await self._sync(user, bot)
+            except asyncio.CancelledError:
+                raise
+            except SurfaceBusyError:
+                # Telegram flood control: let the supervisor's jittered
+                # flood handling own the wake-up time.
+                raise
+            except Exception:
+                # Notes are written through Obsidian, which is often closed
+                # or offline for hours. That is not worth a crash-restart
+                # loop: the workout is not marked as synced, so the next
+                # interval writes it.
+                self._logger.exception("Hevy sync failed; retrying next interval.")
             await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
 
     async def _sync_now(self, user: User) -> None:
@@ -104,10 +118,15 @@ class HevyPlugin(Plugin):
             await bot.notify("No new Hevy workouts found.")
 
     async def _sync(self, user: User, bot: UserInteractionApi) -> int:
-        """Fetch and write any new workouts. Returns the number written."""
+        """Fetch and write any new workouts, and return the number written.
+
+        A workout is marked as synced only after every one of its notes is
+        written. If a write fails, the error goes to the caller and the
+        cursor stays where it is, so the next sync writes the workout again.
+        """
         config: UserConfig = await self.get_config(user)
         hevy = await HevyApi.for_user(user)
-        webhook = await ObsidianWebhookApi.for_user(user)
+        obsidian = await ObsidianApi.for_user(user)
 
         # Capture the cursor *before* fetching so we never miss workouts
         # logged while a sync is running. Overlap is harmless: the synced
@@ -123,10 +142,10 @@ class HevyPlugin(Plugin):
         for workout in workouts:
             if workout.id in synced_ids:
                 # Already written. (Edits made in Hevy after the fact are
-                # not re-synced, since the webhook only appends.)
+                # not re-synced; "Re-create Hevy data" writes them.)
                 continue
 
-            set_count = await self._write_workout(config, webhook, workout)
+            set_count = await self._write_workout(config, obsidian, workout)
             synced_ids.add(workout.id)
             await self._set_synced_ids(user, synced_ids)
             await bot.notify(
@@ -142,9 +161,8 @@ class HevyPlugin(Plugin):
     async def _recreate_data(self, user: User) -> None:
         """Manually re-write set notes for a date, a workout id, or all.
 
-        Useful after the note structure changes. Note: the Obsidian webhook
-        appends, so any notes that already exist should be deleted first to
-        avoid stacking a second copy onto them.
+        Useful after the note structure changes, or after a workout was
+        edited in Hevy. A set note that already exists is overwritten.
         """
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         hevy = await HevyApi.for_user(user)
@@ -205,12 +223,12 @@ class HevyPlugin(Plugin):
     async def _recreate(self, user: User, workouts: list[Workout]) -> int:
         """Force-write set notes for the given workouts. Returns set count."""
         config: UserConfig = await self.get_config(user)
-        webhook = await ObsidianWebhookApi.for_user(user)
+        obsidian = await ObsidianApi.for_user(user)
         synced_ids: set[str] = await self._get_synced_ids(user)
 
         total_sets = 0
         for workout in workouts:
-            total_sets += await self._write_workout(config, webhook, workout)
+            total_sets += await self._write_workout(config, obsidian, workout)
             synced_ids.add(workout.id)
 
         await self._set_synced_ids(user, synced_ids)
@@ -219,10 +237,15 @@ class HevyPlugin(Plugin):
     async def _write_workout(
         self,
         config: UserConfig,
-        webhook: ObsidianWebhookApi,
+        obsidian: ObsidianApi,
         workout: Workout,
     ) -> int:
-        """Write one note per set; return the number of sets written."""
+        """Write one note per set, and return the number of sets written.
+
+        Each note is written whole and replaces a note already at its path,
+        so writing a workout again after a failure part of the way through
+        leaves one copy of every set.
+        """
         date = self._workout_date(workout)
         date_str = date.strftime("%Y-%m-%d") if date else workout.id
 
@@ -255,7 +278,9 @@ class HevyPlugin(Plugin):
                     exercise_index,
                     set_ordinal,
                 )
-                await webhook.append_to_note(note_path, content)
+                await obsidian.write_binary_file(
+                    note_path, content.encode("utf-8"), overwrite=True
+                )
         return set_ordinal
 
     @staticmethod

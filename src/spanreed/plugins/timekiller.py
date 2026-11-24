@@ -12,7 +12,6 @@ from spanreed.interaction import (
     PluginCommand,
     UserInteractionPreempted,
 )
-from spanreed.apis.obsidian_webhook import ObsidianWebhookApi
 from spanreed.apis.obsidian import ObsidianApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
@@ -434,10 +433,7 @@ class TimekillerPlugin(Plugin):
                         finish_date.strftime("%Y-%m-%d"),
                     )
             if choice == 1:
-                obsidian_webhook: ObsidianWebhookApi = (
-                    await ObsidianWebhookApi.for_user(user)
-                )
-                await obsidian_webhook.append_to_note(
+                await obsidian.append_to_note(
                     book.file["path"],
                     "\n\n### Thoughts\n"
                     + await bot.request_user_input("Go ahead then:"),
