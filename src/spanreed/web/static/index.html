@@ -1698,7 +1698,8 @@ async function renderHistory(d, body) {
   for (const run of runs) {
     const item = el("details", "run"), sum = el("summary");
     const how = (run.test ? "Test" : run.called_by ? "Run by “" + run.called_by + "”" : run.manual ? "By hand" : "By itself") +
-                (run.attempt > 1 ? ", try " + run.attempt : "");
+                (run.attempt > 1 ? ", try " + run.attempt : "") +
+                (run.picked_up ? ", went on after a restart" : "");
     sum.append(el("span", "dot " + runDot(run)), el("span", "run-when", when(run.started_at)),
                el("span", "run-how", how), el("span", "run-out", run.outcome));
     item.append(sum, renderTrace(run, d));

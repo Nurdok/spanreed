@@ -50,6 +50,7 @@ from typing import (
 from spanreed.interaction import UserInteractionApi
 from spanreed.interaction.surface import MessageHandle
 from spanreed.user import User
+from spanreed.workflows.values import from_whole_data, whole_data
 
 if TYPE_CHECKING:
     from spanreed.plugin import Plugin
@@ -706,6 +707,20 @@ class Trigger(Block, Generic[ParamsT, EventT]):
         raises.
         """
 
+    def same_event(self, kept: dict[str, Any], event: EventT) -> bool:
+        """Return whether an event is the one that a run was cut short for.
+
+        A run that a restart cut short keeps its event, and ``kept`` is
+        that event as JSON data. If the first event after the restart is
+        the same one, the run goes on from the step it was at. If it is
+        another, the run that was cut short is forgotten.
+
+        By default it is the same if it is equal in every field. A trigger
+        whose events differ each time they are made, by the time of the
+        moment for example, says here what makes two of them one.
+        """
+        return bool(whole_data(event) == kept)
+
     async def manual_events(
         self, ctx: TriggerContext, params: ParamsT, answer: Any
     ) -> list[EventT]:
@@ -830,6 +845,24 @@ class PollTrigger(Trigger[RepeatT, EventT]):
     @abc.abstractmethod
     def key(self, event: EventT) -> str:
         """Return what names the thing an event is about, such as its id."""
+
+    def same_event(self, kept: dict[str, Any], event: EventT) -> bool:
+        """Return whether the two events are the same thing in the same state.
+
+        What a poll finds for a thing may differ from what the last one
+        found in fields that do not matter. It is the thing that the run
+        was for if its key and its version are what they were. If the
+        thing changed in the meantime, the run starts over with it as it
+        is now.
+        """
+        try:
+            before = cast(EventT, from_whole_data(kept))
+            return bool(
+                self.key(before) == self.key(event)
+                and self.version(before) == self.version(event)
+            )
+        except Exception:
+            return False
 
     def version(self, event: EventT) -> str:
         """Return what tells one state of the thing from another.

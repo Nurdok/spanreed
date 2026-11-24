@@ -82,6 +82,16 @@ class Schedule(Trigger[Repeat, Tick]):
             # short is due again when Spanreed comes back.
             await ctx.state.set(_LAST_FIRED, fired.isoformat())
 
+    def same_event(self, kept: dict[str, Any], event: Tick) -> bool:
+        """Return that any event is the one a run was cut short for.
+
+        The time of an event is the moment it is made at, and when the
+        next one is due is kept only once a run is over. So the first
+        event after a restart stands for the one that the restart cut
+        short, at whatever time it comes.
+        """
+        return True
+
     async def manual_events(
         self, ctx: TriggerContext, params: Repeat, answer: NoQuestion
     ) -> list[Tick]:
@@ -188,6 +198,16 @@ class RandomSchedule(Trigger[RandomTimes, Tick]):
             await ctx.state.set(
                 _NEXT_AT, (_now() + datetime.timedelta(seconds=apart)).isoformat()
             )
+
+    def same_event(self, kept: dict[str, Any], event: Tick) -> bool:
+        """Return that any event is the one a run was cut short for.
+
+        The time of an event is the moment it is made at, and when the
+        next one is due is kept only once a run is over. So the first
+        event after a restart stands for the one that the restart cut
+        short, at whatever time it comes.
+        """
+        return True
 
     async def manual_events(
         self, ctx: TriggerContext, params: RandomTimes, answer: NoQuestion

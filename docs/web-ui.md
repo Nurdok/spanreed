@@ -116,7 +116,9 @@ new ones.
 - **History** lists the last 30 runs. Opening a run shows what the trigger
   gave and what each step got and gave, and where the run stopped or failed.
   A loop shows each time it went through its steps, as "Item 3 of 5". The one
-  that failed is open. A branch shows the side that ran.
+  that failed is open. A branch shows the side that ran. A run that Spanreed
+  was restarted in the middle of is one run, marked "went on after a
+  restart".
 - **The switch** turns the workflow on and off at once.
 - **Run now** is there if the trigger can be started by hand. It runs the
   workflow as its command does and goes to the conversation, where what the

@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 
 from spanreed.workflows import store as store_module
 from spanreed.workflows.model import Step
@@ -198,3 +199,39 @@ def test_deleting_a_workflow_deletes_its_queue() -> None:
     with fake_storage() as redis:
         asyncio.run(scenario())
         assert not redis.hashes and not redis.lists
+
+
+def test_the_place_of_a_run_is_kept_until_it_is_dropped() -> None:
+    async def scenario(redis: Any) -> None:
+        store = WorkflowStore()
+        workflow = workflow_of()
+        await store.save(workflow)
+        assert await store.places(workflow.id) == {}
+
+        await store.keep_place(workflow.id, "run1", {"steps": []})
+        await store.keep_place(workflow.id, "run2", {"steps": [], "manual": True})
+        # The newer place of a run takes the place of the older one.
+        await store.keep_place(workflow.id, "run1", {"steps": [{"id": "one"}]})
+
+        assert await store.places(workflow.id) == {
+            "run1": {"steps": [{"id": "one"}]},
+            "run2": {"steps": [], "manual": True},
+        }
+        # A place that nothing drops goes with the traces.
+        key = "workflows:workflow:wf_1:places"
+        assert redis.expirations[key] == 30 * 24 * 3600
+
+        await store.drop_place(workflow.id, "run1")
+        await store.drop_place(workflow.id, "run-that-is-not-there")
+        assert list(await store.places(workflow.id)) == ["run2"]
+
+        # What cannot be read is passed over.
+        redis.hashes[key]["bad"] = "not json"
+        redis.hashes[key]["list"] = "[1]"
+        assert list(await store.places(workflow.id)) == ["run2"]
+
+        await store.delete(workflow)
+        assert await store.places(workflow.id) == {}
+
+    with fake_storage() as redis:
+        asyncio.run(scenario(redis))

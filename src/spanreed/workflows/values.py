@@ -101,3 +101,63 @@ def from_whole_data(data: Any) -> Any:
     if isinstance(data, list):
         return [from_whole_data(item) for item in data]
     return data
+
+
+class NotPlain(ValueError):
+    """A value cannot be made again from JSON data as what it was."""
+
+
+def plain_data(value: Any, cls: type[Any] | None = None) -> dict[str, Any]:
+    """Return an object of plain values as JSON data, to make it again.
+
+    This is for what a run keeps so that it can go on after a restart:
+    the event it runs for, and what each step gave. ``value`` is a
+    dataclass, and ``make_again`` gives one that is the same in every
+    field. ``cls`` is the class that ``make_again`` will be given.
+
+    Raise ``NotPlain`` if a field holds more than JSON has: ``None``,
+    numbers, texts, and lists and mappings of those. Bytes, a date or an
+    object of a class would come back as something else, and the steps
+    that go on would work with the wrong thing. Raise it too if the value
+    is not of the class ``cls``.
+    """
+    if cls is not None and type(value) is not cls:
+        raise NotPlain(f"{type(value).__name__}, not {cls.__name__}")
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _plain(getattr(value, field.name))
+            for field in dataclasses.fields(value)
+        }
+    if isinstance(value, types.SimpleNamespace):
+        return {name: _plain(item) for name, item in vars(value).items()}
+    raise NotPlain(type(value).__name__)
+
+
+def _plain(value: Any) -> Any:
+    # The exact types: a subclass may hold more than JSON keeps.
+    if value is None or type(value) in (bool, int, float, str):
+        return value
+    if type(value) is list:
+        return [_plain(item) for item in value]
+    if type(value) is dict:
+        if any(type(key) is not str for key in value):
+            raise NotPlain("a mapping with a key that is not a text")
+        return {key: _plain(item) for key, item in value.items()}
+    raise NotPlain(type(value).__name__)
+
+
+def make_again(cls: type[Any], data: Any) -> Any:
+    """Return the object that ``plain_data`` gave ``data`` for.
+
+    ``cls`` is its class. An object without one, such as the event of a
+    test, comes back as an object with a field for each name. Raise
+    ``NotPlain`` if the class no longer takes these fields.
+    """
+    if not isinstance(data, dict):
+        raise NotPlain("not the data of an object")
+    if cls is types.SimpleNamespace or not dataclasses.is_dataclass(cls):
+        return types.SimpleNamespace(**data)
+    try:
+        return cls(**data)
+    except (TypeError, ValueError) as e:
+        raise NotPlain(str(e)) from e
