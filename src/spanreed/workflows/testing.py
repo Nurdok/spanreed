@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass, field
@@ -17,7 +18,10 @@ from spanreed.workflows.blocks import (
     BlockRegistry,
     NoParams,
     NoQuestion,
+    Poll,
+    PollTrigger,
     PushTrigger,
+    Repeat,
     StepContext,
     Trigger,
     TriggerContext,
@@ -110,6 +114,54 @@ class Pushed(PushTrigger[NoParams, Event]):
         return None if key == "nothing" else Event(key)
 
 
+class NoMorePolls(Exception):
+    """Raised by ``Polled`` when it is asked more often than it has answers."""
+
+
+class Polled(PollTrigger[Repeat, Event]):
+    """A trigger that polls a service that the test scripts.
+
+    ``found`` holds what each poll finds, first poll first. A value is a
+    key, or a key and a version: ``note@2``. A poll after the last one
+    raises ``NoMorePolls``, unless ``waits`` is set: then it never returns,
+    and ``waiting`` says that the polls before it are over.
+    """
+
+    id = "fake.polled"
+    title = "Fake polled"
+
+    def __init__(self, *found: list[str], waits: bool = False) -> None:
+        """Create the trigger with what its polls find."""
+        self.found = list(found)
+        self.waits = waits
+        self.waiting = False
+        # The cursor that each poll was given.
+        self.cursors: list[str | None] = []
+
+    async def poll(
+        self, ctx: TriggerContext, params: Repeat, cursor: str | None
+    ) -> Poll[Event]:
+        """Return what the next poll finds, and a cursor that counts polls."""
+        if not self.found:
+            if self.waits:
+                self.waiting = True
+                await asyncio.Event().wait()
+            raise NoMorePolls()
+        self.cursors.append(cursor)
+        return Poll(
+            events=[Event(value) for value in self.found.pop(0)],
+            cursor=f"after poll {len(self.cursors)}",
+        )
+
+    def key(self, event: Event) -> str:
+        """Return the value up to its ``@``."""
+        return event.value.partition("@")[0]
+
+    def version(self, event: Event) -> str:
+        """Return the value after its ``@``."""
+        return event.value.partition("@")[2]
+
+
 @dataclass
 class TextInput:
     """One text."""
@@ -177,7 +229,8 @@ def workflow_of(
     """Return a workflow of user 4 with these steps."""
     values: dict[str, Any] = {"id": "wf_1", "user_id": 4, "name": "Test workflow"}
     values.update(fields)
-    params = {} if trigger == "fake.pushed" else {"events": events or []}
+    scripted = trigger in ("fake.events", "fake.ranged", "fake.silent")
+    params = {"events": events or []} if scripted else {}
     return Workflow(
         trigger=TriggerSpec(block=trigger, params=params),
         steps=list(steps),

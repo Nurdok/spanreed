@@ -10,6 +10,7 @@ from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
 from spanreed.workflows.testing import (
+    Polled,
     Pushed,
     Record,
     drain,
@@ -392,6 +393,88 @@ def test_keys_put_while_the_engine_was_down_run_when_it_starts(
         asyncio.run(scenario(registry_of(record)))
 
     assert record.texts == ["monday"]
+
+
+# -- triggers that poll --------------------------------------------------------
+
+
+def _no_wait_between_polls() -> Any:
+    return patch("spanreed.workflows.blocks._sleep", new=AsyncMock())
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_what_a_poll_finds_is_a_run_once(mock_bot: AsyncMock) -> None:
+    record = Record()
+    polled = Polled(["a", "b"], ["a", "b", "c"], ["c"], waits=True)
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.polled")
+
+    async def scenario() -> None:
+        engine = _engine(record, polled)
+        await engine.save(workflow)
+
+        await _until(lambda: polled.waiting)
+
+        assert record.texts == ["a", "b", "c"]
+        assert len(await _runs(engine, workflow)) == 3
+        await engine.stop()
+
+    with fake_storage(), _no_wait_between_polls():
+        asyncio.run(scenario())
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_what_a_poll_found_runs_again_after_the_next_poll_if_its_run_failed(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    attempts = WorkflowEngine.MAX_ATTEMPTS
+    # Obsidian is closed for all the tries of "a" in the first poll.
+    record.failures = [RuntimeError("Obsidian did not answer")] * attempts
+    polled = Polled(["a", "b"], ["a", "b"], waits=True)
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.polled")
+
+    async def scenario() -> None:
+        engine = _engine(record, polled)
+        await engine.save(workflow)
+
+        await _until(lambda: polled.waiting)
+
+        # "b" ran in the first poll. The second poll gave "a" again.
+        assert record.texts == ["b", "a"]
+        # The cursor stayed where it was while a run of the poll failed.
+        assert polled.cursors == [None, None]
+        mock_bot.notify.assert_awaited_once()
+        await engine.stop()
+
+    with fake_storage(), _sleeps(), _no_wait_between_polls():
+        asyncio.run(scenario())
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_what_ran_is_not_run_again_after_a_restart(mock_bot: AsyncMock) -> None:
+    record = Record()
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.polled")
+
+    async def scenario() -> None:
+        first = Polled(["a", "b"], waits=True)
+        engine = _engine(record, first)
+        await engine.save(workflow)
+        await _until(lambda: first.waiting)
+        await engine.stop()
+
+        # Spanreed starts again, and the service still has "a" and "b".
+        second = Polled(["a", "b", "c"], waits=True)
+        engine = _engine(record, second)
+        await engine.start([4])
+        await _until(lambda: second.waiting)
+        await engine.stop()
+
+        assert record.texts == ["a", "b", "c"]
+        # The second engine went on from the cursor of the first.
+        assert second.cursors == ["after poll 1"]
+
+    with fake_storage(), _no_wait_between_polls():
+        asyncio.run(scenario())
 
 
 @patch_user_interaction("spanreed.workflows.engine")

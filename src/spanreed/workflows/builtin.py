@@ -6,7 +6,6 @@ import asyncio
 import datetime
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import Literal
 
 from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import (
@@ -15,6 +14,7 @@ from spanreed.workflows.blocks import (
     BlockKind,
     NoOutput,
     NoQuestion,
+    Repeat,
     StepContext,
     StopRun,
     Trigger,
@@ -22,34 +22,11 @@ from spanreed.workflows.blocks import (
 )
 
 _LAST_FIRED = "last_fired"
-_UNITS = {
-    "minutes": datetime.timedelta(minutes=1),
-    "hours": datetime.timedelta(hours=1),
-    "days": datetime.timedelta(days=1),
-}
 
 
 def _now() -> datetime.datetime:
     # Indirection so that tests can set the clock of the schedule.
     return datetime.datetime.now(datetime.timezone.utc)
-
-
-@dataclass
-class ScheduleParams:
-    """How often a schedule fires."""
-
-    every: int = 1
-    unit: Literal["minutes", "hours", "days"] = "hours"
-
-    def __post_init__(self) -> None:
-        """Raise ``ValueError`` if the schedule would never wait."""
-        if self.every < 1:
-            raise ValueError("A schedule repeats every 1 or more.")
-
-    @property
-    def interval(self) -> datetime.timedelta:
-        """Return the time between two events."""
-        return self.every * _UNITS[self.unit]
 
 
 @dataclass
@@ -62,7 +39,7 @@ class Tick:
     time: str
 
 
-class Schedule(Trigger[ScheduleParams, Tick]):
+class Schedule(Trigger[Repeat, Tick]):
     """Fire again and again, a fixed time apart.
 
     The time of the last event is kept, so a restart does not fire early
@@ -76,7 +53,7 @@ class Schedule(Trigger[ScheduleParams, Tick]):
     Manual = NoQuestion
 
     async def events(
-        self, ctx: TriggerContext, params: ScheduleParams
+        self, ctx: TriggerContext, params: Repeat
     ) -> AsyncGenerator[Tick, bool | None]:
         """Yield an event each time the interval has passed."""
         while True:
@@ -92,7 +69,7 @@ class Schedule(Trigger[ScheduleParams, Tick]):
             await ctx.state.set(_LAST_FIRED, fired.isoformat())
 
     async def manual_events(
-        self, ctx: TriggerContext, params: ScheduleParams, answer: NoQuestion
+        self, ctx: TriggerContext, params: Repeat, answer: NoQuestion
     ) -> list[Tick]:
         """Return one event for now. The schedule keeps its own pace."""
         return [self._tick(ctx, _now())]
