@@ -39,6 +39,7 @@ from spanreed.workflows.blocks import (
     BlockRegistry,
     Loop,
     ManualError,
+    NoQuestion,
     RunInfo,
     StepContext,
     StopRun,
@@ -49,7 +50,7 @@ from spanreed.workflows.blocks import (
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
 from spanreed.workflows.store import WorkflowStore
-from spanreed.workflows.values import from_data, to_data
+from spanreed.workflows.values import from_data, from_whole_data, to_data, whole_data
 
 # How a run, or a step of it, ended.
 OK = "ok"
@@ -365,8 +366,12 @@ class WorkflowEngine:
         *,
         manual: bool,
         attempt: int,
+        test: bool = False,
     ) -> dict[str, Any]:
-        """Run the steps of a workflow for one event, and return the trace."""
+        """Run the steps of a workflow for one event, and return the trace.
+
+        ``test`` marks a run that the editor made to try a workflow out.
+        """
         run = RunInfo(id=secrets.token_hex(6), manual=manual)
         ctx = StepContext(user=user, workflow_id=workflow.id, run=run)
         context: dict[str, Any] = {model.TRIGGER_NAME: event, model.RUN_NAME: run}
@@ -383,6 +388,10 @@ class WorkflowEngine:
             "steps": [],
             "status": FINISHED,
         }
+        if test:
+            trace["test"] = True
+        else:
+            await self._keep_event(workflow, trace["started_at"], event)
         async with self._locks.setdefault(workflow.id, asyncio.Lock()):
             try:
                 trace["status"] = await self._run_steps(
@@ -407,6 +416,15 @@ class WorkflowEngine:
             self._logger.exception(
                 f"Could not keep the trace of run {trace['id']}"
                 f" of workflow {workflow.id}."
+            )
+
+    async def _keep_event(self, workflow: Workflow, at: str, event: Any) -> None:
+        """Keep the event of a run, whole, for the editor to test with."""
+        try:
+            await self._store.keep_last_event(workflow.id, at, whole_data(event))
+        except Exception:
+            self._logger.exception(
+                f"Could not keep the last event of workflow {workflow.id}."
             )
 
     async def _run_steps(
@@ -581,6 +599,54 @@ class WorkflowEngine:
                 trigger_ctx, params, event, worked=trace["status"] != FAILED
             )
         await bot.send_message(self._summary(workflow, traces), parse_html=False)
+
+    # -- trying a workflow out ----------------------------------------------
+
+    async def test_events(self, workflow: Workflow) -> dict[str, Any]:
+        """Return what a workflow can be tried out with.
+
+        ``last`` is the event it last ran for, with the time of that run,
+        or ``None`` if it has not run. ``now`` says whether its trigger can
+        make an event without asking anything.
+        """
+        trigger = self._registry.get(workflow.trigger.block)
+        return {
+            "last": await self._store.last_event(workflow.id),
+            "now": isinstance(trigger, Trigger) and trigger.Manual is NoQuestion,
+        }
+
+    async def run_test(
+        self, workflow: Workflow, user: User, source: str
+    ) -> dict[str, Any] | None:
+        """Run a workflow once to try it out, and return the trace.
+
+        ``workflow`` is run as it is given, and need not be the stored one:
+        the editor tests what is not saved yet. ``source`` is ``last``, for
+        the event the stored workflow last ran for, or ``now``, for an
+        event that the trigger makes without asking. Return ``None`` if
+        there is no such event.
+
+        The steps do what they do: a test is a real run. It is not tried
+        again if it fails, and it is kept in the history, marked as a test.
+        """
+        event: Any
+        if source == "last":
+            kept = await self._store.last_event(workflow.id)
+            if kept is None:
+                return None
+            event = from_whole_data(kept["event"])
+        else:
+            trigger = self._registry.get(workflow.trigger.block)
+            if not (isinstance(trigger, Trigger) and trigger.Manual is NoQuestion):
+                return None
+            params = from_data(trigger.Params, workflow.trigger.params)
+            events = await trigger.manual_events(
+                self._trigger_context(workflow, user), params, NoQuestion()
+            )
+            if not events:
+                return None
+            event = events[0]
+        return await self._run(workflow, user, event, manual=True, attempt=1, test=True)
 
     @staticmethod
     async def _ask(

@@ -73,6 +73,13 @@ class SetNoteProperties(Action[SetNotePropertiesInput, SetNotePropertiesOutput])
     id = "obsidian.set-note-properties"
     title = "Set note properties"
 
+    def writes(self, inputs: dict[str, Any]) -> list[str]:
+        """Name each property of the note that the step sets."""
+        properties = inputs.get("properties")
+        if not isinstance(properties, dict) or not inputs.get("note"):
+            return []
+        return [f"the property “{name}” of {inputs['note']}" for name in properties]
+
     async def run(
         self, ctx: StepContext, inputs: SetNotePropertiesInput
     ) -> SetNotePropertiesOutput:
@@ -137,6 +144,10 @@ class WriteFile(Action[WriteFileInput, WriteFileOutput]):
 
     id = "obsidian.write-file"
     title = "Write file"
+
+    def writes(self, inputs: dict[str, Any]) -> list[str]:
+        """Name the file that the step writes."""
+        return [f"the file {inputs['path']}"] if inputs.get("path") else []
 
     async def run(self, ctx: StepContext, inputs: WriteFileInput) -> WriteFileOutput:
         """Write the file, or delete it if it would be empty."""
@@ -217,6 +228,10 @@ class WriteNote(Action[WriteNoteInput, WriteNoteOutput]):
 
     id = "obsidian.write-note"
     title = "Write note"
+
+    def writes(self, inputs: dict[str, Any]) -> list[str]:
+        """Name the note that the step writes, as "Write file" names a file."""
+        return [f"the file {inputs['path']}"] if inputs.get("path") else []
 
     async def run(self, ctx: StepContext, inputs: WriteNoteInput) -> WriteNoteOutput:
         """Write the note."""

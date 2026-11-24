@@ -584,6 +584,117 @@ def test_the_trigger_of_a_workflow_cannot_be_changed() -> None:
     asyncio.run(run())
 
 
+# -- trying a workflow out -----------------------------------------------------
+
+
+def test_a_workflow_that_has_not_run_can_be_tested_with_an_event_made_now() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            shown = await _json(await client.get(url))
+            assert shown["test"] == {"last": None, "now": True}
+            form = _form_of(shown)
+            # Not saved: the test runs what the editor holds.
+            form["steps"][1]["inputs"]["condition"] = "{{ find.count == 0 }}"
+            form["steps"] = form["steps"][:2]
+
+            response = await client.post(
+                f"{url}/test", json={"workflow": form, "event": "now"}, headers=H
+            )
+
+            assert response.status_code == 200
+            ran = (await _json(response))["run"]
+            assert (ran["status"], ran["test"], ran["outcome"]) == (
+                "finished",
+                True,
+                "finished.",
+            )
+            assert [step["id"] for step in ran["steps"]] == ["find", "any"]
+            stored = await engine.store.get(workflow.id)
+            assert stored is not None and len(stored.steps) == 4
+            # The test is in the history.
+            runs = (await _json(await client.get(f"{url}/runs")))["runs"]
+            assert [r.get("test") for r in runs] == [True]
+
+    asyncio.run(run())
+
+
+def test_a_workflow_is_tested_with_the_event_of_its_last_run() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            await engine.run_by_hand(workflow.id, _user(USER_ID))
+            shown = await _json(await client.get(url))
+            last = shown["test"]["last"]
+            assert last["summary"].startswith("date ")
+
+            response = await client.post(
+                f"{url}/test",
+                json={"workflow": _form_of(shown), "event": "last"},
+                headers=H,
+            )
+
+            assert response.status_code == 200
+            ran = (await _json(response))["run"]
+            assert ran["outcome"] == "stopped at step 2, Only continue if."
+            # The test did not become the last event.
+            again = await _json(await client.get(url))
+            assert again["test"]["last"] == last
+
+    asyncio.run(run())
+
+
+def test_a_test_needs_an_event_and_a_workflow_that_can_run() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            theirs = await _install(engine, OTHER_USER_ID)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+
+            async def test(body: Any, target: str = url) -> Any:
+                return await client.post(f"{target}/test", json=body, headers=H)
+
+            # It has not run, so there is no last event.
+            response = await test({"workflow": form, "event": "last"})
+            assert response.status_code == 409
+            assert (await test({"workflow": form})).status_code == 400
+            form["steps"][1]["inputs"]["condition"] = "{{ later.count }}"
+            response = await test({"workflow": form, "event": "now"})
+            assert response.status_code == 400
+            assert (await _json(response))["problems"] == [
+                "Step 2, Only continue if: “later” is not the trigger, the run "
+                "or an earlier step."
+            ]
+            response = await test(
+                {"workflow": form, "event": "now"},
+                f"/app/api/workflows/{theirs.id}",
+            )
+            assert response.status_code == 404
+            assert await engine.store.recent_runs(workflow.id, 5) == []
+
+    asyncio.run(run())
+
+
+def test_a_workflow_says_what_another_of_the_user_writes_too() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+
+            shown = await _json(await client.get(f"/app/api/workflows/{workflow.id}"))
+
+            # Nothing in this recipe writes what another workflow could.
+            assert shown["warnings"] == []
+
+    asyncio.run(run())
+
+
 # -- what a workflow can be made of --------------------------------------------
 
 

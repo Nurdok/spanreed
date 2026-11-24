@@ -392,6 +392,38 @@ so is a recipe that needs such a plugin.
 - **Deleting** a workflow (`DELETE /app/api/workflows/<id>`) deletes its
   history and what its trigger remembers.
 
+### Testing
+
+`POST /app/api/workflows/<id>/test` runs a workflow once as the editor holds
+it, without storing it, and returns the trace.
+
+- **The run is real.** The steps do what they do. It is not tried again if it
+  fails, `{{ run.manual }}` is true in it, and its trace is kept in the
+  history with `test` set.
+- **It runs for the last event**, the one the stored workflow last ran for.
+  The engine keeps that event whole for each workflow: a trace keeps only the
+  start of a long text or list, and a test that ran for a trace would write
+  the shortened value. For a trigger whose `Manual` is `NoQuestion` it can
+  also run for an event that the trigger makes at that moment.
+- **The kept event reads like the original** in templates: `{{ trigger.date
+  }}`, `{{ each.item.reps }}`. A block gets plain values from it, not the
+  objects the trigger made.
+
+### What a step writes
+
+A block can name what a step of it writes that another step could write too:
+
+```python
+class SetNoteProperties(Action[...]):
+    def writes(self, inputs: dict[str, Any]) -> list[str]:
+        return [f"the property “{name}” of {inputs['note']}" for name in inputs["properties"]]
+```
+
+`inputs` are the stored inputs, templates and all. Two steps that give the
+same name write the same thing. The page says so on a workflow when another
+workflow of the user that is on gives a name that it gives too. It is not a
+problem: both run.
+
 ## Redis
 
 | Key | Holds |
@@ -400,6 +432,7 @@ so is a recipe that needs such a plugin.
 | `workflows:workflow:{id}` | The workflow, as JSON |
 | `workflows:workflow:{id}:state` | Hash of what its trigger remembers: when it last fired or polled, a cursor, the keys it ran for |
 | `workflows:workflow:{id}:runs` | The traces of its last 100 runs, newest first. Dropped 30 days after the last run. |
+| `workflows:workflow:{id}:last_event` | The event it last ran for, whole, with the time of the run. Dropped 30 days after the last run. |
 | `workflows:workflow:{id}:queue` | List of the keys it still has to run for, oldest first |
 | `workflows:workflow:{id}:queued` | Hash of those keys, each with a token that changes when the key is put again |
 | `workflows:converted:{plugin}` | Set of the users whose use of a plugin was converted to recipes |

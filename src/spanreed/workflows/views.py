@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import typing
+from collections.abc import Iterable
 from typing import Any
 
 from spanreed import config_form
@@ -222,10 +223,63 @@ def _last_run(trace: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def _writes(engine: WorkflowEngine, steps: list[Step]) -> set[str]:
+    """Return the names of what some steps, and the steps inside them, write."""
+    written: set[str] = set()
+    for step in steps:
+        block = engine.registry.get(step.block)
+        if isinstance(block, Action):
+            written.update(block.writes(step.inputs))
+        written |= _writes(engine, step.steps)
+    return written
+
+
+def warnings(
+    engine: WorkflowEngine, workflow: Workflow, others: Iterable[Workflow]
+) -> list[str]:
+    """Return what the user should know about a workflow that can run.
+
+    Two workflows may write the same thing, a property of the daily note
+    for example. That is allowed, and one of them wins. Say which other
+    workflows that are on write what this one writes.
+    """
+    mine = _writes(engine, workflow.steps)
+    found = []
+    for other in others:
+        if other.id == workflow.id or not other.enabled:
+            continue
+        shared = sorted(mine & _writes(engine, other.steps))
+        if shared:
+            found.append(f"“{other.name}” also writes {', '.join(shared)}.")
+    return found
+
+
+def _event_summary(event: Any) -> str:
+    """Return the start of an event in a line: its plain values by name."""
+    if not isinstance(event, dict):
+        return ""
+    parts = [
+        f"{name} {value}"
+        for name, value in event.items()
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool)
+    ]
+    text = " · ".join(parts)
+    return text if len(text) <= 120 else text[:119] + "…"
+
+
 def detail(
-    engine: WorkflowEngine, workflow: Workflow, last_run: dict[str, Any] | None
+    engine: WorkflowEngine,
+    workflow: Workflow,
+    last_run: dict[str, Any] | None,
+    others: Iterable[Workflow] = (),
+    test_events: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return everything the page shows of one workflow."""
+    """Return everything the page shows of one workflow.
+
+    ``others`` are the user's other workflows, for what they write too.
+    ``test_events`` is what the workflow can be tried out with (see
+    ``WorkflowEngine.test_events``).
+    """
     trigger = _card(
         engine, workflow.trigger.block, workflow.trigger.params, "trigger", Trigger
     )
@@ -237,6 +291,20 @@ def detail(
         "name": workflow.name,
         "enabled": workflow.enabled,
         "problems": problems,
+        "warnings": warnings(engine, workflow, others),
+        # What the editor's Test can run for. The last event is named by
+        # when it was and how it starts: the event itself can be large.
+        "test": {
+            "last": (
+                {
+                    "at": test_events["last"]["at"],
+                    "summary": _event_summary(test_events["last"]["event"]),
+                }
+                if test_events and test_events["last"]
+                else None
+            ),
+            "now": bool(test_events and test_events["now"]),
+        },
         "by_hand": by_hand,
         # The command exists only for a workflow that can be started by
         # hand. ``hidden`` says whether it is kept out of the command menu.

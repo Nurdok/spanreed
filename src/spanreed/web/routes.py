@@ -674,7 +674,13 @@ async def _own_workflow(
 
 async def _workflow_detail(wf_engine: WorkflowEngine, workflow: Workflow) -> Any:
     runs = await wf_engine.store.recent_runs(workflow.id, 1)
-    return workflow_views.detail(wf_engine, workflow, runs[0] if runs else None)
+    return workflow_views.detail(
+        wf_engine,
+        workflow,
+        runs[0] if runs else None,
+        others=await wf_engine.store.list_for_user(workflow.user_id),
+        test_events=await wf_engine.test_events(workflow),
+    )
 
 
 @blueprint.get("/api/workflows")
@@ -865,6 +871,44 @@ async def save_workflow(workflow_id: str) -> Any:
         f" {len(edited.steps)} steps."
     )
     return jsonify(await _workflow_detail(wf_engine, edited))
+
+
+@blueprint.post("/api/workflows/<workflow_id>/test")
+@api_auth
+async def test_workflow(workflow_id: str) -> Any:
+    """Run a workflow once as the editor holds it, and return the trace.
+
+    The body holds the workflow as ``PUT`` takes it, and ``event``:
+    ``last`` for the event the stored workflow last ran for, ``now`` for
+    one that the trigger makes without asking. Nothing is stored of the
+    workflow. The run is for real, and is kept in the history as a test.
+    """
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    body = await request.get_json(silent=True) or {}
+    source = body.get("event")
+    if source not in ("last", "now"):
+        return jsonify({"error": "Say which event to test with."}), 400
+    try:
+        edited = workflow_editing.workflow_from_form(
+            wf_engine.registry, workflow, body.get("workflow")
+        )
+    except workflow_editing.FormError as e:
+        return jsonify({"error": "This cannot run.", "problems": e.problems}), 400
+    problems = wf_engine.problems(edited)
+    if edited.trigger.block != workflow.trigger.block:
+        problems.insert(0, "The trigger of a workflow cannot be changed.")
+    if problems:
+        return jsonify({"error": "This cannot run.", "problems": problems}), 400
+    trace = await wf_engine.run_test(edited, g.user, source)
+    if trace is None:
+        return jsonify({"error": "There is no event to test with."}), 409
+    _logger.info(
+        f"User {edited.user_id} tested workflow {edited.id}: {trace['status']}"
+    )
+    return jsonify({"run": workflow_views.run_view(trace)})
 
 
 @blueprint.get("/api/workflows/<workflow_id>/runs")

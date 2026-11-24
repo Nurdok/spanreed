@@ -166,7 +166,12 @@ class WorkflowStore:
         """Delete a workflow, its trigger's state and its runs' traces."""
         key = _workflow_key(workflow.id)
         await redis_api.delete(
-            key, f"{key}:state", f"{key}:runs", f"{key}:queue", f"{key}:queued"
+            key,
+            f"{key}:state",
+            f"{key}:runs",
+            f"{key}:queue",
+            f"{key}:queued",
+            f"{key}:last_event",
         )
         await redis_api.srem(_user_key(workflow.user_id), workflow.id)
 
@@ -184,6 +189,24 @@ class WorkflowStore:
         await redis_api.lpush(key, json.dumps(trace))
         await redis_api.ltrim(key, 0, RUNS_KEPT - 1)
         await redis_api.expire(key, int(RUNS_TTL.total_seconds()))
+
+    async def keep_last_event(self, workflow_id: str, at: str, event: Any) -> None:
+        """Keep the event that a workflow last ran for, whole.
+
+        ``event`` is JSON data. It is dropped with the traces, ``RUNS_TTL``
+        after the last run.
+        """
+        key = f"{_workflow_key(workflow_id)}:last_event"
+        await redis_api.set(key, json.dumps({"at": at, "event": event}))
+        await redis_api.expire(key, int(RUNS_TTL.total_seconds()))
+
+    async def last_event(self, workflow_id: str) -> dict[str, Any] | None:
+        """Return the event a workflow last ran for, and when: ``at``, ``event``."""
+        raw = await redis_api.get(f"{_workflow_key(workflow_id)}:last_event")
+        if raw is None:
+            return None
+        kept: dict[str, Any] = json.loads(_text(raw))
+        return kept
 
     async def recent_runs(self, workflow_id: str, limit: int) -> list[dict[str, Any]]:
         """Return the traces of the last runs of a workflow, newest first."""

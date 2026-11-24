@@ -135,6 +135,11 @@
   .wf-sub span { display: inline-flex; align-items: center; gap: 6px; }
   .wf-problems { background: var(--notice); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
   .wf-problems ul { margin: 4px 0 0; padding-left: 18px; }
+  .wf-notes { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 14px; color: var(--muted); }
+  .wf-notes ul { margin: 4px 0 0; padding-left: 18px; color: var(--fg); }
+  .wf-test { background: var(--card); border: 1px solid var(--line); border-radius: 10px; max-width: 760px; }
+  .wf-test > .t-top { display: flex; align-items: center; gap: 8px; padding: 9px 12px; font-size: 14px; }
+  .wf-test > .t-top .link { margin-left: auto; }
   .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
   .tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px; color: var(--muted); }
   .tab[aria-selected="true"] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
@@ -1171,14 +1176,19 @@ function renderLane(d) {
 
 // The lane while a workflow is edited. It is drawn from the draft, which
 // holds the steps as they are now: added, removed and moved.
-function renderDraftLane() {
+// The draft as cards, numbered as the steps are now.
+function draftCards() {
   const number = (steps, prefix) => steps.forEach((step, i) => {
     step.number = prefix + (i + 1);
     number(step.steps, step.number + ".");
   });
   number(draft.steps, "");
   const view = (step) => ({ ...step.card, id: step.id, number: step.number, steps: step.steps.map(view) });
-  const trigger = { ...draft.trigger.card, id: "trigger" };
+  return { trigger: { ...draft.trigger.card, id: "trigger" }, steps: draft.steps.map(view) };
+}
+
+function renderDraftLane() {
+  const shown = draftCards(), trigger = shown.trigger;
   const sources = { trigger: { badge: "T", kind: "trigger" }, run: { badge: "run", kind: "logic" } };
   const cards = { trigger };
   for (const step of allSteps(draft.steps)) {
@@ -1190,8 +1200,7 @@ function renderDraftLane() {
   lane.append(renderCard(trigger, "T", sources, { cards, offers: [] }));
   let offers = [{ id: "trigger", badge: "T", kind: "trigger", title: trigger.title, names: trigger.outputs },
                 { id: "run", badge: "run", kind: "logic", title: "This run", names: draft.shown.run_outputs }];
-  draft.steps.forEach((step, i) => {
-    const card = view(step);
+  shown.steps.forEach((card, i) => {
     lane.append(addStepButton(draft.steps, i, "join"), renderCard(card, card.number, sources, { cards, offers, list: draft.steps, index: i }));
     offers = [...offers, offerOf(card)];
   });
@@ -1444,12 +1453,47 @@ function openValueSheet(box, offers) {
   sheet.querySelector("button.pill")?.focus();
 }
 
+// The draft as the server takes it: without the cards it is drawn from.
+function draftForm() {
+  const bare = (steps) => steps.map((step) => ({ id: step.id, block: step.block, inputs: step.inputs, steps: bare(step.steps) }));
+  return { name: draft.name, command_name: draft.command_name,
+           trigger: { block: draft.trigger.block, params: draft.trigger.params }, steps: bare(draft.steps) };
+}
+
+// Try the draft out: run it once, for real, and show what each step got and gave.
+function testDraft() {
+  const d = draft.shown, offer = d.test;
+  openSheet("Test this workflow", (sheet, close) => {
+    const run = async (event) => {
+      close();
+      draft.testing = true; draft.tested = null; draft.problems = [];
+      redrawEditor();
+      const res = await post("workflows/" + encodeURIComponent(d.id) + "/test", { workflow: draftForm(), event });
+      if (!draft || draft.id !== d.id) return;
+      draft.testing = false;
+      const answer = await res.json().catch(() => ({}));
+      if (res.ok) draft.tested = answer.run;
+      else draft.problems = answer.problems || [answer.error || "Could not run the test."];
+      redrawEditor();
+      $("workflow-main").scrollTo(0, 0);
+    };
+    sheet.append(el("div", "foot", "A test runs the steps as they are here, saved or not, once and for real: " +
+                                   "what they write is written, and what they send is sent."));
+    if (offer.last) {
+      sheet.append(option("With the event of the last run", when(offer.last.at) + (offer.last.summary ? " · " + offer.last.summary : ""),
+                          "", () => run("last")));
+    }
+    if (offer.now) sheet.append(option("With an event made now", "As if the trigger fired this moment.", "", () => run("now")));
+    if (!offer.last && !offer.now) {
+      sheet.append(el("div", "", "There is nothing to test with yet. This workflow has not run, and its trigger " +
+                                 "asks before it starts. Save it and use Run now once."));
+    }
+  });
+}
+
 async function saveDraft() {
   const d = draft.shown;
-  const bare = (steps) => steps.map((step) => ({ id: step.id, block: step.block, inputs: step.inputs, steps: bare(step.steps) }));
-  const body = { name: draft.name, command_name: draft.command_name,
-                 trigger: { block: draft.trigger.block, params: draft.trigger.params }, steps: bare(draft.steps) };
-  const res = await api("workflows/" + encodeURIComponent(d.id), { method: "PUT", headers: HEADERS, body: JSON.stringify(body) });
+  const res = await api("workflows/" + encodeURIComponent(d.id), { method: "PUT", headers: HEADERS, body: JSON.stringify(draftForm()) });
   if (!draft || draft.id !== d.id) return;
   if (!res.ok) {
     const answer = await res.json().catch(() => ({}));
@@ -1485,12 +1529,23 @@ function renderEditor(d) {
     box.append("Not saved. This has to change first:", ul);
     parts.push(box);
   }
+  if (draft.tested) {
+    // What the test did, step by step, as History shows a run.
+    const box = el("div", "wf-test"), top = el("div", "t-top"), hide = el("button", "link", "Hide");
+    hide.onclick = () => { draft.tested = null; redrawEditor(); };
+    top.append(el("span", "dot " + runDot(draft.tested)), el("strong", "", "Test"), el("span", "", draft.tested.outcome), hide);
+    box.append(top, renderTrace(draft.tested, draftCards()));
+    parts.push(box);
+  }
   const row = el("div", "save-row"), save = el("button", "primary", "Save"), cancel = el("button", "small", "Cancel");
+  const test = el("button", "small", draft.testing ? "Testing…" : "Test");
   save.onclick = async () => { save.disabled = true; try { await saveDraft(); } finally { save.disabled = false; } };
+  test.onclick = testDraft;
+  save.disabled = test.disabled = Boolean(draft.testing);
   cancel.onclick = () => { if (mayLeaveEditor()) renderWorkflow(d); };
   const remove = el("button", "link danger", "Delete this workflow");
   remove.onclick = () => deleteWorkflow(d);
-  row.append(save, cancel, remove);
+  row.append(save, test, cancel, remove);
   parts.push(renderDraftLane(), row);
   $("workflow-main").replaceChildren(...parts);
 }
@@ -1583,7 +1638,7 @@ async function renderHistory(d, body) {
   const list = el("div", "runs");
   for (const run of runs) {
     const item = el("details", "run"), sum = el("summary");
-    const how = (run.manual ? "By hand" : "By itself") + (run.attempt > 1 ? ", try " + run.attempt : "");
+    const how = (run.test ? "Test" : run.manual ? "By hand" : "By itself") + (run.attempt > 1 ? ", try " + run.attempt : "");
     sum.append(el("span", "dot " + runDot(run)), el("span", "run-when", when(run.started_at)),
                el("span", "run-how", how), el("span", "run-out", run.outcome));
     item.append(sum, renderTrace(run, d));
@@ -1629,6 +1684,13 @@ function renderWorkflow(d) {
     const box = el("div", "wf-problems"), ul = el("ul");
     for (const problem of d.problems) ul.append(el("li", "", problem));
     box.append("This workflow cannot run.", ul);
+    parts.push(box);
+  }
+
+  if (d.warnings.length) {
+    const box = el("div", "wf-notes"), ul = el("ul");
+    for (const warning of d.warnings) ul.append(el("li", "", warning));
+    box.append("Two workflows that write the same thing both run, and the one that runs last wins.", ul);
     parts.push(box);
   }
 

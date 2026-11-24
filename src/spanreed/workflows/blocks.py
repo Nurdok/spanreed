@@ -258,6 +258,17 @@ class Action(Block, Generic[InT, OutT]):
     async def run(self, ctx: StepContext, inputs: InT) -> OutT:
         """Do the step for one run."""
 
+    def writes(self, inputs: dict[str, Any]) -> list[str]:
+        """Name what a step of this block writes that another could too.
+
+        ``inputs`` are the step's inputs as they are stored, templates and
+        all. Each name ends a sentence that starts with "also writes":
+        ``the property “weight” of Daily/{{ trigger.date }}.md``. Two steps
+        that give the same name write the same thing, and the editor says
+        so when they are in two workflows. Nothing by default.
+        """
+        return []
+
 
 class Loop(Action[InT, OutT]):
     """An action that holds steps, and runs them once for each round.
