@@ -41,20 +41,42 @@ class RetiredPlugin:
     canonical_name: str
     name: str
     recipe_id: str
+    # Given the config the plugin had saved for a user, or ``None`` if it
+    # had none, returns what changes the new workflow to match it.
+    keep_settings: (
+        Callable[[dict[str, Any] | None], Callable[[Workflow], None]] | None
+    ) = None
+    # Added to what the user is told, for what changed besides.
+    note: str = ""
 
 
-RETIRED_PLUGINS = [
-    RetiredPlugin(
-        canonical_name="todoist-no-overdue",
-        name="Todoist No Overdue",
-        recipe_id="todoist-no-overdue",
-    ),
-]
+def _retired_plugins() -> list[RetiredPlugin]:
+    # Imported here: what is left of a plugin imports the model, as this does.
+    from spanreed.plugins import habit_check_in
+
+    return [
+        RetiredPlugin(
+            canonical_name="todoist-no-overdue",
+            name="Todoist No Overdue",
+            recipe_id="todoist-no-overdue",
+        ),
+        RetiredPlugin(
+            canonical_name="habit-tracker",
+            name="Habit Tracker",
+            recipe_id=habit_check_in.RECIPE,
+            keep_settings=habit_check_in.keep_settings,
+            note=(
+                "The command is still “Track Habits”. Add Habit and Remove "
+                "Habit are gone: the habits are the options of the "
+                "workflow’s question, under Workflows in the web UI."
+            ),
+        ),
+    ]
 
 
 async def retire_plugins(engine: WorkflowEngine) -> None:
     """Move the users of every retired plugin to its recipe."""
-    for plugin in RETIRED_PLUGINS:
+    for plugin in _retired_plugins():
         # The keys that ``Plugin`` keeps registrations under.
         users_key = f"config:plugin:name={plugin.canonical_name}:users"
         for raw_user_id in await redis_api.smembers(users_key):
@@ -81,18 +103,46 @@ async def _move_user(engine: WorkflowEngine, plugin: RetiredPlugin, user: User) 
     workflows = await engine.store.list_for_user(user.id)
     if any(workflow.recipe == plugin.recipe_id for workflow in workflows):
         return
-    workflow = await engine.install(user, all_recipes()[plugin.recipe_id])
+    customize = None
+    if plugin.keep_settings is not None:
+        customize = plugin.keep_settings(await _saved_config(plugin, user))
+    workflow = await engine.install(user, all_recipes()[plugin.recipe_id], customize)
     _logger.info(
         f"Moved user {user.id} from plugin {plugin.canonical_name}"
         f" to workflow {workflow.id}."
     )
+    text = f"The plugin “{plugin.name}” is now a workflow, “{workflow.name}”. "
+    if workflow.enabled:
+        text += (
+            "It does what the plugin did. Use “Manage workflows” to turn it "
+            "off or to run it."
+        )
+    else:
+        text += (
+            "It is off, because the plugin had no settings to carry over. "
+            "Fill it in under Workflows in the web UI, and turn it on."
+        )
+    if plugin.note:
+        text += f" {plugin.note}"
     bot = await UserInteractionApi.for_user(user)
-    await bot.notify(
-        f"The plugin “{plugin.name}” is now a workflow, “{workflow.name}”. "
-        "It does what the plugin did. Use “Manage workflows” to turn it "
-        "off or to run it.",
-        parse_html=False,
+    await bot.notify(text, parse_html=False)
+
+
+async def _saved_config(plugin: RetiredPlugin, user: User) -> dict[str, Any] | None:
+    """Return the config a retired plugin had saved for a user, if any.
+
+    The plugin is gone, so this reads the key that ``Plugin`` kept it under.
+    """
+    raw = await redis_api.get(
+        f"config:plugin:name={plugin.canonical_name}:user_id={user.id}"
     )
+    if raw is None:
+        return None
+    try:
+        saved = json.loads(raw)
+    except ValueError:
+        return None
+    return saved if isinstance(saved, dict) else None
 
 
 @dataclass(frozen=True)

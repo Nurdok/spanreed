@@ -154,6 +154,18 @@ answered:
 ![The conversation in the history on desktop](images/web-ui-workflow-ask-history-desktop.png)
 ![The conversation in the history on a phone](images/web-ui-workflow-ask-history-phone.png)
 
+A question that holds steps, "Ask me to pick, one at a time", shows them
+under **After each pick**. Its options are rows, so a habit is added or
+removed as a row. History shows each pick with the steps that ran for it:
+
+![A question that holds steps on desktop](images/web-ui-workflow-ask-each-desktop.png)
+![Editing its options on desktop](images/web-ui-workflow-ask-each-edit-desktop.png)
+![Its history on desktop](images/web-ui-workflow-ask-each-history-desktop.png)
+
+![A question that holds steps on a phone](images/web-ui-workflow-ask-each-phone.png)
+![Editing its options on a phone](images/web-ui-workflow-ask-each-edit-phone.png)
+![Its history on a phone](images/web-ui-workflow-ask-each-history-phone.png)
+
 A workflow that cannot run says why above its steps, and a card whose block
 no plugin publishes any more is outlined in red.
 

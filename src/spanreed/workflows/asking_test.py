@@ -12,6 +12,8 @@ from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
 from spanreed.workflows.asking import (
     AskChoice,
     AskChoiceInput,
+    AskEach,
+    AskEachInput,
     AskList,
     AskListInput,
     AskText,
@@ -58,6 +60,7 @@ def test_the_asking_blocks_are_well_formed() -> None:
     assert [block.id for block in asking_blocks()] == [
         "core.command",
         "core.ask-choice",
+        "core.ask-each",
         "core.ask-text",
         "core.ask-list",
         "core.stop",
@@ -65,12 +68,14 @@ def test_the_asking_blocks_are_well_formed() -> None:
     asks = [b for b in asking_blocks() if isinstance(b, Action) and b.converses]
     assert [block.id for block in asks] == [
         "core.ask-choice",
+        "core.ask-each",
         "core.ask-text",
         "core.ask-list",
     ]
     # Every block that asks says how its run waits for the turn.
     needed: dict[str, dict[str, Any]] = {
         "core.ask-choice": {"question": "?", "options": []},
+        "core.ask-each": {"question": "?", "options": {}},
         "core.ask-text": {"question": "?"},
         "core.ask-list": {"question": "?", "add_question": "?"},
     }
@@ -307,6 +312,108 @@ def test_ask_choice_refuses_counts_that_mean_nothing() -> None:
         AskChoiceInput(question="?", options=[], at_a_time=-1)
     with pytest.raises(ValueError, match="Columns"):
         AskChoiceInput(question="?", options=[], columns=0)
+
+
+# -- picks, one at a time ----------------------------------------------------
+
+HABITS = {"Meditate": "meditate", "Exercise": "exercise", "Read": "read"}
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_ask_each_offers_what_is_left_and_gives_the_value(bot: AsyncMock) -> None:
+    block = AskEach()
+    inputs = AskEachInput(
+        question="Which did you do?", options=HABITS, leave_out=["exercise"]
+    )
+    bot.request_user_choice.side_effect = [1, 0]
+
+    async def scenario() -> list[Any]:
+        first = await block.ask(_ctx(), inputs, [])
+        assert first is not None
+        second = await block.ask(_ctx(), inputs, [first])
+        assert second is not None
+        return [first, second]
+
+    first, second = asyncio.run(scenario())
+
+    assert _choices(bot) == [
+        ("Which did you do?", ["Meditate", "Read", "Cancel"]),
+        ("Which did you do?", ["Meditate", "Cancel"]),
+    ]
+    assert (first.answer, first.value, first.picked, first.count, first.left) == (
+        "Read",
+        "read",
+        ["read"],
+        1,
+        1,
+    )
+    assert (second.value, second.picked, second.count, second.left) == (
+        "meditate",
+        ["read", "meditate"],
+        2,
+        0,
+    )
+    # Nothing is on offer after that, so nothing more is asked.
+    assert block.anything_to_ask(inputs, [first]) is True
+    assert block.anything_to_ask(inputs, [first, second]) is False
+    after = block.after(inputs, [first, second])
+    assert (after.picked, after.count, after.left, after.value) == (
+        ["read", "meditate"],
+        2,
+        0,
+        "meditate",
+    )
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_ask_each_ends_when_the_user_is_done(bot: AsyncMock) -> None:
+    inputs = AskEachInput(question="Which?", options=HABITS, done="That is all")
+    bot.request_user_choice.return_value = 3
+
+    asked = asyncio.run(AskEach().ask(_ctx(), inputs, []))
+
+    assert asked is None
+    assert _choices(bot)[0][1] == ["Meditate", "Exercise", "Read", "That is all"]
+    after = AskEach().after(inputs, [])
+    assert (after.picked, after.count, after.left, after.answer, after.value) == (
+        [],
+        0,
+        3,
+        "",
+        None,
+    )
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_ask_each_asks_nothing_when_nothing_is_on_offer(bot: AsyncMock) -> None:
+    inputs = AskEachInput(
+        question="Which?", options=HABITS, leave_out=["meditate", "exercise", "read"]
+    )
+
+    assert AskEach().anything_to_ask(inputs, []) is False
+    assert asyncio.run(AskEach().ask(_ctx(), inputs, [])) is None
+    bot.request_user_choice.assert_not_awaited()
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_ask_each_puts_the_way_out_in_a_row_of_its_own(bot: AsyncMock) -> None:
+    bot.request_user_choice.return_value = 3
+
+    asyncio.run(
+        AskEach().ask(
+            _ctx(), AskEachInput(question="Which?", options=HABITS, columns=4), []
+        )
+    )
+
+    assert _choices(bot) == [("Which?", ["Meditate", "Exercise", "Read", ["Cancel"]])]
+    assert bot.request_user_choice.await_args.kwargs == {"columns": 4}
+
+
+def test_ask_each_needs_a_way_out() -> None:
+    with pytest.raises(ValueError, match="way out"):
+        AskEachInput(question="?", options={}, done="")
+    with pytest.raises(ValueError, match="Columns"):
+        AskEachInput(question="?", options={}, columns=0)
 
 
 # -- the command trigger and the end of a run --------------------------------

@@ -10,7 +10,7 @@ import pytest
 from spanreed.interaction import UserInteractionPriority, commands
 from spanreed.interaction import engine as turns
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
-from spanreed.workflows.asking import AskText, Stop
+from spanreed.workflows.asking import AskEach, AskText, Stop
 from spanreed.workflows.blocks import Action, NoInput, StepContext
 from spanreed.workflows.builtin import ForEach, If
 from spanreed.workflows.engine import TOOK_OVER, WorkflowEngine
@@ -491,3 +491,210 @@ def test_a_workflow_that_asks_is_not_tested(bot: AsyncMock, _: AsyncMock) -> Non
         asyncio.run(scenario())
 
     bot.request_user_input.assert_not_awaited()
+
+
+# -- a loop that asks for each of its rounds ---------------------------------
+
+HABITS = {"Meditate": "meditate", "Exercise": "exercise", "Read": "read"}
+
+
+def _picks(**inputs: Any) -> Step:
+    return Step(
+        id="pick",
+        block="core.ask-each",
+        inputs={"question": "Which did you do?", "options": HABITS, **inputs},
+        steps=[
+            Step(id="mark", block="fake.record", inputs={"text": "{{ pick.value }}"})
+        ],
+    )
+
+
+def _after() -> Step:
+    return Step(
+        id="sum",
+        block="fake.record",
+        inputs={"text": "{{ pick.count }} of 3: {{ pick.picked | join(', ') }}"},
+    )
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_the_steps_inside_run_for_each_answer_as_it_comes(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    record = Record()
+    marked_at_each_question: list[list[str]] = []
+
+    async def choose(prompt: str, choices: list[Any], **how: Any) -> int:
+        marked_at_each_question.append(list(record.texts))
+        # Read, then Meditate, then the way out.
+        return [2, 0, 1][len(marked_at_each_question) - 1]
+
+    bot.request_user_choice.side_effect = choose
+    workflow = workflow_of(_picks(), _after(), _has_turn("turn"), events=["a"])
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = WorkflowEngine(registry_of(AskEach(), HasTurn(), record))
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    # A pick is acted on before the next question is asked.
+    assert marked_at_each_question == [[], ["read"], ["read", "meditate"]]
+    assert record.texts == ["read", "meditate", "2 of 3: read, meditate"]
+    assert run["status"] == "finished"
+    pick, _sum, turn = run["steps"]
+    assert (pick["round_name"], pick["round_count"], pick["rounds_run"]) == (
+        "Pick",
+        2,
+        2,
+    )
+    assert [
+        (kept["number"], kept["status"], kept["steps"][0]["inputs"])
+        for kept in pick["rounds"]
+    ] == [(1, "finished", {"text": "read"}), (2, "finished", {"text": "meditate"})]
+    assert pick["conversation"] == [
+        {"asked": "Which did you do?", "answer": "Read"},
+        {"asked": "Which did you do?", "answer": "Meditate"},
+        {"asked": "Which did you do?", "answer": "Cancel"},
+    ]
+    assert pick["outputs"]["picked"] == ["read", "meditate"]
+    assert pick["outputs"]["left"] == 1
+    # The run keeps the turn after the loop, as after any question.
+    assert turn["outputs"] == {"has_turn": True}
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_loop_with_nothing_to_ask_does_not_take_the_turn(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    workflow = workflow_of(
+        _picks(leave_out=["meditate", "exercise", "read"]),
+        _has_turn("turn"),
+        events=["a"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = WorkflowEngine(registry_of(AskEach(), HasTurn(), Record()))
+        # Another conversation is open. The run does not wait for it.
+        async with turns.user_interaction(USER_ID):
+            await engine.save(workflow)
+            async with asyncio.timeout(3):
+                await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    bot.request_user_choice.assert_not_awaited()
+    pick, turn = run["steps"]
+    assert (pick["status"], pick["round_count"], pick["rounds"]) == ("ok", 0, [])
+    assert pick["outputs"]["count"] == 0
+    assert "conversation" not in pick
+    assert turn["outputs"] == {"has_turn": False}
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_step_that_fails_for_an_answer_fails_the_run(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    bot.request_user_choice.side_effect = [0, 0]
+    record = Record()
+    record.failures = [None, RuntimeError("the vault is closed")]
+    workflow = workflow_of(_picks(), _after())
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = WorkflowEngine(registry_of(AskEach(), record))
+        await engine.save(workflow)
+        await engine.run_by_hand(workflow.id, mock_user_find_by_id(USER_ID))
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == ["meditate"]
+    assert run["status"] == "failed"
+    (pick,) = run["steps"]
+    assert pick["error"] == "Pick 2, Fake record: the vault is closed"
+    assert [kept["status"] for kept in pick["rounds"]] == ["finished", "failed"]
+    # What was asked up to there is kept.
+    assert [line["answer"] for line in pick["conversation"]] == [
+        "Meditate",
+        "Exercise",
+    ]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_each_question_of_a_loop_gives_up_after_its_minutes(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    record = Record()
+    workflow = workflow_of(_picks(give_up_after=1), _after(), events=["a"])
+
+    async def scenario() -> list[dict[str, Any]]:
+        unanswered: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+        answers: list[Any] = [1, unanswered]
+
+        async def choose(prompt: str, choices: list[Any], **how: Any) -> int:
+            answer = answers.pop(0)
+            return answer if isinstance(answer, int) else await answer
+
+        bot.request_user_choice.side_effect = choose
+        engine = WorkflowEngine(registry_of(AskEach(), record))
+        engine.GIVE_UP_UNIT_S = 0.01
+        await engine.save(workflow)
+        async with asyncio.timeout(3):
+            await drain(engine, workflow)
+        assert not turns.has_active_user_interaction(USER_ID)
+        return await _runs(engine, workflow)
+
+    with fake_storage(), _sleeps():
+        (run,) = asyncio.run(scenario())
+
+    # The first pick was acted on. The second question got no answer.
+    assert record.texts == ["exercise"]
+    assert run["status"] == "stopped"
+    (pick,) = run["steps"]
+    assert pick["reason"] == "There was no answer for 1 minute."
+    assert pick["rounds_run"] == 1
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_loop_that_loses_the_turn_keeps_what_was_picked(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    record = Record()
+    workflow = workflow_of(_picks(priority="low"), _after(), events=["a"])
+
+    async def scenario() -> list[dict[str, Any]]:
+        second_asked = asyncio.Event()
+        unanswered: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+        async def choose(prompt: str, choices: list[Any], **how: Any) -> int:
+            if not record.texts:
+                return 2
+            second_asked.set()
+            return await unanswered
+
+        bot.request_user_choice.side_effect = choose
+        engine = WorkflowEngine(registry_of(AskEach(), record))
+        await engine.save(workflow)
+        await _soon(second_asked)
+        async with turns.user_interaction(USER_ID):
+            pass
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage(), _sleeps():
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == ["read"]
+    assert run["status"] == "stopped"
+    assert run["steps"][0]["reason"] == TOOK_OVER

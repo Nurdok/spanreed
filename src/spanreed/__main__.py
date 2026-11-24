@@ -10,7 +10,6 @@ from spanreed.apis.telegram_bot import TelegramBotPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
 
-from spanreed.plugins.habit_tracker import HabitTrackerPlugin
 from spanreed.plugins.recurring_payments import RecurringPaymentsPlugin
 from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.obsidian_surface import ObsidianSurfacePlugin
@@ -56,7 +55,6 @@ def load_plugins() -> List[Plugin]:
         ObsidianSurfacePlugin(),
         ObsidianPlugin(),
         TodoistPlugin(),
-        HabitTrackerPlugin(),
         RecurringPaymentsPlugin(),
         LitNotesPlugin(),
         WebUiPlugin(),

@@ -5,8 +5,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from spanreed.apis.obsidian_blocks import (
+    AddToListProperty,
+    AddToListPropertyInput,
     AppendToNote,
     AppendToNoteInput,
+    GetNoteProperty,
+    GetNotePropertyInput,
     CreateDailyNote,
     SetNoteProperties,
     SetNotePropertiesInput,
@@ -56,7 +60,9 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         registry.register(block, fake_plugin())
     assert [block.id for block in registry.all()] == [
         "obsidian.create-daily-note",
+        "obsidian.get-note-property",
         "obsidian.set-note-properties",
+        "obsidian.add-to-list-property",
         "obsidian.write-file",
         "obsidian.write-note",
         "obsidian.append-to-note",
@@ -446,3 +452,87 @@ def test_append_to_note_adds_text_to_the_end_or_under_a_heading(
         ("Books/Dune.md", "# Dune", None),
         ("Daily/today.md", "A line.", "Log"),
     ]
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_get_note_property_gives_the_value_and_a_list_of_it(
+    mock_obsidian: AsyncMock,
+) -> None:
+    def read(held: Any) -> Any:
+        mock_obsidian.get_property.return_value = held
+        return asyncio.run(
+            GetNoteProperty().run(
+                _context(),
+                GetNotePropertyInput(note="Daily/2026-05-09.md", property="habits"),
+            )
+        )
+
+    listed = read(["read", "floss"])
+    assert (listed.value, listed.items, listed.found, listed.note_missing) == (
+        ["read", "floss"],
+        ["read", "floss"],
+        True,
+        False,
+    )
+    mock_obsidian.get_property.assert_awaited_with("Daily/2026-05-09.md", "habits")
+    # Anything that is not a list gives no items, so a step that needs a
+    # list has one.
+    text = read("read")
+    assert (text.value, text.items, text.found) == ("read", [], True)
+    unset = read(None)
+    assert (unset.value, unset.items, unset.found) == (None, [], False)
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_get_note_property_of_a_note_that_is_not_there(
+    mock_obsidian: AsyncMock,
+) -> None:
+    mock_obsidian.get_property.side_effect = FileNotFoundError("Daily/x.md")
+
+    output = asyncio.run(
+        GetNoteProperty().run(
+            _context(), GetNotePropertyInput(note="Daily/x.md", property="habits")
+        )
+    )
+    assert (output.value, output.items, output.found, output.note_missing) == (
+        None,
+        [],
+        False,
+        True,
+    )
+
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(
+            GetNoteProperty().run(
+                _context(),
+                GetNotePropertyInput(
+                    note="Daily/x.md", property="habits", if_note_missing="fail"
+                ),
+            )
+        )
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_add_to_list_property_adds_the_value(mock_obsidian: AsyncMock) -> None:
+    block = AddToListProperty()
+
+    output = asyncio.run(
+        block.run(
+            _context(),
+            AddToListPropertyInput(
+                note="Daily/2026-05-09.md", property="habits", value="read"
+            ),
+        )
+    )
+
+    assert output.note == "Daily/2026-05-09.md"
+    mock_obsidian.add_value_to_list_property.assert_awaited_once_with(
+        "Daily/2026-05-09.md", "habits", "read"
+    )
+    # Named as "Set note properties" names a property, so that the page
+    # can say when two workflows write the same one.
+    stored = {"note": "Daily/{{ trigger.date }}.md", "property": "habits", "value": 1}
+    assert block.writes(stored) == [
+        "the property “habits” of Daily/{{ trigger.date }}.md"
+    ]
+    assert block.writes({"note": "", "property": "habits"}) == []

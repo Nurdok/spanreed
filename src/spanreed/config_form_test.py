@@ -13,7 +13,6 @@ from spanreed.config_form import (
 )
 from spanreed.plugins import (
     gmail_monitor,
-    habit_tracker,
     health_connect,
     recurring_payments,
     timekiller,
@@ -205,7 +204,6 @@ def test_config_data_rejects_a_form_that_is_not_an_object() -> None:
     "config_class",
     [
         gmail_monitor.UserConfig,
-        habit_tracker.UserConfig,
         health_connect.UserConfig,
         recurring_payments.UserConfig,
         timekiller.UserConfig,
