@@ -166,6 +166,12 @@ its command can be changed there too.
   on. If a value does not fit, or the workflow could not run, nothing is
   stored and the page says what has to change: a step that was moved before
   one it takes a value from, for example.
+- **Test** runs the workflow once as it is in the editor, saved or not, and
+  shows what each step got and gave, above the cards. The run is for real:
+  what the steps write is written, and what they send is sent. It runs for
+  the event of the workflow's last run, or, for a trigger that needs no
+  question, for an event made at that moment. A workflow that has neither
+  says so. A test is listed in History as "Test".
 - **Cancel**, another workflow or another view asks before it drops changes.
 - **Delete this workflow** deletes it with its history, after asking.
 
@@ -180,6 +186,25 @@ its command can be changed there too.
 
 ![A loop being edited on a phone](images/web-ui-workflow-edit-loop-phone.png)
 ![The list of blocks on a phone](images/web-ui-workflow-add-step-phone.png)
+
+What a test did:
+
+![What a test did](images/web-ui-workflow-test-desktop.png)
+
+![Choosing what to test with, on a phone](images/web-ui-workflow-test-choose-phone.png)
+![What a test did, on a phone](images/web-ui-workflow-test-phone.png)
+
+### Two workflows that write the same thing
+
+Two workflows may set the same property of a note, or write the same file.
+Both run, and the one that runs last wins. A workflow says so under its name
+when another workflow that is on writes what it writes.
+
+![Two workflows write the same property](images/web-ui-workflow-same-property-desktop.png)
+
+What counts as the same is the text as it is stored: the property `weight`
+of `Daily/{{ trigger.date }}.md` in both. Two paths that are written
+differently and come to the same note are not noticed.
 
 ### A new workflow
 
@@ -197,7 +222,7 @@ The API is `GET /app/api/workflows` (the list), `POST` on the same path (a
 new workflow), `GET /app/api/workflows/catalog` (the blocks and the recipes),
 `GET /app/api/workflows/<id>` (one workflow as cards), `PUT` and `DELETE` on
 the same path, `GET /app/api/workflows/<id>/runs` (the traces), and `POST` on
-`/app/api/workflows/<id>/enabled`, `/command` and `/run`. All of them answer
+`/app/api/workflows/<id>/enabled`, `/command`, `/run` and `/test`. All of them answer
 only for a workflow of the logged-in user. A trace holds what the steps
 received and returned, so it is sent only to its owner and only when the
 History tab asks for it: the list carries just the time and the outcome of
