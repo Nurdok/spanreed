@@ -444,7 +444,29 @@ def test_a_payload_is_announced_to_the_workflows_as_the_days_it_changed() -> Non
     )
 
 
-def test_run_for_user_survives_a_bad_payload(redis: FakeRedis) -> None:
+def test_the_plugin_drains_the_inbox_of_each_of_its_users() -> None:
+    plugin = _plugin()
+
+    async def serve_users(served: object, job: object) -> None:
+        # The plugin's own job, for whoever is registered to it.
+        assert (served, job) == (plugin, plugin._drain)
+
+    with (
+        patch("spanreed.plugins.health_connect.serve_users", new=serve_users),
+        patch(
+            "spanreed.plugins.health_connect.UserInteractionApi.register_command",
+            new=AsyncMock(),
+        ) as register,
+    ):
+        asyncio.run(plugin.run())
+
+    assert [call.args[1].text for call in register.await_args_list] == [
+        "Show Health Connect setup",
+        "Delete Health Connect data",
+    ]
+
+
+def test_the_drain_survives_a_bad_payload(redis: FakeRedis) -> None:
     """A malformed body is logged and skipped; the next one is still drained."""
     plugin = _plugin()
     user = mock_user_find_by_id(4)
@@ -469,7 +491,7 @@ def test_run_for_user_survives_a_bad_payload(redis: FakeRedis) -> None:
         patch.object(plugin, "_announce", new=AsyncMock()) as announce,
     ):
         with pytest.raises(StopLoop):
-            asyncio.run(plugin.run_for_user(user))
+            asyncio.run(plugin._drain(user))
 
     # Startup re-registers the configured token.
     assert asyncio.run(HealthConnectApi.user_id_for_token("abc")) == 4

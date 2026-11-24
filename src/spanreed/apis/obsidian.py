@@ -11,6 +11,7 @@ from spanreed.interaction import MessageHandle
 
 from spanreed.apis import obsidian_watch
 from spanreed.plugin import Plugin
+from spanreed.service import serve_users
 from spanreed.user import User
 from spanreed.storage import redis_api
 from spanreed.interaction import UserInteractionApi
@@ -35,11 +36,13 @@ class ObsidianPlugin(Plugin):
 
         return obsidian_blocks()
 
-    async def run_for_user(self, user: User) -> None:
-        """Read what the user's plugin for Obsidian says about itself.
+    async def run(self) -> None:
+        """Read what each user's plugin for Obsidian says about itself."""
+        await serve_users(self, self._watch)
 
-        The reading is a task of its own: this returns at once.
-        """
+    @staticmethod
+    async def _watch(user: User) -> None:
+        """Start to read for one user. The reading is a task of its own."""
         obsidian_watch.start_reading(user)
 
 
