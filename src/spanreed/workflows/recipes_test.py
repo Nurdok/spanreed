@@ -62,6 +62,18 @@ def test_a_recipe_gives_each_user_a_workflow_of_their_own() -> None:
     assert first.enabled
 
 
+def test_changing_a_workflow_does_not_change_its_recipe() -> None:
+    recipe = all_recipes()["todoist-no-overdue"]
+    workflow = recipe.workflow_for(4)
+
+    workflow.steps[0].inputs["label"] = "something-else"
+    workflow.trigger.params["every"] = 1
+
+    fresh = recipe.workflow_for(7)
+    assert fresh.steps[0].inputs["label"] == "spanreed/no-overdue"
+    assert fresh.trigger.params["every"] == 4
+
+
 def _run_no_overdue(mock_bot: AsyncMock, tasks: list[Any]) -> tuple[Any, list[Any]]:
     """Run "Daily chores never overdue" once, by hand.
 
