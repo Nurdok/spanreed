@@ -6,10 +6,10 @@ block, and stops at the first step that fails or that ends the run. A step
 whose block is a loop runs the steps inside it once for each round. What
 each step received and returned is kept as the run's trace.
 
-A step whose block converses asks the user something. The run takes the
-user's turn to talk at its first such step, as a plugin does around a
-conversation, and keeps it until it ends. If another conversation takes the
-turn, the run ends there, without failing.
+A step can ask the user something. The run takes the user's turn to talk
+at its first question, as a plugin does around a conversation, and keeps it
+until it ends. If another conversation takes the turn, the run ends there,
+without failing.
 
 A run that fails is tried again for the same event, from its first step,
 after a pause that doubles each time. So a step can run more than once for
@@ -608,15 +608,12 @@ class WorkflowEngine:
                 else:
                     if isinstance(block, Loop):
                         await self._run_rounds(step, block, inputs, ctx, context, entry)
-                    ctx.interaction.keep_in(said)
+                    self._speaks(ctx, inputs, said)
 
                     def run() -> Awaitable[Any]:
                         return block.run(ctx, inputs)
 
-                    if block.converses:
-                        outputs = await self._converse(block, ctx, inputs, run)
-                    else:
-                        outputs = await self._call(block, ctx, run)
+                    outputs = await self._call(block, ctx, run)
             finally:
                 # What a step that only sends has sent is in its inputs.
                 if said and block.converses:
@@ -694,9 +691,7 @@ class WorkflowEngine:
         """Run the steps inside a loop once for each answer the user gives.
 
         The loop asks for a round, the steps inside run for the answer,
-        and the loop asks again, until it has no more to ask. Each question
-        is a step that asks: the run takes the turn to talk for the first
-        one, and each gets the minutes of ``give_up_after``.
+        and the loop asks again, until it has no more to ask.
 
         Add the rounds to the loop's ``entry`` of the trace, keep what the
         loop asked in ``said``, and return what the steps after it see.
@@ -711,11 +706,9 @@ class WorkflowEngine:
             return loop.ask(ctx, inputs, values)
 
         while True:
-            if not loop.anything_to_ask(inputs, values):
-                return loop.after(inputs, values)
-            # The steps of the round before kept what they said themselves.
-            ctx.interaction.keep_in(said)
-            value = await self._converse(loop, ctx, inputs, ask)
+            # The steps of the round before spoke for themselves.
+            self._speaks(ctx, inputs, said)
+            value = await self._call(loop, ctx, ask)
             if value is None:
                 return loop.after(inputs, values)
             values.append(value)
@@ -796,38 +789,30 @@ class WorkflowEngine:
                 whole_run=bool(last.get("ends_run")),
             )
 
-    async def _converse(
-        self,
-        block: Action,
-        ctx: StepContext,
-        inputs: Any,
-        call: Callable[[], Awaitable[Any]],
-    ) -> Any:
-        """Call a block that asks the user something, through ``call``.
+    def _speaks(
+        self, ctx: StepContext, inputs: Any, said: list[dict[str, str]]
+    ) -> None:
+        """Make the run's conversation that of the step with these inputs.
 
-        Take the user's turn to talk first, unless the run has it. Then
-        give the user the minutes of the step's ``give_up_after`` to get
-        through it, if it sets any, and end the run if that is not enough.
+        What the step asks and says from now on is kept in ``said``. A
+        question of the step takes the user's turn to talk first, unless
+        the run has it, with the step's ``priority``. And it gets the
+        minutes of the step's ``give_up_after`` for its answer, if the
+        step sets any: the run ends if that is not enough.
         """
         priority = _PRIORITIES.get(
             getattr(inputs, "priority", ""), UserInteractionPriority.NORMAL
         )
-        await self._turns[ctx.run.id].take(priority)
+        turn = self._turns[ctx.run.id]
         minutes = getattr(inputs, "give_up_after", 0)
-        if not isinstance(minutes, int) or minutes <= 0:
-            return await self._call(block, ctx, call)
-        try:
-            async with asyncio.timeout(minutes * self.GIVE_UP_UNIT_S) as limit:
-                return await self._call(block, ctx, call)
-        except TimeoutError:
-            if not limit.expired():
-                # The block's own: a service that did not answer.
-                raise
-            raise StopRun(
-                f"There was no answer for {minutes} "
-                f"{'minute' if minutes == 1 else 'minutes'}.",
-                whole_run=True,
-            ) from None
+        waits = isinstance(minutes, int) and minutes > 0
+        ctx.interaction.keep_in(said)
+        ctx.interaction.asks_with(
+            lambda: turn.take(priority),
+            minutes * self.GIVE_UP_UNIT_S if waits else None,
+            f"There was no answer for {minutes} "
+            f"{'minute' if minutes == 1 else 'minutes'}.",
+        )
 
     async def _call(
         self, block: Action, ctx: StepContext, call: Callable[[], Awaitable[Any]]

@@ -354,8 +354,8 @@ def test_ask_each_offers_what_is_left_and_gives_the_value(bot: AsyncMock) -> Non
         0,
     )
     # Nothing is on offer after that, so nothing more is asked.
-    assert block.anything_to_ask(inputs, [first]) is True
-    assert block.anything_to_ask(inputs, [first, second]) is False
+    assert asyncio.run(block.ask(_ctx(), inputs, [first, second])) is None
+    assert len(_choices(bot)) == 2
     after = block.after(inputs, [first, second])
     assert (after.picked, after.count, after.left, after.value) == (
         ["read", "meditate"],
@@ -390,7 +390,6 @@ def test_ask_each_asks_nothing_when_nothing_is_on_offer(bot: AsyncMock) -> None:
         question="Which?", options=HABITS, leave_out=["meditate", "exercise", "read"]
     )
 
-    assert AskEach().anything_to_ask(inputs, []) is False
     assert asyncio.run(AskEach().ask(_ctx(), inputs, [])) is None
     bot.request_user_choice.assert_not_awaited()
 

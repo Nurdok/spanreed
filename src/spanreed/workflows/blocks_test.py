@@ -3,14 +3,18 @@ import dataclasses
 import datetime
 import json
 from typing import Any, Literal
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from spanreed.test_utils import mock_user_find_by_id
+from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
 from spanreed.workflows.blocks import (
+    SAID_MAX_LINES,
+    SAID_MAX_TEXT,
+    Interaction,
     Question,
     Repeat,
+    StopRun,
     TriggerContext,
     digest,
     manual_questions,
@@ -249,3 +253,102 @@ def test_a_question_that_is_not_always_asked_needs_a_default() -> None:
                 "Manual", [("which", Literal["All", "One"]), ("name", str, sometimes)]
             )
         )
+
+
+# -- what a block talks to the user through ----------------------------------
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_question_takes_the_turn_first_and_sending_does_not(bot: AsyncMock) -> None:
+    order: list[str] = []
+
+    async def choose(*args: Any, **kwargs: Any) -> int:
+        order.append("asked")
+        return 1
+
+    async def write(*args: Any, **kwargs: Any) -> str:
+        order.append("asked")
+        return "x"
+
+    bot.request_user_choice.side_effect = choose
+    bot.request_user_input.side_effect = write
+
+    async def take() -> None:
+        order.append("turn")
+
+    async def scenario() -> Interaction:
+        talk = Interaction(mock_user_find_by_id(4))
+        said: list[dict[str, str]] = []
+        talk.keep_in(said)
+        talk.asks_with(take)
+        assert talk.talked is False
+        await talk.send_message("Hello")
+        await talk.send_document("a.pdf", b"x")
+        assert order == []
+        choices: list[str | list[str]] = ["A", ["B", "C"]]
+        assert await talk.request_user_choice("Which?", choices) == 1
+        assert await talk.request_user_input("Why?") == "x"
+        assert said == [
+            {"said": "Hello"},
+            {"sent": "a.pdf"},
+            # A choice in a row of its own counts in the order it is read.
+            {"asked": "Which?", "answer": "B"},
+            {"asked": "Why?", "answer": "x"},
+        ]
+        return talk
+
+    talk = asyncio.run(scenario())
+
+    assert order == ["turn", "asked", "turn", "asked"]
+    assert talk.talked is True
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_question_without_an_answer_in_time_ends_the_run(bot: AsyncMock) -> None:
+    async def never(*args: Any, **kwargs: Any) -> str:
+        await asyncio.Event().wait()
+        return ""
+
+    bot.request_user_input.side_effect = never
+
+    async def scenario() -> None:
+        talk = Interaction(mock_user_find_by_id(4))
+        talk.asks_with(None, 0.01, "There was no answer for 1 minute.")
+        await talk.request_user_input("Why?")
+
+    with pytest.raises(StopRun) as stopped:
+        asyncio.run(scenario())
+    assert stopped.value.reason == "There was no answer for 1 minute."
+    assert stopped.value.whole_run is True
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_another_timeout_inside_a_question_is_not_the_user_being_slow(
+    bot: AsyncMock,
+) -> None:
+    bot.request_user_input.side_effect = TimeoutError("the surface is gone")
+
+    async def scenario() -> None:
+        talk = Interaction(mock_user_find_by_id(4))
+        talk.asks_with(None, 60, "There was no answer.")
+        await talk.request_user_input("Why?")
+
+    with pytest.raises(TimeoutError, match="the surface is gone"):
+        asyncio.run(scenario())
+
+
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_the_trace_keeps_the_start_of_a_long_conversation(bot: AsyncMock) -> None:
+    async def scenario() -> list[dict[str, str]]:
+        talk = Interaction(mock_user_find_by_id(4))
+        said: list[dict[str, str]] = []
+        talk.keep_in(said)
+        await talk.send_message("x" * (SAID_MAX_TEXT + 10))
+        for number in range(SAID_MAX_LINES + 5):
+            await talk.send_message(str(number))
+        return said
+
+    said = asyncio.run(scenario())
+
+    assert len(said) == SAID_MAX_LINES
+    assert said[0]["said"] == "x" * SAID_MAX_TEXT + "…"

@@ -10,7 +10,7 @@ import pytest
 from spanreed.interaction import UserInteractionPriority, commands
 from spanreed.interaction import engine as turns
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
-from spanreed.workflows.asking import AskEach, AskText, Stop
+from spanreed.workflows.asking import AskChoice, AskEach, AskText, Stop
 from spanreed.workflows.blocks import Action, NoInput, StepContext
 from spanreed.workflows.builtin import ForEach, If
 from spanreed.workflows.engine import TOOK_OVER, WorkflowEngine
@@ -122,6 +122,67 @@ def test_a_run_takes_the_turn_at_its_first_question_and_keeps_it(
     # What was asked and answered is kept with the step that asked.
     assert book["conversation"] == [{"asked": "Which book?", "answer": " Dune "}]
     assert "conversation" not in before
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_step_that_may_ask_and_does_not_takes_no_turn(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    workflow = workflow_of(
+        Step(
+            id="book",
+            block="core.ask-choice",
+            inputs={"question": "Which book?", "options": []},
+        ),
+        _has_turn("after"),
+        events=["a"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(AskChoice())
+        # Another conversation is open. The run does not wait for it.
+        async with turns.user_interaction(USER_ID):
+            await engine.save(workflow)
+            async with asyncio.timeout(3):
+                await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    book, after = run["steps"]
+    assert book["outputs"]["chosen"] is False
+    assert after["outputs"] == {"has_turn": False}
+    bot.request_user_choice.assert_not_awaited()
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_the_wait_for_the_turn_is_not_the_wait_for_an_answer(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    """A question does not give up before it is asked."""
+    bot.request_user_input.return_value = "Dune"
+    workflow = workflow_of(_ask("book", "Which book?", give_up_after=1), events=["a"])
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine()
+        engine.GIVE_UP_UNIT_S = 0.02
+        async with turns.user_interaction(USER_ID):
+            await engine.save(workflow)
+            # Longer than the question would wait for its answer.
+            await asyncio.sleep(0.1)
+            bot.request_user_input.assert_not_awaited()
+        async with asyncio.timeout(3):
+            await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    assert run["status"] == "finished"
+    assert run["steps"][0]["outputs"]["answer"] == "Dune"
 
 
 @patch_user_interaction("spanreed.workflows.engine")
