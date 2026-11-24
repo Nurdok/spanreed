@@ -337,3 +337,75 @@ def test_interaction_cancelled_after_getting_the_turn_gives_it_up() -> None:
         assert order == ["a", "c"]
 
     asyncio.run(run())
+
+
+def test_the_task_that_has_the_turn_can_enter_again() -> None:
+    """A command that opens its own conversation does not wait for itself."""
+    events: list[str] = []
+
+    async def command() -> None:
+        async with engine.user_interaction(
+            USER_ID, priority=UserInteractionPriority.HIGH, scope="web"
+        ):
+            assert engine.holds_turn(USER_ID)
+            async with engine.user_interaction(USER_ID):
+                events.append("inside")
+                # The turn is the outer one's: its scope still applies.
+                assert engine.get_current_scope(USER_ID) == "web"
+            # Leaving the inner one does not give the turn up.
+            assert engine.holds_turn(USER_ID)
+            events.append("after")
+        assert not engine.holds_turn(USER_ID)
+
+    async def run() -> None:
+        async with asyncio.timeout(1):
+            await command()
+
+    asyncio.run(run())
+    assert events == ["inside", "after"]
+
+
+def test_another_task_does_not_hold_the_turn() -> None:
+    async def run() -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def holder() -> None:
+            async with engine.user_interaction(USER_ID):
+                entered.set()
+                await release.wait()
+
+        task = asyncio.create_task(holder())
+        await entered.wait()
+        assert not engine.holds_turn(USER_ID)
+        assert not engine.holds_turn(USER_ID + 1)
+        release.set()
+        await task
+
+    asyncio.run(run())
+
+
+def test_preemption_reaches_the_outer_interaction_through_an_inner_one() -> None:
+    outcome: list[str] = []
+
+    async def low() -> None:
+        try:
+            async with engine.user_interaction(
+                USER_ID, priority=UserInteractionPriority.LOW
+            ):
+                async with engine.user_interaction(USER_ID):
+                    await asyncio.sleep(10)
+        except UserInteractionPreempted:
+            outcome.append("preempted")
+
+    async def run() -> None:
+        task = asyncio.create_task(low())
+        await asyncio.sleep(0.01)
+        async with engine.user_interaction(
+            USER_ID, priority=UserInteractionPriority.HIGH
+        ):
+            outcome.append("high")
+        await task
+
+    asyncio.run(run())
+    assert outcome == ["preempted", "high"]
