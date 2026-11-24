@@ -1,13 +1,16 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import audible
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi
+
+if TYPE_CHECKING:
+    from spanreed.workflows.blocks import Block
 
 
 MARKETPLACE_LOCALE = "us"
@@ -40,6 +43,13 @@ class AudiblePlugin(Plugin):
     @classmethod
     def get_config_class(cls) -> type[UserConfig]:
         return UserConfig
+
+    def blocks(self) -> list["Block"]:
+        """Return the Audible blocks for workflows."""
+        # Imported here: the blocks import this module for ``AudibleApi``.
+        from spanreed.apis.audible_blocks import audible_blocks
+
+        return audible_blocks()
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
