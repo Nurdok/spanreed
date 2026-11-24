@@ -65,6 +65,8 @@ or while the app is on screen.
 **How it works:**
 
 - `static/manifest.webmanifest` and the icons make the page installable.
+  The icons are the feather logo, centred on white; `badge-96.png` is its
+  silhouette, which Android shows in the status bar for a notification.
   `static/sw.js` is the service worker: it shows the notifications and opens
   the app when one is tapped. It caches nothing.
 - `spanreed.web.push` keeps the server's key pair (created on first use,
