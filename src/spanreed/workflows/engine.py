@@ -487,7 +487,11 @@ class WorkflowEngine:
         """
         run = RunInfo(id=secrets.token_hex(6), manual=manual)
         ctx = StepContext(
-            user=user, workflow_id=workflow.id, run=run, interaction=Interaction(user)
+            user=user,
+            workflow_id=workflow.id,
+            run=run,
+            interaction=Interaction(user),
+            memory=self._store.memory(workflow.id),
         )
         context: dict[str, Any] = {model.TRIGGER_NAME: event, model.RUN_NAME: run}
         trace: dict[str, Any] = {

@@ -293,6 +293,56 @@ class Interaction:
 
 
 @dataclass(frozen=True)
+class Remembered:
+    """Something a workflow remembers: the value, and when it was kept."""
+
+    value: Any
+    # ISO 8601, in UTC.
+    at: str
+
+
+class Memory(Protocol):
+    """What the steps of a workflow remember from one run to the next.
+
+    A step keeps a JSON value under a name, and a step of a later run reads
+    it: that a question was asked already, which files were skipped. The
+    memory is the workflow's own, survives a restart, and is deleted with
+    the workflow.
+    """
+
+    async def get(self, name: str) -> Remembered | None:
+        """Return what is kept under a name, or ``None`` if nothing is."""
+
+    async def set(self, name: str, value: Any = True) -> None:
+        """Keep a JSON value under a name, in place of what was there."""
+
+    async def forget(self, name: str) -> bool:
+        """Drop what is kept under a name. Return whether there was anything."""
+
+
+class LocalMemory:
+    """A memory that lasts as long as the object: for tests of a block."""
+
+    def __init__(self) -> None:
+        """Create a memory with nothing in it."""
+        self.kept: dict[str, Remembered] = {}
+
+    async def get(self, name: str) -> Remembered | None:
+        """Return what is kept under a name, or ``None`` if nothing is."""
+        return self.kept.get(name)
+
+    async def set(self, name: str, value: Any = True) -> None:
+        """Keep a value under a name."""
+        self.kept[name] = Remembered(
+            value=value, at=_now().isoformat(timespec="seconds")
+        )
+
+    async def forget(self, name: str) -> bool:
+        """Drop what is kept under a name. Return whether there was anything."""
+        return self.kept.pop(name, None) is not None
+
+
+@dataclass(frozen=True)
 class StepContext:
     """What the engine hands to an action besides its inputs."""
 
@@ -301,11 +351,15 @@ class StepContext:
     run: RunInfo
     # For a block that ``converses``. One for the whole run.
     interaction: Interaction = dataclasses.field(default=cast(Interaction, None))
+    # What the workflow remembers between runs.
+    memory: Memory = dataclasses.field(default=cast(Memory, None))
 
     def __post_init__(self) -> None:
-        """Make the way to talk to the user, if none was given."""
+        """Make the way to talk to the user and a memory, if none was given."""
         if self.interaction is None:
             object.__setattr__(self, "interaction", Interaction(self.user))
+        if self.memory is None:
+            object.__setattr__(self, "memory", LocalMemory())
 
 
 class TriggerState(Protocol):

@@ -5,6 +5,8 @@ Keys:
 - ``workflows:user_id={id}``            set of the user's workflow ids
 - ``workflows:workflow:{id}``           the workflow, as JSON
 - ``workflows:workflow:{id}:state``     hash of what its trigger remembers
+- ``workflows:workflow:{id}:memory``    hash of what its steps remember, each
+  value as JSON with the time it was kept
 - ``workflows:workflow:{id}:runs``      list of run traces, newest first
 - ``workflows:workflow:{id}:queue``     list of the keys it still has to run
   for, oldest first
@@ -25,6 +27,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from spanreed.storage import redis_api
+from spanreed.workflows.blocks import Remembered
 from spanreed.workflows.model import Workflow
 
 RUNS_KEPT = 100
@@ -71,6 +74,39 @@ def reset_queues_for_tests() -> None:
     """Forget the locks and wake-ups, which belong to an event loop."""
     _queue_locks.clear()
     _queue_wakeups.clear()
+
+
+class StoredMemory:
+    """What the steps of one workflow remember from one run to the next."""
+
+    def __init__(self, workflow_id: str) -> None:
+        """Create the memory of the workflow with this id."""
+        self._key = f"{_workflow_key(workflow_id)}:memory"
+
+    async def get(self, name: str) -> Remembered | None:
+        """Return what is kept under a name, or ``None`` if nothing is."""
+        raw = await redis_api.hget(self._key, name)
+        if raw is None:
+            return None
+        kept = json.loads(_text(raw))
+        return Remembered(value=kept["value"], at=kept["at"])
+
+    async def set(self, name: str, value: Any = True) -> None:
+        """Keep a JSON value under a name, in place of what was there."""
+        at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        await redis_api.hset(self._key, name, json.dumps({"value": value, "at": at}))
+
+    async def forget(self, name: str) -> bool:
+        """Drop what is kept under a name. Return whether there was anything."""
+        return bool(await redis_api.hdel(self._key, name))
+
+    async def names(self) -> list[str]:
+        """Return the names that something is kept under, in order."""
+        return sorted(_text(name) for name in await redis_api.hgetall(self._key))
+
+    async def clear(self) -> None:
+        """Drop everything."""
+        await redis_api.delete(self._key)
 
 
 class WorkflowQueue:
@@ -163,11 +199,12 @@ class WorkflowStore:
         return sorted(workflows, key=lambda w: (w.name.lower(), w.id))
 
     async def delete(self, workflow: Workflow) -> None:
-        """Delete a workflow, its trigger's state and its runs' traces."""
+        """Delete a workflow with all that is kept for it."""
         key = _workflow_key(workflow.id)
         await redis_api.delete(
             key,
             f"{key}:state",
+            f"{key}:memory",
             f"{key}:runs",
             f"{key}:queue",
             f"{key}:queued",
@@ -178,6 +215,10 @@ class WorkflowStore:
     def trigger_state(self, workflow_id: str) -> StoredTriggerState:
         """Return what the trigger of a workflow remembers."""
         return StoredTriggerState(workflow_id)
+
+    def memory(self, workflow_id: str) -> StoredMemory:
+        """Return what the steps of a workflow remember."""
+        return StoredMemory(workflow_id)
 
     def queue(self, workflow_id: str) -> WorkflowQueue:
         """Return the keys that a workflow still has to run for."""
