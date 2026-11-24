@@ -106,11 +106,14 @@ class Conversion:
     convert: Callable[[WorkflowEngine, User], Awaitable[list[Workflow]]]
     # Added to what the user is told, for what changed besides.
     note: str = ""
+    # What the user is told if a workflow was installed turned off. Empty:
+    # that its plugin wrote nothing, which is why the others are off.
+    off: str = ""
 
 
 def _conversions() -> list[Conversion]:
     # Imported here: the plugins import this module.
-    from spanreed.plugins import health_connect, hevy, withings
+    from spanreed.plugins import gmail_monitor, health_connect, hevy, withings
 
     return [
         Conversion(
@@ -134,6 +137,21 @@ def _conversions() -> list[Conversion]:
             note=(
                 "The commands Sync Hevy workouts and Re-create Hevy data are "
                 "now one, “Sync Hevy workouts”, which asks what to write."
+            ),
+        ),
+        Conversion(
+            canonical_name="gmail-monitor",
+            name="Gmail Monitor",
+            convert=gmail_monitor.convert_to_workflows,
+            note=(
+                "Each email rule is a workflow of its own. The commands Manage "
+                "Email Rules, Test Email Rule, Email Monitor Status and Run "
+                "rules on inbox are gone: edit, test and run a workflow, and "
+                "see its history, under Workflows in the web UI."
+            ),
+            off=(
+                "A rule that was off is a workflow that is off. One that "
+                "could not be turned on says why on its page."
             ),
         ),
     ]
@@ -222,14 +240,21 @@ async def _tell_about_conversion(
         f"Converted plugin {conversion.canonical_name} for user {user.id}:"
         f" {[workflow.id for workflow in workflows]}."
     )
-    names = " and ".join(f"“{workflow.name}”" for workflow in workflows)
+    quoted = [f"“{workflow.name}”" for workflow in workflows]
+    names = (
+        " and ".join(quoted)
+        if len(quoted) < 3
+        else ", ".join(quoted[:-1]) + " and " + quoted[-1]
+    )
     off = [workflow.name for workflow in workflows if not workflow.enabled]
     text = (
         f"{conversion.name} now does its work through workflows: {names}. "
         "They do what the plugin did, with your settings. See them under "
         "Workflows in the web UI, or with “Manage workflows”."
     )
-    if off:
+    if off and conversion.off:
+        text += f" {conversion.off}"
+    elif off:
         text += f" “{off[0]}” is off, because it had nothing to write."
     if conversion.note:
         text += f" {conversion.note}"

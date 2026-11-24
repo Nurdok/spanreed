@@ -190,9 +190,6 @@ without regard to case.
 - By hand, the workflow runs for the new emails, or for every email in the
   inbox (or the starred ones) that matches, up to 200, after asking.
 
-The Gmail Monitor plugin still runs its own rules. A rule and a workflow that
-match the same email both act on it.
-
 ### Writing a block
 
 An action names its input and output dataclasses as type arguments:
@@ -541,6 +538,7 @@ behavior: the setup tells them which recipes to add.
 | Health Connect | Receives the phone's payloads, stores every record, and says which days changed | Health data → daily note · Health raw data → vault files |
 | Withings | Holds the login, and publishes the trigger that asks Withings | Withings → daily note |
 | Hevy | Holds the API key, and publishes the trigger that asks Hevy | Hevy workouts → set notes |
+| Gmail Monitor | Holds the Gmail login, and publishes the Gmail blocks | None: a workflow for each rule the user had |
 
 #### Health Connect
 
@@ -638,3 +636,66 @@ What differs from the plugin:
   announced again. History shows each note.
 - **Writing all workouts again is one run for each workout**, and History
   keeps the last 100.
+
+#### Gmail Monitor
+
+Gmail Monitor held rules: a filter and a list of actions each, made and
+changed in chat. Each rule a user had becomes a workflow of its own, named
+after the rule. There is no recipe: `spanreed/plugins/gmail_rules.py` builds
+the workflow from the rule.
+
+![A rule as a workflow](images/web-ui-workflow-gmail-rule-desktop.png)
+
+![The steps of its actions](images/web-ui-workflow-gmail-rule-end-desktop.png)
+
+![A rule as a workflow, on a phone](images/web-ui-workflow-gmail-rule-phone.png)
+
+Where the parts of a rule went:
+
+| Was | Is now |
+| --- | --- |
+| The filter of a rule | **Sender**, **Subject**, **Body** and **Attachments** of the trigger "New email" |
+| Whether the rule was on | Whether the workflow is on |
+| The check interval, one for all rules | **Every** and **Unit** of each trigger |
+| When the plugin last looked, and the emails it had checked | Each trigger's cursor and memory, carried over, so no email is acted on twice |
+| Manage Email Rules | The editor |
+| Test Email Rule | **Test** in the editor, and **Run now** |
+| Run rules on inbox | **Run now** on a workflow: new emails, the inbox, or the starred emails in it |
+| Email Monitor Status | The list of workflows, and History |
+
+What each type of action became:
+
+| Action | Steps |
+| --- | --- |
+| `telegram_notification` | Send message |
+| `download_attachment` | Get attachments → Send message (if there are none) → For each: Send file, Send message |
+| `save_attachment_to_vault` | Get attachments → Send message (if there are none) → For each: Write file, Send message (saved, or was there already) |
+| `download_link` | Find links → Send message (if there are none) → For each: Download a file, Send message (if it is no file), Only continue if it is one, Send file, Send message |
+| `save_link_to_vault` | Find links → Send message (if there are none) → For each: Download a file, Send message (if it is no file), Only continue if it is one, Write file, Send message |
+
+A rule's file name (`{date} {sender} {original}`) is the path of "Write file",
+with the values of the email and the file in place of the placeholders.
+
+`spanreed/plugins/gmail_rules_test_data.py` holds an email and what the rule
+actions said and wrote for it, taken by running them before they were
+removed. The tests run the workflow of each rule and compare.
+
+What differs from the plugin:
+
+- **Messages are plain text.** The plugin sent the labels of a notification
+  (From, Subject) in bold.
+- **A workflow's command is not in the command menu** unless it is shown: the
+  plugin had one command for all rules.
+- **A step that fails is tried again.** An action that failed said so and the
+  rule went on with the next one. A workflow runs again from its first step,
+  five times, then tells the user, and the email is found again by a later
+  poll. With **If exists** `skip`, a file that an earlier try saved is left.
+- **An attachment is sent under a name that is safe as a file name**, and one
+  with no name as `attachment-2`. The plugin sent the name as it was.
+- **A downloaded link says less.** The plugin said which link it was at, how
+  large the file was and that it was done. The workflow sends the file and
+  one message.
+- **Downloads go to public addresses only** (see Files above).
+- **Mail is asked for by the second**, not by date (see Gmail above).
+- **A rule that the plugin could not run** (a pattern that is no regular
+  expression) becomes a workflow that is off and says what is wrong.
