@@ -8,11 +8,12 @@ This replaces behavior that used to be written into a plugin. A plugin decided
 when it ran, what it did and whether it told you. A workflow keeps those apart,
 so that each can be changed without code.
 
-There is no editor yet. Workflows come from recipes. The web UI shows a
-workflow's steps and the history of its runs, turns it on and off and runs it
-(see [web-ui.md](web-ui.md#workflows)). The chat command **Manage workflows**
-does the same without the pictures, and also adds a workflow from a recipe
-and deletes one.
+Workflows come from recipes. The web UI shows a workflow's steps and the
+history of its runs, turns it on and off, runs it, and edits what its cards
+hold (see [web-ui.md](web-ui.md#workflows)). It cannot add, remove or move a
+card yet. The chat command **Manage workflows** lists, switches and runs
+workflows, and also adds one from a recipe and deletes one. Editing is in the
+web UI only.
 
 ## The parts
 
@@ -341,7 +342,38 @@ surfaces check a command with `get_command_for_user` before they run it.
   ended. A step's inputs and outputs are kept only in the run's trace.
 - **Turning a workflow on or off takes effect at once.**
 
-Not there yet: branches, blocks that ask the user a question, the editor. A question a run is waiting on would not survive a restart.
+Not there yet: branches, blocks that ask the user a question, and adding,
+removing and moving cards in the editor. A question a run is waiting on would
+not survive a restart.
+
+## Editing
+
+The page edits a workflow's name, the text of its command, and the inputs of
+its trigger and steps. `spanreed/workflows/editing.py` moves a workflow
+between what is stored and what the forms hold.
+
+Every input is edited as text, because any input can hold a template where
+its type asks for a number or a list. There are three controls:
+
+| Control | For | What is stored |
+| --- | --- | --- |
+| Text | Texts, numbers, yes/no, lists, anything else | A text with a template is stored as it is. Without one, it becomes what the input asks for: `4`, `yes`, `["a", "b"]`. |
+| Choice | A `Literal` | The choice |
+| Rows | A mapping, such as the properties to set | A name and a value for each row, in the order of the rows |
+
+The value of a row, and an input of any type, keeps a text that reads as a
+number, `true`, `false`, `null` or a list as that value, so `5` is the number
+five. A text in quotes, `"5"`, is the text. Anything else is a text.
+
+Saving sends the whole workflow to `PUT /app/api/workflows/<id>`. Nothing is
+stored unless every value fits its input and the engine can run the result
+(see `model.problems`): the answer lists what has to change, as the page
+shows it. A saved edit takes effect at once: the trigger starts again with
+the new values and keeps what it remembers.
+
+A card gets the list of values it can use from the cards before it. A step
+inside a loop is also offered the fields of the loop's items, when the loop
+goes over an output whose items are known, such as the sets of a workout.
 
 ## Redis
 
