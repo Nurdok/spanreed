@@ -1,13 +1,20 @@
 import asyncio
+import dataclasses
 import datetime
 import json
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import patch
 
 import pytest
 
 from spanreed.test_utils import mock_user_find_by_id
-from spanreed.workflows.blocks import Repeat, TriggerContext, digest
+from spanreed.workflows.blocks import (
+    Question,
+    Repeat,
+    TriggerContext,
+    digest,
+    manual_questions,
+)
 from spanreed.workflows.store import WorkflowQueue
 from spanreed.workflows.testing import Event, NoMorePolls, Polled
 from spanreed.workflows.values import from_data
@@ -199,3 +206,46 @@ def test_a_digest_changes_with_any_field_of_the_event() -> None:
     assert digest(Event("a")) == digest(Event("a"))
     assert digest(Event("a")) != digest(Event("b"))
     assert len(digest(Event("a"))) == 16
+
+
+# -- what a manual run asks ----------------------------------------------------
+
+
+@dataclasses.dataclass
+class _Ask:
+    which: Literal["All", "One"] = dataclasses.field(metadata={"prompt": "Which?"})
+    name: str = dataclasses.field(default="", metadata={"ask_if": {"which": "One"}})
+
+
+def test_a_manual_run_can_ask_for_choices_and_for_texts() -> None:
+    assert manual_questions(_Ask) == [
+        Question(name="which", prompt="Which?", choices=["All", "One"], ask_if={}),
+        Question(name="name", prompt=None, choices=None, ask_if={"which": "One"}),
+    ]
+
+
+def _manual(**fields: Any) -> type:
+    return dataclasses.make_dataclass("Manual", list(fields.items()))
+
+
+def test_a_question_is_a_choice_of_texts_or_a_text() -> None:
+    with pytest.raises(ValueError, match="must be a Literal of strings, or str"):
+        manual_questions(_manual(days=int))
+    with pytest.raises(ValueError, match="must be a Literal of strings"):
+        manual_questions(_manual(days=Literal[1, 7]))
+
+
+def test_a_question_can_only_depend_on_an_earlier_one() -> None:
+    later = dataclasses.field(default="", metadata={"ask_if": {"other": "x"}})
+    with pytest.raises(ValueError, match="ask_if must name earlier fields"):
+        manual_questions(dataclasses.make_dataclass("Manual", [("name", str, later)]))
+
+
+def test_a_question_that_is_not_always_asked_needs_a_default() -> None:
+    sometimes = dataclasses.field(metadata={"ask_if": {"which": "One"}})
+    with pytest.raises(ValueError, match="needs a default"):
+        manual_questions(
+            dataclasses.make_dataclass(
+                "Manual", [("which", Literal["All", "One"]), ("name", str, sometimes)]
+            )
+        )

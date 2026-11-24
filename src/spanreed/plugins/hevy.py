@@ -1,30 +1,34 @@
-import asyncio
-import collections
-import datetime
+"""Hold the user's Hevy API key, and publish the Hevy trigger.
+
+What is done with the workouts is up to the user's workflows. The recipe
+"Hevy workouts → set notes" does what this plugin used to do itself.
+``convert_to_workflows`` gives it to a user who had the plugin before, with
+the folder they had, and so that no workout is written twice.
+"""
+
 import json
-import pathlib
-import re
-
-import yaml
-
-from spanreed.plugin import Plugin
-from spanreed.user import User
-from spanreed.interaction import (
-    UserInteractionApi,
-    PluginCommand,
-    SurfaceBusyError,
-)
-from spanreed.apis.hevy import HevyApi, Workout, Exercise, WorkoutSet
-from spanreed.apis.obsidian import ObsidianApi, ObsidianPlugin
 from dataclasses import dataclass
 
-# Cursor used the first time we sync for a user (the Unix epoch), which makes
-# Hevy return the entire workout history.
-EPOCH = "1970-01-01T00:00:00Z"
+from spanreed.plugin import Plugin
+from spanreed.storage import redis_api
+from spanreed.user import User
+from spanreed.interaction import UserInteractionApi
+from spanreed.apis.hevy_blocks import hevy_blocks
+from spanreed.apis.obsidian import ObsidianPlugin
+from spanreed.workflows.blocks import Block, PollTrigger
+from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.model import Step, Workflow
+from spanreed.workflows.recipes import all_recipes
+from spanreed.workflows.store import WorkflowStore
 
-# Keys for per-user state stored via Plugin user-data: the ISO timestamp of the
-# last successful sync, and the set of workout ids we've already written notes
-# for (so re-runs/restarts never duplicate notes).
+# The recipe that does what this plugin used to do itself.
+SET_NOTES_RECIPE = "hevy-set-notes"
+# Vault folder of the set notes in the recipe. A user who chose another one
+# while the folder was a setting of this plugin keeps theirs.
+DEFAULT_FOLDER = "Fitness/Sets"
+
+# Where the plugin kept, for each user, how far its polls had got and the
+# ids of the workouts it had written notes for.
 SINCE_KEY = "since"
 SYNCED_IDS_KEY = "synced_ids"
 
@@ -32,10 +36,9 @@ SYNCED_IDS_KEY = "synced_ids"
 @dataclass
 class UserConfig:
     api_key: str
-    vault_dir: str
 
 
-class HevyPlugin(Plugin):
+class HevyPlugin(Plugin[UserConfig]):
     @classmethod
     def name(cls) -> str:
         return "Hevy"
@@ -49,8 +52,23 @@ class HevyPlugin(Plugin):
         return UserConfig
 
     @classmethod
+    async def get_config(cls, user: User) -> UserConfig:
+        """Return the user's API key.
+
+        A config saved while this plugin wrote the notes itself also holds
+        the folder it wrote them to. That is part of the path in the
+        user's workflow now, and is left out here.
+        """
+        saved = await cls.get_saved_config_data(user) or {}
+        return UserConfig(api_key=str(saved.get("api_key") or ""))
+
+    @classmethod
     def get_prerequisites(cls) -> list[type[Plugin]]:
         return [ObsidianPlugin]
+
+    def blocks(self) -> list[Block]:
+        """Return the Hevy trigger for workflows."""
+        return hevy_blocks()
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
@@ -60,304 +78,86 @@ class HevyPlugin(Plugin):
             "You can generate one (Hevy Pro required) at "
             "https://hevy.com/settings?developer"
         )
-        vault_dir = await bot.request_user_input(
-            "Which folder in your vault should set notes go in? " "(e.g. Fitness/Sets)"
-        )
-        await cls.set_config(
-            user,
-            UserConfig(
-                api_key=api_key.strip(),
-                vault_dir=vault_dir.strip().strip("/"),
-            ),
-        )
-
-    async def _get_synced_ids(self, user: User) -> set[str]:
-        raw = await self.get_user_data(user, SYNCED_IDS_KEY)
-        if not raw:
-            return set()
-        return set(json.loads(raw))
-
-    async def _set_synced_ids(self, user: User, ids: set[str]) -> None:
-        await self.set_user_data(user, SYNCED_IDS_KEY, json.dumps(sorted(ids)))
-
-    async def run(self) -> None:
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(text="Sync Hevy workouts", callback=self._sync_now),
-        )
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(text="Re-create Hevy data", callback=self._recreate_data),
-        )
-        await super().run()
-
-    async def run_for_user(self, user: User) -> None:
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        while True:
-            try:
-                await self._sync(user, bot)
-            except asyncio.CancelledError:
-                raise
-            except SurfaceBusyError:
-                # Telegram flood control: let the supervisor's jittered
-                # flood handling own the wake-up time.
-                raise
-            except Exception:
-                # Notes are written through Obsidian, which is often closed
-                # or offline for hours. That is not worth a crash-restart
-                # loop: the workout is not marked as synced, so the next
-                # interval writes it.
-                self._logger.exception("Hevy sync failed; retrying next interval.")
-            await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
-
-    async def _sync_now(self, user: User) -> None:
-        """Manually triggered sync via the Telegram command."""
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        await bot.notify("Checking Hevy for new workouts…")
-        if await self._sync(user, bot) == 0:
-            await bot.notify("No new Hevy workouts found.")
-
-    async def _sync(self, user: User, bot: UserInteractionApi) -> int:
-        """Fetch and write any new workouts, and return the number written.
-
-        A workout is marked as synced only after every one of its notes is
-        written. If a write fails, the error goes to the caller and the
-        cursor stays where it is, so the next sync writes the workout again.
-        """
-        config: UserConfig = await self.get_config(user)
-        hevy = await HevyApi.for_user(user)
-        obsidian = await ObsidianApi.for_user(user)
-
-        # Capture the cursor *before* fetching so we never miss workouts
-        # logged while a sync is running. Overlap is harmless: the synced
-        # id set prevents duplicate notes.
-        poll_start = datetime.datetime.now(datetime.timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        since = (await self.get_user_data(user, SINCE_KEY)) or EPOCH
-        synced_ids: set[str] = await self._get_synced_ids(user)
-
-        workouts = await hevy.get_updated_workouts_since(since)
-        new_count = 0
-        for workout in workouts:
-            if workout.id in synced_ids:
-                # Already written. (Edits made in Hevy after the fact are
-                # not re-synced; "Re-create Hevy data" writes them.)
-                continue
-
-            set_count = await self._write_workout(config, obsidian, workout)
-            synced_ids.add(workout.id)
-            await self._set_synced_ids(user, synced_ids)
-            await bot.notify(
-                f"Logged Hevy workout: {workout.title} "
-                f"({set_count} sets across "
-                f"{len(workout.exercises)} exercises)."
+        await cls.set_config(user, UserConfig(api_key=api_key.strip()))
+        if not await cls._has_workflows(user):
+            await bot.send_message(
+                "Workflows put the workouts in your vault. Add “Hevy workouts "
+                "→ set notes” from the recipes of “Manage workflows”."
             )
-            new_count += 1
-
-        await self.set_user_data(user, SINCE_KEY, poll_start)
-        return new_count
-
-    async def _recreate_data(self, user: User) -> None:
-        """Manually re-write set notes for a date, a workout id, or all.
-
-        Useful after the note structure changes, or after a workout was
-        edited in Hevy. A set note that already exists is overwritten.
-        """
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        hevy = await HevyApi.for_user(user)
-
-        choice = await bot.request_user_choice(
-            "Re-create Hevy data for…",
-            ["A specific date", "A workout ID", "All workouts", "Cancel"],
-        )
-
-        workouts: list[Workout]
-        if choice == 0:  # A specific date
-            date_str = await bot.request_user_input(
-                "Enter the date to re-create (YYYY-MM-DD):"
-            )
-            try:
-                target = datetime.date.fromisoformat(date_str.strip())
-            except ValueError:
-                await bot.notify("That doesn't look like a YYYY-MM-DD date.")
-                return
-            workouts = [
-                w
-                for w in await hevy.get_all_workouts()
-                if self._workout_date(w) == target
-            ]
-            if not workouts:
-                await bot.notify(f"No workout found on {target.isoformat()}.")
-                return
-        elif choice == 1:  # A workout ID
-            workout_id = (
-                await bot.request_user_input("Enter the Hevy workout ID:")
-            ).strip()
-            try:
-                workouts = [await hevy.get_workout(workout_id)]
-            except Exception:
-                self._logger.exception(f"Failed to fetch {workout_id=}")
-                await bot.notify(f"Couldn't fetch workout `{workout_id}`.")
-                return
-        elif choice == 2:  # All workouts
-            confirm = await bot.request_user_choice(
-                "Re-create notes for ALL workouts? This re-writes every " "set note.",
-                ["Yes", "Cancel"],
-            )
-            if confirm != 0:
-                return
-            workouts = await hevy.get_all_workouts()
-            if not workouts:
-                await bot.notify("No workouts found.")
-                return
-        else:  # Cancel
-            return
-
-        await bot.notify(f"Re-creating {len(workouts)} workout(s)…")
-        total_sets = await self._recreate(user, workouts)
-        await bot.notify(
-            f"Done. Wrote {total_sets} set notes across " f"{len(workouts)} workout(s)."
-        )
-
-    async def _recreate(self, user: User, workouts: list[Workout]) -> int:
-        """Force-write set notes for the given workouts. Returns set count."""
-        config: UserConfig = await self.get_config(user)
-        obsidian = await ObsidianApi.for_user(user)
-        synced_ids: set[str] = await self._get_synced_ids(user)
-
-        total_sets = 0
-        for workout in workouts:
-            total_sets += await self._write_workout(config, obsidian, workout)
-            synced_ids.add(workout.id)
-
-        await self._set_synced_ids(user, synced_ids)
-        return total_sets
-
-    async def _write_workout(
-        self,
-        config: UserConfig,
-        obsidian: ObsidianApi,
-        workout: Workout,
-    ) -> int:
-        """Write one note per set, and return the number of sets written.
-
-        Each note is written whole and replaces a note already at its path,
-        so writing a workout again after a failure part of the way through
-        leaves one copy of every set.
-        """
-        date = self._workout_date(workout)
-        date_str = date.strftime("%Y-%m-%d") if date else workout.id
-
-        # The same exercise can appear more than once in a session; track
-        # occurrences so we can disambiguate file names only when needed.
-        title_counts: dict[str, int] = collections.Counter(
-            e.title for e in workout.exercises
-        )
-        seen: dict[str, int] = collections.defaultdict(int)
-
-        set_ordinal = 0
-        for exercise_index, exercise in enumerate(workout.exercises, start=1):
-            seen[exercise.title] += 1
-            occurrence = seen[exercise.title]
-            suffix = f" ({occurrence})" if title_counts[exercise.title] > 1 else ""
-            for set_number, workout_set in enumerate(exercise.sets, start=1):
-                set_ordinal += 1
-                filename = (
-                    f"{self._sanitize(exercise.title)}{suffix} " f"set {set_number}.md"
-                )
-                note_path = str(
-                    pathlib.PurePosixPath(config.vault_dir) / date_str / filename
-                )
-                content = self._render_set_note(
-                    workout,
-                    exercise,
-                    workout_set,
-                    set_number,
-                    date,
-                    exercise_index,
-                    set_ordinal,
-                )
-                await obsidian.write_binary_file(
-                    note_path, content.encode("utf-8"), overwrite=True
-                )
-        return set_ordinal
 
     @staticmethod
-    def _sanitize(name: str) -> str:
-        # Strip characters that are illegal in file names on common filesystems.
-        return re.sub(r'[\\/:*?"<>|]', "", name).strip() or "Exercise"
-
-    @staticmethod
-    def _parse_dt(value: str) -> datetime.datetime | None:
-        if not value:
-            return None
-        try:
-            return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-
-    def _workout_date(self, workout: Workout) -> datetime.date | None:
-        dt = self._parse_dt(workout.start_time) or self._parse_dt(workout.created_at)
-        return dt.date() if dt else None
-
-    @staticmethod
-    def _est_1rm(weight_kg: float | None, reps: int | None) -> float | None:
-        # Epley formula.
-        if not weight_kg or not reps:
-            return None
-        return round(weight_kg * (1 + reps / 30), 1)
-
-    def _render_set_note(
-        self,
-        workout: Workout,
-        exercise: Exercise,
-        workout_set: WorkoutSet,
-        set_number: int,
-        date: datetime.date | None,
-        exercise_index: int,
-        set_ordinal: int,
-    ) -> str:
-        volume_kg = None
-        if workout_set.weight_kg is not None and workout_set.reps is not None:
-            volume_kg = round(workout_set.weight_kg * workout_set.reps, 1)
-
-        frontmatter: dict = {"type": "workout-set"}
-        if date:
-            # A real date object so Obsidian renders it as a Date property.
-            frontmatter["date"] = date
-        frontmatter["exercise"] = exercise.title
-        frontmatter["workout"] = workout.title
-        frontmatter["workout_id"] = workout.id
-        # exercise_index: position of this exercise in the session (1-based).
-        # set_ordinal: position of this set across the whole session (1-based).
-        # Sort a Base by date, exercise_index, set_number — or just
-        # set_ordinal — to reproduce the order performed.
-        frontmatter["exercise_index"] = exercise_index
-        frontmatter["set_number"] = set_number
-        frontmatter["set_ordinal"] = set_ordinal
-        frontmatter["set_type"] = workout_set.type
-        frontmatter["weight_kg"] = workout_set.weight_kg
-        frontmatter["reps"] = workout_set.reps
-        if workout_set.rpe is not None:
-            frontmatter["rpe"] = workout_set.rpe
-        if volume_kg is not None:
-            frontmatter["volume_kg"] = volume_kg
-        est_1rm = self._est_1rm(workout_set.weight_kg, workout_set.reps)
-        if est_1rm is not None:
-            frontmatter["est_1rm_kg"] = est_1rm
-        frontmatter["tags"] = ["workout-set"]
-
-        yaml_block = yaml.safe_dump(
-            frontmatter, sort_keys=False, allow_unicode=True
-        ).strip()
-
-        weight = (
-            f"{workout_set.weight_kg:g}" if workout_set.weight_kg is not None else "–"
+    async def _has_workflows(user: User) -> bool:
+        """Return whether a workflow of the user uses the Hevy trigger."""
+        triggers = {block.id for block in hevy_blocks()}
+        return any(
+            workflow.trigger.block in triggers
+            for workflow in await WorkflowStore().list_for_user(user.id)
         )
-        reps = workout_set.reps if workout_set.reps is not None else "–"
-        summary = f"{exercise.title} — set {set_number}: {weight} kg × {reps}"
-        if workout_set.rpe is not None:
-            summary += f" @ RPE {workout_set.rpe:g}"
 
-        return f"---\n{yaml_block}\n---\n\n{summary}\n"
+
+# -- from a plugin that writes the notes to a workflow that does ---------------
+
+
+def _keep_folder(workflow: Workflow, folder: str) -> None:
+    """Make the paths of a new workflow start with the user's folder."""
+    start = f"{folder}/" if folder else ""
+
+    def change(steps: list[Step]) -> None:
+        for step in steps:
+            path = step.inputs.get("path")
+            if isinstance(path, str):
+                step.inputs["path"] = path.replace(f"{DEFAULT_FOLDER}/", start, 1)
+            change(step.steps)
+
+    change(workflow.steps)
+
+
+async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workflow]:
+    """Give a user of the old plugin the workflow that does what it did.
+
+    Install the recipe with the folder the user had. Hand its trigger how
+    far the plugin's polls had got and which workouts it wrote, so that no
+    workout is written or announced twice. Return the workflow if it was
+    installed. Doing this again installs nothing.
+    """
+    saved = await HevyPlugin.get_saved_config_data(user)
+    if saved is None:
+        # Registered, but never set up: there was nothing to keep doing.
+        return []
+    since = await HevyPlugin.get_user_data(user, SINCE_KEY)
+    synced = await HevyPlugin.get_user_data(user, SYNCED_IDS_KEY)
+
+    installed = []
+    workflows = await engine.store.list_for_user(user.id)
+    workflow = next((w for w in workflows if w.recipe == SET_NOTES_RECIPE), None)
+    if workflow is None:
+
+        def customize(new: Workflow) -> None:
+            # Off until its trigger knows what the plugin wrote: a trigger
+            # that polled before that would find every workout new.
+            new.enabled = False
+            _keep_folder(new, str(saved.get("vault_dir") or "").strip("/"))
+
+        workflow = await engine.install(
+            user, all_recipes()[SET_NOTES_RECIPE], customize
+        )
+        installed.append(workflow)
+
+    # While the plugin's own notes of what it did are there, the workflow
+    # was not started yet: this is the first time, or a time that stopped
+    # halfway.
+    if installed or since is not None or synced is not None:
+        await PollTrigger.start_from(
+            engine.store.trigger_state(workflow.id),
+            cursor=since,
+            keys=sorted(json.loads(synced)) if synced else [],
+        )
+        if not workflow.enabled:
+            workflow.enabled = True
+            await engine.save(workflow)
+        for key in (SINCE_KEY, SYNCED_IDS_KEY):
+            await redis_api.delete(HevyPlugin._get_user_data_key(user, key))
+
+    # Last: the saved config loses the setting that the workflow now holds.
+    await HevyPlugin.set_config(user, await HevyPlugin.get_config(user))
+    return installed

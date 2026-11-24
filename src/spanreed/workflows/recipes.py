@@ -44,7 +44,7 @@ class Recipe:
             user_id=user_id,
             name=self.name,
             trigger=TriggerSpec(**copy.deepcopy(self.trigger)),
-            steps=[Step(**copy.deepcopy(step)) for step in self.steps],
+            steps=[Step.from_data(copy.deepcopy(step)) for step in self.steps],
             command_name=self.command_name,
             command_hidden=self.command_hidden,
             recipe=self.id,

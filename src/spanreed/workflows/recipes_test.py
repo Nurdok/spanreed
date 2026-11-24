@@ -9,6 +9,7 @@ from spanreed.interaction import commands
 from spanreed.plugin import Plugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
+from spanreed.plugins.hevy import HevyPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
@@ -19,6 +20,7 @@ from spanreed.test_utils import (
 )
 from spanreed.workflows.blocks import BlockRegistry
 from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.model import Step
 from spanreed.workflows.recipes import Recipe, all_recipes
 from spanreed.workflows.testing import fake_storage
 
@@ -37,8 +39,17 @@ def _real_registry() -> BlockRegistry:
             ObsidianPlugin(),
             HealthConnectPlugin(),
             WithingsPlugin(),
+            HevyPlugin(),
         ]
     )
+
+
+def _blocks_of(steps: list[Step]) -> set[str]:
+    """Return the blocks of some steps and of the steps inside them."""
+    blocks = set()
+    for step in steps:
+        blocks |= {step.block} | _blocks_of(step.steps)
+    return blocks
 
 
 @pytest.mark.parametrize("recipe", all_recipes().values(), ids=lambda r: r.id)
@@ -48,7 +59,7 @@ def test_every_recipe_fits_the_blocks(recipe: Recipe) -> None:
 
     assert WorkflowEngine(registry).problems(workflow) == []
     # The plugins it says it needs are the ones whose blocks it uses.
-    used = {workflow.trigger.block, *(step.block for step in workflow.steps)}
+    used = {workflow.trigger.block, *_blocks_of(workflow.steps)}
     plugins = {registry.plugin_of(block).canonical_name() for block in used}
     assert set(recipe.requires) == plugins - {"workflows"}
 
@@ -139,7 +150,7 @@ def test_no_overdue_is_silent_when_nothing_is_overdue(mock_bot: AsyncMock) -> No
     assert [step["id"] for step in run["steps"]] == ["find", "any"]
     # Only the line that every run by hand ends with.
     mock_bot.send_message.assert_awaited_once_with(
-        "Daily chores never overdue: stopped at step 2, Only continue if.",
+        "Daily chores never overdue: done. The run ended at step 2, Only continue if.",
         parse_html=False,
     )
 

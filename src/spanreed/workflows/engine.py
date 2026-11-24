@@ -2,7 +2,8 @@
 
 One event of a trigger is one run. The runs of a workflow go one at a time.
 A run fills each step's inputs from the outputs before it, calls the step's
-block, and stops at the first step that fails or that ends the run. What
+block, and stops at the first step that fails or that ends the run. A step
+whose block is a loop runs the steps inside it once for each round. What
 each step received and returned is kept as the run's trace.
 
 A run that fails is tried again for the same event, from its first step,
@@ -18,7 +19,6 @@ anything the user's services know. They are kept in the trace only.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import datetime
 import functools
 import logging
@@ -37,12 +37,14 @@ from spanreed.workflows import expressions, model
 from spanreed.workflows.blocks import (
     Action,
     BlockRegistry,
+    Loop,
+    ManualError,
     RunInfo,
     StepContext,
     StopRun,
     Trigger,
     TriggerContext,
-    manual_choices,
+    manual_questions,
 )
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
@@ -66,6 +68,10 @@ _sleep = asyncio.sleep
 _NO_MORE = object()
 
 
+class _RoundFailed(Exception):
+    """A step inside a loop failed. The message says where and why."""
+
+
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
@@ -78,10 +84,14 @@ def outcome(trace: dict[str, Any]) -> str:
     if status == CANCELLED:
         return "was cancelled."
     step = trace["steps"][-1]
-    where = f"step {len(trace['steps'])}, {step['title']}"
     if status == STOPPED:
-        return f"stopped at {where}."
-    return f"failed at {where}: {step['error']}"
+        return f"stopped at {_where(trace)}."
+    return f"failed at {_where(trace)}: {step['error']}"
+
+
+def _where(trace: dict[str, Any]) -> str:
+    """Return the last step that a run got to: its number and its title."""
+    return f"step {len(trace['steps'])}, {trace['steps'][-1]['title']}"
 
 
 class WorkflowEngine:
@@ -100,6 +110,9 @@ class WorkflowEngine:
     # stopped together (see ``Plugin._run_for_user_supervised``).
     FLOOD_MAX_WAITS = 3
     FLOOD_WAKE_JITTER_RANGE_S = (60.0, 600.0)
+    # The trace of a loop keeps this many of its rounds: the first ones,
+    # and one that failed.
+    ROUNDS_KEPT = 50
 
     def __init__(
         self,
@@ -372,12 +385,9 @@ class WorkflowEngine:
         }
         async with self._locks.setdefault(workflow.id, asyncio.Lock()):
             try:
-                for step in workflow.steps:
-                    entry = await self._run_step(step, ctx, context)
-                    trace["steps"].append(entry)
-                    if entry["status"] != OK:
-                        trace["status"] = entry["status"]
-                        break
+                trace["status"] = await self._run_steps(
+                    workflow.steps, ctx, context, trace["steps"]
+                )
             except asyncio.CancelledError:
                 trace["status"] = CANCELLED
                 raise
@@ -398,6 +408,26 @@ class WorkflowEngine:
                 f"Could not keep the trace of run {trace['id']}"
                 f" of workflow {workflow.id}."
             )
+
+    async def _run_steps(
+        self,
+        steps: list[Step],
+        ctx: StepContext,
+        context: dict[str, Any],
+        entries: list[dict[str, Any]],
+    ) -> str:
+        """Run steps in order, up to one that fails or ends the run.
+
+        Add the entry of each step that ran to ``entries``, as it ends, so
+        that a run that is cancelled keeps the steps it got through. Return
+        how the steps ended: ``FINISHED``, or the status of the last one.
+        """
+        for step in steps:
+            entry = await self._run_step(step, ctx, context)
+            entries.append(entry)
+            if entry["status"] != OK:
+                return str(entry["status"])
+        return FINISHED
 
     async def _run_step(
         self, step: Step, ctx: StepContext, context: dict[str, Any]
@@ -423,12 +453,18 @@ class WorkflowEngine:
                 )
             inputs = from_data(block.Input, expressions.render(step.inputs, context))
             entry["inputs"] = to_data(inputs)
+            if isinstance(block, Loop):
+                await self._run_rounds(step, block, inputs, ctx, context, entry)
             outputs = await self._call(block, ctx, inputs)
             context[step.id] = outputs
             entry["outputs"] = to_data(outputs)
         except StopRun as stop:
             entry["status"] = STOPPED
             entry["reason"] = stop.reason
+        except _RoundFailed as failed:
+            # The step inside wrote the failure to the log already.
+            entry["status"] = FAILED
+            entry["error"] = str(failed)
         except Exception as e:
             entry["status"] = FAILED
             entry["error"] = str(e) or type(e).__name__
@@ -438,6 +474,44 @@ class WorkflowEngine:
             )
         entry["duration_ms"] = round((_monotonic() - started) * 1000)
         return entry
+
+    async def _run_rounds(
+        self,
+        step: Step,
+        loop: Loop,
+        inputs: Any,
+        ctx: StepContext,
+        context: dict[str, Any],
+        entry: dict[str, Any],
+    ) -> None:
+        """Run the steps inside a loop once for each of its rounds.
+
+        In a round, the id of the loop's step refers to the value of the
+        round. A step that ends the run ends only its round. Raise
+        ``_RoundFailed`` at the first step that fails.
+
+        Add the rounds to the loop's ``entry`` of the trace.
+        """
+        values = loop.rounds(inputs)
+        entry["round_name"] = loop.round_name
+        entry["round_count"] = len(values)
+        entry["rounds_run"] = 0
+        entry["rounds"] = []
+        for number, value in enumerate(values, start=1):
+            entry["rounds_run"] = number
+            steps: list[dict[str, Any]] = []
+            status = await self._run_steps(
+                step.steps, ctx, {**context, step.id: value}, steps
+            )
+            kept = {"number": number, "status": status, "steps": steps}
+            if len(entry["rounds"]) < self.ROUNDS_KEPT or status == FAILED:
+                entry["rounds"].append(kept)
+            if status == FAILED:
+                failed = steps[-1]
+                raise _RoundFailed(
+                    f"{loop.round_name} {number} of {len(values)}, {failed['title']}: "
+                    f"{failed['error']}"
+                )
 
     async def _call(self, block: Action, ctx: StepContext, inputs: Any) -> Any:
         """Call a block. Wait and call it again during flood control.
@@ -493,13 +567,19 @@ class WorkflowEngine:
             return
 
         params = from_data(trigger.Params, workflow.trigger.params)
-        events = await trigger.manual_events(
-            self._trigger_context(workflow, user), params, answer
-        )
-        traces = [
-            await self._run(workflow, user, event, manual=True, attempt=1)
-            for event in events
-        ]
+        trigger_ctx = self._trigger_context(workflow, user)
+        try:
+            events = await trigger.manual_events(trigger_ctx, params, answer)
+        except ManualError as e:
+            await bot.send_message(str(e), parse_html=False)
+            return
+        traces = []
+        for event in events:
+            trace = await self._run(workflow, user, event, manual=True, attempt=1)
+            traces.append(trace)
+            await trigger.manual_run_done(
+                trigger_ctx, params, event, worked=trace["status"] != FAILED
+            )
         await bot.send_message(self._summary(workflow, traces), parse_html=False)
 
     @staticmethod
@@ -508,21 +588,24 @@ class WorkflowEngine:
     ) -> Any | None:
         """Ask the questions of a manual run, and return the answers.
 
-        Return ``None`` if the user cancelled.
+        A question that depends on an earlier answer is left out unless
+        the answer is the one it waits for. Return ``None`` if the user
+        cancelled.
         """
-        prompts = {
-            field.name: field.metadata.get("prompt")
-            for field in dataclasses.fields(manual)
-        }
-        answers = {}
-        for name, choices in manual_choices(manual):
+        answers: dict[str, str] = {}
+        for question in manual_questions(manual):
+            if any(answers.get(k) != v for k, v in question.ask_if.items()):
+                continue
+            prompt = question.prompt or f"Run “{workflow.name}” for…"
+            if question.choices is None:
+                answers[question.name] = (await bot.request_user_input(prompt)).strip()
+                continue
             choice = await bot.request_user_choice(
-                prompts[name] or f"Run “{workflow.name}” for…",
-                [*choices, "Cancel"],
+                prompt, [*question.choices, "Cancel"]
             )
-            if not 0 <= choice < len(choices):
+            if not 0 <= choice < len(question.choices):
                 return None
-            answers[name] = choices[choice]
+            answers[question.name] = question.choices[choice]
         return manual(**answers)
 
     @staticmethod
@@ -530,6 +613,10 @@ class WorkflowEngine:
         if not traces:
             return f"{workflow.name}: there was nothing to run."
         if len(traces) == 1:
+            if traces[0]["status"] == STOPPED:
+                # A block ended the run on purpose, so the run did what it
+                # was asked to. Do not make that read like a failure.
+                return f"{workflow.name}: done. The run ended at {_where(traces[0])}."
             return f"{workflow.name}: {outcome(traces[0])}"
         counts = {
             status: sum(1 for trace in traces if trace["status"] == status)
@@ -537,5 +624,5 @@ class WorkflowEngine:
         }
         return (
             f"{workflow.name}: {len(traces)} runs. {counts[FINISHED]} finished, "
-            f"{counts[STOPPED]} stopped, {counts[FAILED]} failed."
+            f"{counts[STOPPED]} ended early, {counts[FAILED]} failed."
         )

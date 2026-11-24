@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spanreed.workflows import expressions
-from spanreed.workflows.blocks import Action, BlockRegistry, Trigger
+from spanreed.workflows.blocks import Action, BlockRegistry, Loop, Trigger
 from spanreed.workflows.values import from_data
 
 # Names that step inputs can refer to besides the ids of earlier steps.
@@ -28,6 +28,16 @@ class Step:
     id: str
     block: str
     inputs: dict[str, Any] = field(default_factory=dict)
+    # The steps inside this one, if its block is a loop. They run once for
+    # each round of the loop.
+    steps: list[Step] = field(default_factory=list)
+
+    @classmethod
+    def from_data(cls, data: dict[str, Any]) -> Step:
+        """Build a step, and the steps inside it, from JSON data."""
+        values = dict(data)
+        values["steps"] = [cls.from_data(step) for step in data.get("steps", [])]
+        return cls(**values)
 
 
 @dataclass
@@ -72,7 +82,7 @@ class Workflow:
         known = {f.name for f in dataclasses.fields(cls)}
         values = {key: value for key, value in data.items() if key in known}
         values["trigger"] = TriggerSpec(**data["trigger"])
-        values["steps"] = [Step(**step) for step in data["steps"]]
+        values["steps"] = [Step.from_data(step) for step in data["steps"]]
         return cls(**values)
 
 
@@ -99,16 +109,43 @@ def problems(workflow: Workflow, registry: BlockRegistry) -> list[str]:
         except ValueError as e:
             found.append(f"{trigger.title}: {e}")
 
-    known_names = {TRIGGER_NAME, RUN_NAME}
-    for number, step in enumerate(workflow.steps, start=1):
-        where = f"Step {number}"
+    found.extend(
+        _step_problems(
+            workflow.steps,
+            registry,
+            known_names={TRIGGER_NAME, RUN_NAME},
+            used_ids={TRIGGER_NAME, RUN_NAME},
+            prefix="",
+        )
+    )
+    return found
+
+
+def _step_problems(
+    steps: list[Step],
+    registry: BlockRegistry,
+    known_names: set[str],
+    used_ids: set[str],
+    prefix: str,
+) -> list[str]:
+    """Return what is wrong with some steps and the steps inside them.
+
+    ``known_names`` holds what a template of the first step can refer to.
+    ``used_ids`` holds every id of the workflow so far, also of steps that
+    cannot be referred to from here. Both are added to.
+    """
+    found: list[str] = []
+    for number, step in enumerate(steps, start=1):
+        label = f"{prefix}{number}"
+        where = f"Step {label}"
         if not _STEP_ID_RE.match(step.id):
             found.append(
                 f"{where}: the id “{step.id}” must be lower-case letters, "
                 "digits and “_”, and start with a letter."
             )
-        elif step.id in known_names:
+        elif step.id in used_ids:
             found.append(f"{where}: the id “{step.id}” is already in use.")
+        used_ids.add(step.id)
 
         block = registry.get(step.block)
         if not isinstance(block, Action):
@@ -128,6 +165,22 @@ def problems(workflow: Workflow, registry: BlockRegistry) -> list[str]:
                     "earlier step."
                 )
         known_names.add(step.id)
+
+        if isinstance(block, Loop):
+            # The steps inside can refer to what is known here and to each
+            # other. The steps after the loop cannot refer to them: what
+            # they give differs from round to round.
+            found.extend(
+                _step_problems(
+                    step.steps,
+                    registry,
+                    known_names=set(known_names),
+                    used_ids=used_ids,
+                    prefix=f"{label}.",
+                )
+            )
+        elif step.steps:
+            found.append(f"{where}: only a block that repeats steps can hold steps.")
     return found
 
 

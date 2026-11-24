@@ -123,7 +123,7 @@ def test_a_workflow_is_shown_as_its_trigger_and_its_steps() -> None:
             assert trigger["outputs"] == ["date", "time"]
 
             find, check, move, tell = shown["steps"]
-            assert [step["number"] for step in shown["steps"]] == [1, 2, 3, 4]
+            assert [step["number"] for step in shown["steps"]] == ["1", "2", "3", "4"]
             assert (find["id"], find["title"], find["app"]) == (
                 "find",
                 "Find tasks",
@@ -286,7 +286,7 @@ def test_run_now_runs_the_workflow_as_a_conversation_on_the_page() -> None:
                 (e["type"], e.get("title") or e.get("html") or e.get("flow_id"))
                 for e in events["events"]
             ]
-            closing = f"{NO_OVERDUE}: stopped at step 2, Only continue if."
+            closing = f"{NO_OVERDUE}: done. The run ended at step 2, Only continue if."
             assert said == [
                 ("flow-started", NO_OVERDUE),
                 ("message", closing),

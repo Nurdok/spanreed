@@ -1,11 +1,25 @@
 from typing import Any
 
+from spanreed.workflows.builtin import ForEach
 from spanreed.workflows.model import Step, Workflow, problems
 from spanreed.workflows.testing import Record, registry_of, workflow_of
 
 
 def _problems(*steps: Step, **fields: Any) -> list[str]:
-    return problems(workflow_of(*steps, **fields), registry_of(Record()))
+    return problems(workflow_of(*steps, **fields), registry_of(Record(), ForEach()))
+
+
+def _record(step_id: str, text: str) -> Step:
+    return Step(id=step_id, block="fake.record", inputs={"text": text})
+
+
+def _for_each(step_id: str, *steps: Step) -> Step:
+    return Step(
+        id=step_id,
+        block="core.for-each",
+        inputs={"items": "{{ trigger.value }}"},
+        steps=list(steps),
+    )
 
 
 def test_a_workflow_survives_being_stored() -> None:
@@ -111,3 +125,84 @@ def test_a_broken_template_is_a_problem() -> None:
     step = Step(id="one", block="fake.record", inputs={"text": "{{ trigger.value"})
     (problem,) = _problems(step)
     assert problem.startswith("Step 1, Fake record: ")
+
+
+# -- steps inside a loop -------------------------------------------------------
+
+
+def test_a_workflow_with_steps_inside_a_loop_survives_being_stored() -> None:
+    workflow = workflow_of(
+        _for_each("each", _record("inner", "{{ each.item }}")),
+        _record("after", "{{ each.count }}"),
+    )
+
+    stored = Workflow.from_data(workflow.to_data())
+
+    assert stored == workflow
+    assert isinstance(stored.steps[0].steps[0], Step)
+
+
+def test_a_step_inside_a_loop_can_refer_to_the_loop_and_to_what_is_before() -> None:
+    assert not _problems(
+        _record("before", "{{ trigger.value }}"),
+        _for_each(
+            "each",
+            _record("one", "{{ each.item }} {{ before.text }} {{ run.manual }}"),
+            _record("two", "{{ one.length }}"),
+        ),
+        _record("after", "{{ each.count }}"),
+    )
+
+
+def test_a_step_after_a_loop_cannot_refer_to_a_step_inside_it() -> None:
+    assert _problems(
+        _for_each("each", _record("inner", "{{ each.item }}")),
+        _record("after", "{{ inner.text }}"),
+    ) == [
+        "Step 2, Fake record: “inner” is not the trigger, the run or an earlier step."
+    ]
+
+
+def test_a_problem_inside_a_loop_says_where() -> None:
+    assert _problems(
+        _record("one", "a"),
+        _for_each("each", _record("ok", "b"), _record("bad", "{{ later.text }}")),
+        _record("later", "c"),
+    ) == [
+        "Step 2.2, Fake record: “later” is not the trigger, the run or an "
+        "earlier step."
+    ]
+
+
+def test_an_id_is_used_once_in_the_whole_workflow() -> None:
+    assert _problems(
+        _for_each("each", _record("same", "a")),
+        _record("same", "b"),
+    ) == ["Step 2: the id “same” is already in use."]
+    assert _problems(
+        _record("same", "a"),
+        _for_each("each", _record("same", "b")),
+    ) == ["Step 2.1: the id “same” is already in use."]
+
+
+def test_only_a_loop_can_hold_steps() -> None:
+    step = _record("one", "a")
+    step.steps = [_record("inner", "b")]
+
+    assert _problems(step) == [
+        "Step 1, Fake record: only a block that repeats steps can hold steps."
+    ]
+
+
+def test_a_loop_inside_a_loop_is_checked_too() -> None:
+    assert not _problems(
+        _for_each(
+            "outer",
+            Step(
+                id="inner",
+                block="core.for-each",
+                inputs={"items": "{{ outer.item }}"},
+                steps=[_record("leaf", "{{ outer.index }}.{{ inner.index }}")],
+            ),
+        )
+    )

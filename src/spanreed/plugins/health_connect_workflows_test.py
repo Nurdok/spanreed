@@ -360,7 +360,7 @@ def test_sync_health_data_says_nothing_about_a_day_that_was_up_to_date() -> None
         await world.engine.run_by_hand(daily.id, world.user)
 
         assert world.said() == [
-            "Health data → daily note: stopped at step 3, Only continue if."
+            "Health data → daily note: done. The run ended at step 3, Only continue if."
         ]
 
     _run(scenario)
@@ -384,7 +384,7 @@ def test_the_export_command_writes_the_file_of_every_stored_day() -> None:
             "Health/raw/sleep/2026-05-08.jsonl",
         ]
         assert world.said() == [
-            "Health raw data → vault files: 2 runs. 2 finished, 0 stopped, 0 failed."
+            "Health raw data → vault files: 2 runs. 2 finished, 0 ended early, 0 failed."
         ]
 
     _run(scenario)
