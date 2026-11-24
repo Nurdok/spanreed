@@ -296,20 +296,56 @@ differently and come to the same note are not noticed.
 
 ### A new workflow
 
-**New workflow**, under the list, offers the recipes and the triggers.
+**New workflow**, under the list, offers three ways to start.
 
 ![A new workflow](images/web-ui-workflow-new-desktop.png)
 
-- **From a recipe** adds the workflow as it ships, turned on. A recipe you
-  have already, or one that needs a plugin you have not set up, is listed and
-  says so.
+- **From a recipe** opens the recipes.
+- **From a file** takes a workflow that was exported, here or somewhere
+  else. It starts turned off: it comes from someone else, so look at its
+  steps before it runs. A file that is no workflow, or that uses a block
+  this Spanreed does not have, is refused, and the page says why.
 - **Start with a trigger** makes a workflow with that trigger and no steps,
   and opens it in the editor. It is off until you turn it on.
 
+### The recipes
+
+**Recipes**, next to New workflow, shows the workflows that ship with
+Spanreed: what each does, and a mark for each block it uses. The ones you
+can add come first. One that you have already, or that needs a plugin you
+have not set up, says so.
+
+![The recipes](images/web-ui-workflow-recipes-desktop.png)
+
+**Look** shows a recipe as the cards it would give you, with every input as
+it ships, before anything is added. **Add** adds the workflow, turned on.
+It is yours from then on: changing it does not change the recipe.
+
+![A recipe before it is added](images/web-ui-workflow-recipe-desktop.png)
+
+### A workflow as a file
+
+**Export**, under the name of a workflow, downloads it as a file: its name,
+its trigger and its steps, with every input as you wrote it. The file is
+the JSON that a recipe is written in (see [workflows.md](workflows.md)), so
+it can be given to someone else, kept as a copy, or changed by hand. It does
+not hold what the workflow remembers, what its trigger has seen, or its
+history. It does hold what you typed into the steps: read it before you
+give it away.
+
+**New workflow → From a file** brings such a file in, as a new workflow of
+its own. If you have a workflow of that name already, the new one gets a
+number after its name.
+
+![A workflow that came from a file](images/web-ui-workflow-imported-desktop.png)
+
 The API is `GET /app/api/workflows` (the list), `POST` on the same path (a
-new workflow), `GET /app/api/workflows/catalog` (the blocks and the recipes),
+new workflow: from a `recipe`, from the data of a file as `workflow`, or with
+only a `trigger`), `GET /app/api/workflows/catalog` (the blocks and the
+recipes), `GET /app/api/workflows/recipes/<id>` (one recipe as cards),
 `GET /app/api/workflows/<id>` (one workflow as cards), `PUT` and `DELETE` on
-the same path, `GET /app/api/workflows/<id>/runs` (the traces), and `POST` on
+the same path, `GET /app/api/workflows/<id>/runs` (the traces),
+`GET /app/api/workflows/<id>/export` (the workflow as a file), and `POST` on
 `/app/api/workflows/<id>/enabled`, `/command`, `/run` and `/test`. All of them answer
 only for a workflow of the logged-in user. A trace holds what the steps
 received and returned, so it is sent only to its owner and only when the

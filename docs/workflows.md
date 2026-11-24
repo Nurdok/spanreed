@@ -69,6 +69,15 @@ block must exist, the inputs must fit the block, and a template can only refer
 to the trigger, the run or an earlier step. A workflow with a problem is not
 started, and **Manage workflows** says what the problem is.
 
+A user's own workflow goes out in the same JSON (**Export** on its page),
+and comes in again as a new workflow (**New workflow → From a file**):
+`spanreed/workflows/sharing.py`. The file is a recipe, so a workflow that
+someone built can be put in `recipes/` as it is, with a description. What
+comes in is checked from the ground up, as above, and is refused with what
+is wrong if this Spanreed cannot run it. It starts turned off, and it never
+takes the `id`, the user or the state of the workflow it was made from:
+the file holds none of them.
+
 ### Steps inside a step
 
 A step whose block is a loop holds steps of its own. `core.for-each` runs
