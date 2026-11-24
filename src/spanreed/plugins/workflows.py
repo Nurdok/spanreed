@@ -8,14 +8,13 @@ recipe. Workflows are edited in the web UI, not in chat.
 
 from __future__ import annotations
 
-import asyncio
 import datetime
 from typing import Any
 
 from spanreed.interaction import PluginCommand, UserInteractionApi
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.workflows import migrations
+from spanreed.workflows import migrations, system
 from spanreed.workflows.blocks import Block, BlockRegistry
 from spanreed.workflows.asking import asking_blocks
 from spanreed.workflows.builtin import builtin_blocks
@@ -25,6 +24,7 @@ from spanreed.workflows.memory import memory_blocks
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Workflow
 from spanreed.workflows.recipes import Recipe, all_recipes
+from spanreed.workflows.system import system_blocks
 
 RECENT_RUNS_SHOWN = 5
 
@@ -49,6 +49,7 @@ class WorkflowsPlugin(Plugin):
             *calling_blocks(),
             *memory_blocks(),
             *file_blocks(),
+            *system_blocks(),
         ]
 
     @property
@@ -74,10 +75,24 @@ class WorkflowsPlugin(Plugin):
             # once.
             await migrations.retire_plugins(self._engine)
             await migrations.convert_plugins(self._engine)
-            # The engine's work is in its own tasks.
-            await asyncio.Event().wait()
+            await self._say_started()
+            # The engine's work is in its own tasks. This goes on until
+            # the plugin is stopped.
+            await system.pass_errors_on(self.get_users)
         finally:
             await self._engine.stop()
+
+    async def _say_started(self) -> None:
+        """Start the workflows that run when Spanreed has started.
+
+        After the plugins were moved, so that a workflow that came from
+        one runs for this start too.
+        """
+        try:
+            await system.say_started(await self.get_users())
+        except Exception:
+            # Not worth stopping the engine for.
+            self._logger.exception("Could not say that Spanreed started.")
 
     async def _register_existing_users(self) -> None:
         """Register every user to this core plugin.

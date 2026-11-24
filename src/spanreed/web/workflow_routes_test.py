@@ -730,6 +730,8 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
                 "core.forget",
                 "core.download-file",
                 "core.send-file",
+                "core.started",
+                "core.error",
                 "todoist.find-tasks",
                 "todoist.set-due-date",
                 "todoist.read-tally",

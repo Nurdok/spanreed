@@ -72,6 +72,8 @@ def test_name() -> None:
         "core.forget",
         "core.download-file",
         "core.send-file",
+        "core.started",
+        "core.error",
     ]
 
 
@@ -88,7 +90,7 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         await WorkflowStore().save(stored)
 
         task = asyncio.create_task(plugin.run())
-        while plugin._engine is None or not plugin._engine._sources:
+        while not passing_on.is_set():
             await asyncio.sleep(0)
         engine = plugin.engine
         assert list(engine._sources) == [stored.id]
@@ -99,6 +101,15 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         await asyncio.gather(task, return_exceptions=True)
         assert not engine._sources
 
+    order: list[str] = []
+    passing_on = asyncio.Event()
+
+    async def pass_errors_on(users: Any) -> None:
+        order.append("passes errors on")
+        assert await users() == [user]
+        passing_on.set()
+        await asyncio.Event().wait()
+
     with fake_storage(), NOT_DUE, patch.object(
         WorkflowsPlugin, "_register_existing_users", AsyncMock()
     ) as register, patch.object(
@@ -106,15 +117,38 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
     ), patch(
         "spanreed.plugins.workflows.migrations.retire_plugins", new=AsyncMock()
     ) as retire, patch(
-        "spanreed.plugins.workflows.migrations.convert_plugins", new=AsyncMock()
-    ) as convert:
+        "spanreed.plugins.workflows.migrations.convert_plugins",
+        new=AsyncMock(side_effect=lambda engine: order.append("converted")),
+    ) as convert, patch(
+        "spanreed.plugins.workflows.system.say_started",
+        new=AsyncMock(side_effect=lambda users: order.append("said it started")),
+    ) as say_started, patch(
+        "spanreed.plugins.workflows.system.pass_errors_on", new=pass_errors_on
+    ):
         asyncio.run(scenario())
 
     convert.assert_awaited_once()
+    # After the plugins were moved, so that what came from one runs too.
+    say_started.assert_awaited_once_with([user])
+    assert order == ["converted", "said it started", "passes errors on"]
 
     register.assert_awaited_once()
     mock_bot.register_command.assert_awaited_once()
     assert mock_bot.register_command.call_args.args[1].text == "Manage workflows"
+
+
+def test_the_engine_runs_also_if_the_start_cannot_be_said() -> None:
+    Plugin.reset_registry()
+    plugin = WorkflowsPlugin()
+
+    async def scenario() -> None:
+        with patch(
+            "spanreed.plugins.workflows.system.say_started",
+            new=AsyncMock(side_effect=ConnectionError("Redis is away")),
+        ), patch.object(WorkflowsPlugin, "get_users", AsyncMock(return_value=[])):
+            await plugin._say_started()
+
+    asyncio.run(scenario())
 
 
 def test_the_engine_is_not_there_before_the_plugin_runs() -> None:
