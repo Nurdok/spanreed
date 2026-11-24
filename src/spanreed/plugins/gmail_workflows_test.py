@@ -147,7 +147,7 @@ def _world() -> Iterator[World]:
         patch("spanreed.apis.gmail_blocks.GmailApi") as gmail_cls,
         patch("spanreed.apis.obsidian_blocks.ObsidianApi", autospec=True) as obsidian,
         patch("spanreed.workflows.engine.UserInteractionApi", autospec=True) as bot,
-        patch("spanreed.workflows.builtin.UserInteractionApi", new=bot),
+        patch("spanreed.workflows.blocks.UserInteractionApi", new=bot),
         patch("spanreed.workflows.engine._sleep", new=AsyncMock()),
         patch("spanreed.workflows.blocks._sleep", new=polls.sleep),
     ):

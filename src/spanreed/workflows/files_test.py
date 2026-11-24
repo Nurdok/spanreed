@@ -314,7 +314,7 @@ def test_a_server_that_fails_fails_the_step() -> None:
         _run_download(RuntimeError("HTTP 503: Service Unavailable"))
 
 
-@patch_user_interaction("spanreed.workflows.files")
+@patch_user_interaction("spanreed.workflows.blocks")
 def test_send_file_sends_the_data_under_the_name(mock_bot: AsyncMock) -> None:
     asyncio.run(SendFile().run(_context(), SendFileInput(name="May.pdf", content=PDF)))
     asyncio.run(SendFile().run(_context(), SendFileInput(name="a.txt", content="hi")))

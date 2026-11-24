@@ -233,6 +233,46 @@ def test_a_run_by_hand_asks_in_the_conversation_of_its_command(
 
 @patch_user_interaction("spanreed.workflows.engine")
 @patch_user_interaction("spanreed.workflows.blocks")
+def test_a_run_by_hand_that_spoke_is_not_summed_up(
+    bot: AsyncMock, engine_bot: AsyncMock
+) -> None:
+    bot.request_user_input.return_value = "Dune"
+    asks = workflow_of(_ask("book", "Which book?"))
+    silent = workflow_of(_has_turn("one"), id="wf_2", name="Silent")
+    fails = workflow_of(
+        _ask("book", "Which book?"),
+        Step(id="note", block="fake.record", inputs={"text": "{{ book.answer }}"}),
+        id="wf_3",
+        name="Fails",
+    )
+    record = Record()
+    record.failures = [RuntimeError("the vault is closed")]
+
+    async def scenario() -> list[str]:
+        engine = WorkflowEngine(registry_of(AskText(), HasTurn(), record))
+        user = mock_user_find_by_id(USER_ID)
+        for workflow in (asks, silent, fails):
+            await engine.save(workflow)
+            await engine.run_by_hand(workflow.id, user)
+        (run,) = await _runs(engine, asks)
+        assert run["talked"] is True
+        (run,) = await _runs(engine, silent)
+        assert "talked" not in run
+        return [call.args[0] for call in engine_bot.send_message.await_args_list]
+
+    with fake_storage():
+        said = asyncio.run(scenario())
+
+    # Nothing after the conversation that went well. A run that said
+    # nothing, and one that failed, are summed up as before.
+    assert said == [
+        "Silent: finished.",
+        "Fails: failed at step 2, Fake record: the vault is closed",
+    ]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
 def test_a_run_that_waits_for_the_turn_lets_a_run_by_hand_go_first(
     bot: AsyncMock, _: AsyncMock
 ) -> None:

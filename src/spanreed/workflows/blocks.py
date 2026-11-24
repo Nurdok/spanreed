@@ -181,19 +181,28 @@ class Interaction:
     said is kept as well, for the trace of the step.
 
     The engine has taken the user's turn to talk before it calls a block
-    that ``converses``. A block must not take it again.
+    that ``converses``. A block must not take it again. A block that only
+    sends something, and asks nothing, needs no turn: it sends through
+    this without setting ``converses``.
     """
 
     def __init__(self, user: User) -> None:
         """Create the way to talk to ``user``."""
         self._user = user
         self._lines: list[dict[str, str]] = []
+        self._talked = False
+
+    @property
+    def talked(self) -> bool:
+        """Return whether the user was asked or told anything through this."""
+        return self._talked
 
     def keep_in(self, lines: list[dict[str, str]]) -> None:
         """Keep what is asked and said from now on in ``lines``."""
         self._lines = lines
 
     def _keep(self, **line: str) -> None:
+        self._talked = True
         if len(self._lines) < SAID_MAX_LINES:
             self._lines.append({name: _said(text) for name, text in line.items()})
 

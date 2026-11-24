@@ -524,6 +524,8 @@ class WorkflowEngine:
                 trace["status"] = STOPPED
             finally:
                 trace["finished_at"] = _now()
+                if ctx.interaction.talked:
+                    trace["talked"] = True
                 await self._keep(workflow, trace)
         finally:
             del self._turns[run.id]
@@ -606,7 +608,8 @@ class WorkflowEngine:
                 else:
                     outputs = await self._call(block, ctx, inputs)
             finally:
-                if said:
+                # What a step that only sends has sent is in its inputs.
+                if said and block.converses:
                     entry["conversation"] = said
             context[step.id] = outputs
             entry["outputs"] = to_data(outputs)
@@ -777,6 +780,9 @@ class WorkflowEngine:
         This is what a workflow's command calls. Ask what the trigger wants
         to know first, then run the workflow for each event the trigger
         gives for the answer. The runs are not tried again if they fail.
+
+        One run that asked or told the user something, and did not fail,
+        is not summed up: it spoke for itself.
         """
         bot = await UserInteractionApi.for_user(user)
         workflow = await self._store.get(workflow_id)
@@ -813,6 +819,14 @@ class WorkflowEngine:
             await trigger.manual_run_done(
                 trigger_ctx, params, event, worked=trace["status"] != FAILED
             )
+        if (
+            len(traces) == 1
+            and traces[0].get("talked")
+            and traces[0]["status"] != FAILED
+        ):
+            # The run asked or told the user something, and ended as it was
+            # meant to. There is nothing to add to that.
+            return
         await bot.send_message(self._summary(workflow, traces), parse_html=False)
 
     # -- trying a workflow out ----------------------------------------------

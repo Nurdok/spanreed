@@ -205,16 +205,18 @@ def test_continue_if_ends_the_run_when_the_condition_is_false() -> None:
         asyncio.run(block.run(_step_context(), ContinueIfInput(False)))
 
 
-@patch_user_interaction("spanreed.workflows.builtin")
+@patch_user_interaction("spanreed.workflows.blocks")
 def test_send_message_sends_plain_text(mock_bot: AsyncMock) -> None:
     message = "Updated 2 <overdue> tasks & more."
 
     asyncio.run(SendMessage().run(_step_context(), SendMessageInput(message)))
 
-    mock_bot.send_message.assert_awaited_once_with(message, parse_html=False)
+    mock_bot.send_message.assert_awaited_once_with(
+        message, parse_html=False, parse_markdown=False
+    )
 
 
-@patch_user_interaction("spanreed.workflows.builtin")
+@patch_user_interaction("spanreed.workflows.blocks")
 def test_a_message_that_comes_out_empty_is_not_sent(mock_bot: AsyncMock) -> None:
     for message in ("", "  \n "):
         asyncio.run(SendMessage().run(_step_context(), SendMessageInput(message)))

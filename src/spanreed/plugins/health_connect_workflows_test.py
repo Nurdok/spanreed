@@ -115,7 +115,7 @@ def _world() -> Iterator[World]:
         patch.object(Plugin, "is_registered", async_return_true),
         patch("spanreed.apis.obsidian_blocks.ObsidianApi", autospec=True) as obsidian,
         patch("spanreed.workflows.engine.UserInteractionApi", autospec=True) as bot,
-        patch("spanreed.workflows.builtin.UserInteractionApi", new=bot),
+        patch("spanreed.workflows.blocks.UserInteractionApi", new=bot),
         patch("spanreed.workflows.migrations.UserInteractionApi", new=bot),
         # A failed run is tried again without the wait.
         patch("spanreed.workflows.engine._sleep", new=AsyncMock()),
@@ -340,10 +340,8 @@ def test_sync_health_data_asks_for_a_range_and_says_what_it_logged() -> None:
             ["Today", "The last week", "Every stored day", "Cancel"],
         )
         assert world.properties_set() == [(NOTE, "steps", 100)]
-        assert world.said() == [
-            "Logged steps=100 for 2026-05-09.",
-            "Health data → daily note: finished.",
-        ]
+        # The run said what it did. Nothing is added to that.
+        assert world.said() == ["Logged steps=100 for 2026-05-09."]
 
     _run(scenario)
 

@@ -301,7 +301,7 @@ def test_manage_runs_a_workflow_and_shows_its_runs(
     asked = _choose(mock_bot, NO_OVERDUE, "Run now", "Show recent runs", "Back", "Done")
 
     with patch("spanreed.apis.todoist_blocks.Todoist", autospec=True) as todoist, patch(
-        "spanreed.workflows.builtin.UserInteractionApi", new=mock_engine_bot
+        "spanreed.workflows.blocks.UserInteractionApi", new=mock_engine_bot
     ), patch.object(Plugin, "is_registered", async_return_true):
         todoist.for_user.return_value.get_overdue_tasks_with_label = AsyncMock(
             return_value=[]

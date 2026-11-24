@@ -8,7 +8,6 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
 
-from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import (
     Action,
     Block,
@@ -208,8 +207,7 @@ class SendMessage(Action[SendMessageInput, NoOutput]):
     async def run(self, ctx: StepContext, inputs: SendMessageInput) -> NoOutput:
         """Send the message, unless there is nothing in it."""
         if inputs.message.strip():
-            bot = await UserInteractionApi.for_user(ctx.user)
-            await bot.send_message(inputs.message, parse_html=False)
+            await ctx.interaction.send_message(inputs.message, parse_html=False)
         return NoOutput()
 
 

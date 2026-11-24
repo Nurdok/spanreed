@@ -135,7 +135,7 @@ def _world() -> Iterator[World]:
         ),
         patch("spanreed.apis.obsidian_blocks.ObsidianApi", autospec=True) as obsidian,
         patch("spanreed.workflows.engine.UserInteractionApi", autospec=True) as bot,
-        patch("spanreed.workflows.builtin.UserInteractionApi", new=bot),
+        patch("spanreed.workflows.blocks.UserInteractionApi", new=bot),
         patch("spanreed.workflows.migrations.UserInteractionApi", new=bot),
         # A failed run is tried again without the wait.
         patch("spanreed.workflows.engine._sleep", new=AsyncMock()),
@@ -304,7 +304,8 @@ def test_by_hand_new_workouts_are_written_and_not_again_by_the_next_poll() -> No
                 "Cancel",
             ],
         )
-        assert world.said() == [LOGGED, "Hevy workouts → set notes: finished."]
+        # The run said what it did. Nothing is added to that.
+        assert world.said() == [LOGGED]
 
         await world.polls.again()
 

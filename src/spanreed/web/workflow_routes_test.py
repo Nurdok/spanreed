@@ -864,6 +864,67 @@ def test_a_workflow_can_start_with_only_a_trigger_and_is_off() -> None:
     asyncio.run(run())
 
 
+def test_a_workflow_that_asks_is_a_command_and_is_not_tested() -> None:
+    """A workflow made on the page from the trigger that is only a command."""
+
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            await _login(client)
+            response = await client.post(
+                "/app/api/workflows", json={"trigger": "core.command"}, headers=H
+            )
+            assert response.status_code == 201
+            shown = await _json(response)
+            url = f"/app/api/workflows/{shown['id']}"
+            form = _form_of(shown)
+            form["name"] = "Ask me"
+            form["steps"] = [
+                {
+                    "id": "ask",
+                    "block": "core.ask-text",
+                    "inputs": {
+                        "question": "Which book?",
+                        "ask_first": "",
+                        "priority": "low",
+                        "give_up_after": "30",
+                    },
+                    "steps": [],
+                }
+            ]
+
+            saved = await client.put(url, json=form, headers=H)
+
+            assert saved.status_code == 200
+            shown = await _json(saved)
+            assert shown["test"] == {"last": None, "now": True, "asks": True}
+            (card,) = shown["steps"]
+            assert card["kind"] == "ask"
+            stored = await engine.store.get(shown["id"])
+            assert stored is not None
+            assert stored.steps[0].inputs == {
+                "question": "Which book?",
+                "ask_first": "",
+                "priority": "low",
+                "give_up_after": 30,
+            }
+
+            # The page says why, and so does the server.
+            tested = await client.post(
+                f"{url}/test", json={"workflow": form, "event": "now"}, headers=H
+            )
+            assert tested.status_code == 400
+            assert "asks you something" in (await _json(tested))["error"]
+
+            # Turned on, it is a command. It is not one before.
+            assert commands.get_command(f"workflow.{shown['id']}") is None
+            on = await client.post(f"{url}/enabled", json={"enabled": True}, headers=H)
+            assert on.status_code == 200
+            command = commands.get_command(f"workflow.{shown['id']}")
+            assert command is not None and command.text == "Ask me"
+
+    asyncio.run(run())
+
+
 def test_a_new_workflow_needs_a_recipe_or_a_trigger_that_is_there() -> None:
     async def run() -> None:
         async with _workflows_app() as (client, engine, _):
