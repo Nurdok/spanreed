@@ -258,7 +258,7 @@ def test_health_connect_form_has_nothing_to_edit_and_keeps_the_token() -> None:
         config_data_from_form(health_connect.UserConfig, {"token": "stolen"}, saved)
 
 
-def test_withings_form_shows_only_the_daily_note_fields() -> None:
+def test_withings_form_has_nothing_to_edit_and_keeps_the_login() -> None:
     saved = {
         "userid": "u",
         "access_token": "a",
@@ -269,18 +269,9 @@ def test_withings_form_shows_only_the_daily_note_fields() -> None:
     }
     schema = form_schema(withings.UserConfig)
 
-    assert [f["name"] for f in schema["fields"]] == ["daily_note_fields"]
-    assert [f["name"] for f in schema["fields"][0]["fields"]] == [
-        "weight",
-        "fat_percentage",
-        "fat_mass",
-        "heart_pulse",
-    ]
-    value = form_value(withings.UserConfig, saved)
-    assert "access_token" not in json.dumps(value)
-    value["daily_note_fields"]["fat_mass"] = False
-    data = config_data_from_form(withings.UserConfig, value, saved)
-    # The login is kept, and the choice is saved with it.
-    config = withings.UserConfig(**data)
-    assert config.access_token == "a"
-    assert config.daily_note_fields == withings.DailyNoteFields(fat_mass=False)
+    # Only the login flow sets the tokens, so there is nothing to show.
+    assert schema["fields"] == []
+    assert "access_token" not in json.dumps(form_value(withings.UserConfig, saved))
+    assert config_data_from_form(withings.UserConfig, {}, saved) == saved
+    with pytest.raises(ConfigFormError):
+        config_data_from_form(withings.UserConfig, {"access_token": "stolen"}, saved)

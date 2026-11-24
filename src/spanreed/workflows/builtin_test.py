@@ -9,6 +9,7 @@ from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
 from spanreed.workflows.blocks import (
     NoOutput,
     NoQuestion,
+    Repeat,
     RunInfo,
     StepContext,
     StopRun,
@@ -18,7 +19,6 @@ from spanreed.workflows.builtin import (
     ContinueIf,
     ContinueIfInput,
     Schedule,
-    ScheduleParams,
     SendMessage,
     SendMessageInput,
     Tick,
@@ -72,7 +72,7 @@ async def _first_events(state: _State, count: int, clock: list[Any]) -> list[Tic
         clock.append(seconds)
         clock[0] += datetime.timedelta(seconds=seconds)
 
-    params = ScheduleParams(every=4, unit="hours")
+    params = Repeat(every=4, unit="hours")
     events = []
     with patch("spanreed.workflows.builtin._now", new=lambda: clock[0]), patch(
         "spanreed.workflows.builtin.asyncio.sleep", new=sleep
@@ -153,21 +153,19 @@ def test_an_event_is_in_the_timezone_of_the_user() -> None:
     )
 
     with patch("spanreed.workflows.builtin._now", new=lambda: NOON):
-        events = asyncio.run(
-            Schedule().manual_events(ctx, ScheduleParams(), NoQuestion())
-        )
+        events = asyncio.run(Schedule().manual_events(ctx, Repeat(), NoQuestion()))
 
     assert events == [Tick(date="2026-05-10", time="01:00")]
 
 
 def test_a_schedule_must_wait_between_events() -> None:
-    assert from_data(ScheduleParams, {"every": 4, "unit": "hours"}).interval == (
+    assert from_data(Repeat, {"every": 4, "unit": "hours"}).interval == (
         datetime.timedelta(hours=4)
     )
     with pytest.raises(ValueError):
-        from_data(ScheduleParams, {"every": 0, "unit": "hours"})
+        from_data(Repeat, {"every": 0, "unit": "hours"})
     with pytest.raises(ValueError):
-        from_data(ScheduleParams, {"every": 4, "unit": "fortnights"})
+        from_data(Repeat, {"every": 4, "unit": "fortnights"})
 
 
 def test_continue_if_ends_the_run_when_the_condition_is_false() -> None:

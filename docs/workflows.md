@@ -82,6 +82,7 @@ started, and **Manage workflows** says what the problem is.
 | `obsidian.write-file` Write file | action | Obsidian |
 | `health-connect.day-changed` A day's data changed | trigger | Health Connect |
 | `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
+| `withings.new-measurements` New measurements for a day | trigger | Withings |
 
 More arrive with each plugin whose behavior becomes a recipe.
 
@@ -132,7 +133,7 @@ A trigger names its parameters and its event, and yields an event each time
 the workflow should run. The fields of the event are its outputs.
 
 ```python
-class Schedule(Trigger[ScheduleParams, Tick]):
+class Schedule(Trigger[Repeat, Tick]):
     id = "core.schedule"
     title = "On a schedule"
     Manual = NoQuestion
@@ -180,6 +181,45 @@ class DayChanged(PushTrigger[NoParams, DayMetrics]):
 - A key that is put again during its own run stays, and gives another run.
 - A workflow that is off gets no keys. It does not collect what it missed;
   a run by hand over a range fills that in.
+
+#### Triggers that poll a service
+
+A `PollTrigger` is for a service that has to be asked, such as Withings. Its
+parameters are `Repeat` (every 1 hour, for example), and `poll` returns an
+event for each thing the service has now:
+
+```python
+class NewMeasurements(PollTrigger[Repeat, DayMeasurements]):
+    id = "withings.new-measurements"
+
+    async def poll(self, ctx, params, cursor) -> Poll[DayMeasurements]:
+        today = datetime.date.today()
+        yesterday = today - datetime.timedelta(days=1)
+        return Poll(events=await measurements_of(ctx.user, yesterday, today))
+
+    def key(self, event) -> str:        # what the event is about
+        return event.date
+
+    def version(self, event) -> str:    # what state that is in
+        return digest(event)
+```
+
+A poll usually finds what earlier polls found too. The trigger remembers
+what the workflow ran for, and leaves those events out:
+
+- `key` names the thing an event is about. By default the workflow runs once
+  for a key.
+- `version` makes it run again when the thing changed. `digest(event)`
+  changes when any field of the event does.
+- An event is remembered when its run worked. If the run failed every time
+  it was tried, the next poll gives the event again. So a poll has to keep
+  returning a thing until then: Withings is asked for yesterday too.
+- A poll can return a `cursor` for a service that can be asked for what is
+  new since a point. It is kept, and handed to the next poll, once every run
+  of the poll worked.
+- The first poll of a new workflow is at once. After a restart the next poll
+  waits for the rest of the interval, as a schedule does.
+- The trigger remembers its last 1000 keys (`remembers`).
 
 `Manual` says whether the user can start a run by hand:
 
@@ -233,9 +273,8 @@ surfaces check a command with `get_command_for_user` before they run it.
   ended. A step's inputs and outputs are kept only in the run's trace.
 - **Turning a workflow on or off takes effect at once.**
 
-Not there yet: triggers that poll a service, branches and loops, blocks that
-ask the user a question, the editor. A question a run is waiting on would not
-survive a restart.
+Not there yet: branches and loops, blocks that ask the user a question, the
+editor. A question a run is waiting on would not survive a restart.
 
 ## Redis
 
@@ -243,11 +282,12 @@ survive a restart.
 | --- | --- |
 | `workflows:user_id={id}` | Set of the user's workflow ids |
 | `workflows:workflow:{id}` | The workflow, as JSON |
-| `workflows:workflow:{id}:state` | Hash of what its trigger remembers |
+| `workflows:workflow:{id}:state` | Hash of what its trigger remembers: when it last fired or polled, a cursor, the keys it ran for |
 | `workflows:workflow:{id}:runs` | The traces of its last 100 runs, newest first. Dropped 30 days after the last run. |
 | `workflows:workflow:{id}:queue` | List of the keys it still has to run for, oldest first |
 | `workflows:workflow:{id}:queued` | Hash of those keys, each with a token that changes when the key is put again |
 | `workflows:converted:{plugin}` | Set of the users whose use of a plugin was converted to recipes |
+| `workflows:to-convert:{plugin}` | JSON list of the users the plugin had when it became recipes, and who are not converted yet |
 
 ## Plugins that became recipes
 
@@ -273,9 +313,16 @@ whether or not Spanreed was restarted in between.
 The plugin keeps talking to its service. What it did with the data is now a
 set of recipes, installed with the settings the user had.
 
+Only the users the plugin has at the first start with the conversion are
+converted. A user who registers to the plugin later never had the old
+behavior: the setup tells them which recipes to add.
+
 | Plugin | What it still does | Recipes |
 | --- | --- | --- |
 | Health Connect | Receives the phone's payloads, stores every record, and says which days changed | Health data → daily note · Health raw data → vault files |
+| Withings | Holds the login, and publishes the trigger that asks Withings | Withings → daily note |
+
+#### Health Connect
 
 ![The daily note workflow](images/web-ui-workflow-health-daily-desktop.png)
 
@@ -303,3 +350,38 @@ What differs from the plugin:
   value again without reading the note. The note ends up the same.
 - **The note of each day gets every metric compared**, not only the kind that
   the payload carried. Only a value that differs is written.
+
+#### Withings
+
+![The Withings workflow](images/web-ui-workflow-withings-desktop.png)
+
+A run of it, under History:
+
+![A run of the Withings workflow](images/web-ui-workflow-withings-history-desktop.png)
+
+Where the settings of the Withings plugin went:
+
+| Was | Is now |
+| --- | --- |
+| The four daily note property checkboxes | The rows of **Properties** in "Withings → daily note". A property that was off has no row. |
+| Sync Withings data | The command of the workflow, under the same name: today, or the last week |
+| Once an hour | **Every** and **Unit** of the trigger |
+
+What stays as it was: a value goes only into a property that is empty
+(**Write when**: empty), so a value corrected by hand is never replaced. The
+user is told about what was written in the background too, and about a day
+that has no daily note.
+
+What differs from the plugin:
+
+- **One message for a day, not one for each value:** `Logged weight=80.5,
+  fat-percentage=20.1 for 2026-05-09.`
+- **Yesterday is asked for too.** The plugin asked for today only, so a
+  measurement that reached Withings after midnight was never written.
+- **A day that could not be written is tried again.** While Obsidian does not
+  answer, the day is not remembered as done, and the next poll finds it.
+- **An unchanged day does not run again.** The plugin read the note every
+  hour. The workflow runs when the day's measurements differ from the last
+  time it ran for the day. So a value that was deleted from the note by hand
+  comes back with the next new measurement or a sync by hand, not within the
+  hour.

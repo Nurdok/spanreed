@@ -1,30 +1,36 @@
+"""Hold the user's Withings login, and publish the Withings trigger.
+
+What is done with the measurements is up to the user's workflows. The
+recipe "Withings → daily note" does what this plugin used to do itself.
+``convert_to_workflows`` gives it to a user who had the plugin before, with
+the settings they had.
+"""
+
 import asyncio
-import datetime
+import dataclasses
+import logging
 
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.interaction import UserInteractionApi, PluginCommand
-from spanreed.daily_note_fields import ask_for_daily_note_fields
+from spanreed.interaction import UserInteractionApi
 from spanreed.apis.withings import (
     WithingsApi,
-    DailyNoteFields,
     UserConfig,
-    MeasurementType,
     AuthenticationFlow,
 )
-from spanreed.apis.obsidian import ObsidianApi
-import logging
+from spanreed.apis.withings_blocks import withings_blocks
+from spanreed.workflows import migrations
+from spanreed.workflows.blocks import Block
+from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.model import Workflow
+from spanreed.workflows.recipes import all_recipes
+from spanreed.workflows.store import WorkflowStore
+
+# The recipe that does what this plugin used to do itself.
+DAILY_NOTE_RECIPE = "withings-daily-note"
 
 
-MEASUREMENT_TYPE_TO_STR = {
-    MeasurementType.WEIGHT: "weight",
-    MeasurementType.FAT_PERCENTAGE: "fat-percentage",
-    MeasurementType.FAT_MASS: "fat-mass",
-    MeasurementType.HEART_PULSE: "heart-pulse",
-}
-
-
-class WithingsPlugin(Plugin):
+class WithingsPlugin(Plugin[UserConfig]):
     @classmethod
     def name(cls) -> str:
         return "Withings"
@@ -38,45 +44,49 @@ class WithingsPlugin(Plugin):
         return UserConfig
 
     @classmethod
-    async def ask_for_user_config(cls, user: User) -> None:
-        """Log in to Withings and choose the daily note properties.
+    async def get_config(cls, user: User) -> UserConfig:
+        """Return the user's login.
 
-        A user who is already logged in can keep the login, so that the
-        properties can be changed without logging in again.
+        A config saved while this plugin wrote to the daily note itself
+        also holds which properties it wrote. They are rows of the user's
+        workflow now, and are left out here.
+        """
+        saved = await cls.get_saved_config_data(user) or {}
+        known = {field.name for field in dataclasses.fields(UserConfig)}
+        return UserConfig(**{k: v for k, v in saved.items() if k in known})
+
+    def blocks(self) -> list[Block]:
+        """Return the Withings trigger for workflows."""
+        return withings_blocks()
+
+    @classmethod
+    async def ask_for_user_config(cls, user: User) -> None:
+        """Log in to Withings.
+
+        A user who is already logged in can keep the login.
         """
         logging.info("Asking for Withings user config.")
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
 
-        config: UserConfig
+        log_in = True
         if await cls.get_saved_config_data(user) is not None:
-            config = await cls.get_config(user)
             choice = await bot.request_user_choice(
                 "You are logged in to Withings.",
                 ["Keep the current login", "Log in again"],
             )
-            if choice == 1:  # Log in again
-                config = await cls._authenticate(user, bot, config.daily_note_fields)
-        else:
-            config = await cls._authenticate(user, bot, DailyNoteFields())
-
-        await ask_for_daily_note_fields(bot, config.daily_note_fields)
-        # Take the tokens as they are now: a sync may have refreshed them
-        # while the user was choosing.
-        saved = await cls.get_saved_config_data(user)
-        if saved is not None:
-            fields = config.daily_note_fields
-            config = await cls.get_config(user)
-            config.daily_note_fields = fields
-        await cls.set_config(user, config)
+            log_in = choice == 1
+        if log_in:
+            await cls._authenticate(user, bot)
+        if not await cls._has_workflows(user):
+            await bot.send_message(
+                "Workflows put the measurements in your vault. Add "
+                "“Withings → daily note” from the recipes of “Manage "
+                "workflows”."
+            )
 
     @classmethod
-    async def _authenticate(
-        cls, user: User, bot: UserInteractionApi, fields: DailyNoteFields
-    ) -> UserConfig:
-        """Run the Withings login and save the config it gives.
-
-        Keep ``fields`` as the daily note properties of the new config.
-        """
+    async def _authenticate(cls, user: User, bot: UserInteractionApi) -> None:
+        """Run the Withings login and save the config it gives."""
         auth: AuthenticationFlow
         async with WithingsApi.start_authentication(user) as auth:
             auth_done: asyncio.Event = await auth.get_done_event()
@@ -88,90 +98,43 @@ class WithingsPlugin(Plugin):
 
             await auth_done.wait()
 
-            config = auth.get_user_config()
-            config.daily_note_fields = fields
-            await cls.set_config(user, config)
-            return config
+            await cls.set_config(user, auth.get_user_config())
 
-    async def run(self) -> None:
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(text="Sync Withings data", callback=self._sync_now),
+    @staticmethod
+    async def _has_workflows(user: User) -> bool:
+        """Return whether a workflow of the user uses the Withings trigger."""
+        triggers = {block.id for block in withings_blocks()}
+        return any(
+            workflow.trigger.block in triggers
+            for workflow in await WorkflowStore().list_for_user(user.id)
         )
-        await super().run()
 
-    async def run_for_user(self, user: User) -> None:
-        while True:
-            await self._sync(user)
-            await asyncio.sleep(datetime.timedelta(hours=1).total_seconds())
 
-    async def _sync_now(self, user: User) -> None:
-        """Manually triggered sync via the Telegram command."""
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        config: UserConfig = await self.get_config(user)
-        if not config.daily_note_fields.written():
-            await bot.send_message(
-                "Every Withings property is turned off in the Withings settings."
+# -- from a plugin that writes to the daily note to a workflow that does -------
+
+
+async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workflow]:
+    """Give a user of the old plugin the workflow that does what it did.
+
+    Install the recipe without the daily note properties that the user had
+    turned off. Return the workflow if it was installed. Doing this again
+    installs nothing.
+    """
+    saved = await WithingsPlugin.get_saved_config_data(user)
+    if saved is None:
+        # Registered, but never logged in: there was nothing to keep doing.
+        return []
+    installed = []
+    workflows = await engine.store.list_for_user(user.id)
+    if not any(workflow.recipe == DAILY_NOTE_RECIPE for workflow in workflows):
+        installed.append(
+            await engine.install(
+                user,
+                all_recipes()[DAILY_NOTE_RECIPE],
+                migrations.keep_daily_note_properties(saved.get("daily_note_fields")),
             )
-            return
-        choice = await bot.request_user_choice(
-            "Sync Withings data for…",
-            ["Today", "The last week", "Cancel"],
         )
-        if choice == 0:  # Today
-            days = 1
-        elif choice == 1:  # The last week
-            days = 7
-        else:  # Cancel
-            return
 
-        await bot.notify("Syncing Withings data…")
-        if await self._sync(user, days=days) == 0:
-            await bot.notify("No new Withings measurements found.")
-
-    async def _sync(self, user: User, *, days: int = 1) -> int:
-        """Write measurements into the daily notes for the last ``days`` days.
-
-        Write only the properties that the user has turned on. Existing
-        property values are left untouched. Returns the number of
-        measurement values newly written.
-        """
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        config: UserConfig = await self.get_config(user)
-        fields = config.daily_note_fields
-        if not fields.written():
-            return 0
-        withings = await WithingsApi.for_user(user)
-        obsidian = await ObsidianApi.for_user(user)
-
-        today = datetime.date.today()
-        start = today - datetime.timedelta(days=days - 1)
-        measurements_by_date = await withings.get_measurements(
-            start_date=start, end_date=today
-        )
-        if not measurements_by_date:
-            return 0
-
-        # Only today's daily note is generated on demand; past dates are
-        # expected to already have their notes.
-        await obsidian.safe_generate_today_note()
-
-        written = 0
-        for date in sorted(measurements_by_date):
-            daily_note: str = await obsidian.get_daily_note("Daily", date)
-            for measurement_type, value in measurements_by_date[date].items():
-                name = MEASUREMENT_TYPE_TO_STR[measurement_type]
-                if not fields.writes(name):
-                    continue
-                try:
-                    existing_value = await obsidian.get_property(daily_note, name)
-                    if existing_value is not None:
-                        continue
-                    await obsidian.set_value_of_property(daily_note, name, value)
-                except FileNotFoundError:
-                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
-                    break
-
-                written += 1
-                await bot.notify(f"Logged {name} for {date.isoformat()}: {value}.")
-        return written
+    # Last: the saved config loses the setting that the workflow now holds.
+    await WithingsPlugin.set_config(user, await WithingsPlugin.get_config(user))
+    return installed

@@ -12,7 +12,8 @@ There are two shapes of block:
 - A ``Trigger`` starts runs. It yields one event for each run, and says
   whether, and how, it can be started by hand. A ``PushTrigger`` is a
   trigger that a plugin feeds: the plugin says what changed, and the
-  trigger turns each change into an event.
+  trigger turns each change into an event. A ``PollTrigger`` asks a
+  service at an interval, and remembers what the workflow already ran for.
 
 A plugin publishes its blocks from ``Plugin.blocks()``.
 """
@@ -20,13 +21,25 @@ A plugin publishes its blocks from ``Plugin.blocks()``.
 from __future__ import annotations
 
 import abc
+import asyncio
 import dataclasses
+import datetime
 import enum
+import hashlib
+import json
 import re
 import typing
 from collections.abc import AsyncGenerator, Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Protocol,
+    TypeVar,
+)
 
 from spanreed.user import User
 
@@ -37,8 +50,17 @@ InT = TypeVar("InT")
 OutT = TypeVar("OutT")
 ParamsT = TypeVar("ParamsT")
 EventT = TypeVar("EventT")
+RepeatT = TypeVar("RepeatT", bound="Repeat")
 
 _BLOCK_ID_RE = re.compile(r"^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$")
+
+# Indirection so that tests can skip the wait between two polls.
+_sleep = asyncio.sleep
+
+
+def _now() -> datetime.datetime:
+    # Indirection so that tests can set the clock of a poll trigger.
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
 class BlockKind(enum.StrEnum):
@@ -77,6 +99,34 @@ class NoParams:
 @dataclass
 class NoQuestion:
     """The question of a trigger that a manual run starts without asking."""
+
+
+_UNITS = {
+    "minutes": datetime.timedelta(minutes=1),
+    "hours": datetime.timedelta(hours=1),
+    "days": datetime.timedelta(days=1),
+}
+
+
+@dataclass
+class Repeat:
+    """How often a trigger does its work: every 4 hours.
+
+    These are the parameters of a schedule and of a trigger that polls.
+    """
+
+    every: int = 1
+    unit: Literal["minutes", "hours", "days"] = "hours"
+
+    def __post_init__(self) -> None:
+        """Raise ``ValueError`` if there would be no wait in between."""
+        if self.every < 1:
+            raise ValueError("A trigger repeats every 1 or more.")
+
+    @property
+    def interval(self) -> datetime.timedelta:
+        """Return the time from one time to the next."""
+        return self.every * _UNITS[self.unit]
 
 
 @dataclass(frozen=True)
@@ -289,6 +339,134 @@ class PushTrigger(Trigger[ParamsT, EventT]):
         self, ctx: TriggerContext, params: ParamsT, key: str
     ) -> EventT | None:
         """Return the event for a key, or ``None`` if there is nothing to run."""
+
+
+def digest(event: Any) -> str:
+    """Return a short text that differs when any field of an event does.
+
+    It is what ``PollTrigger.version`` returns for a trigger that runs
+    again when the thing an event is about has changed.
+    """
+    data = json.dumps(dataclasses.asdict(event), sort_keys=True, default=str)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass
+class Poll(Generic[EventT]):
+    """What a poll found."""
+
+    # An event for each thing the service has now, oldest first. They may
+    # include what earlier polls found: the trigger leaves those out.
+    events: list[EventT]
+    # Where the next poll starts, for a service that can be asked for what
+    # is new since a point. It is kept once every run of this poll worked.
+    # ``None`` keeps the cursor as it is.
+    cursor: str | None = None
+
+
+_POLLED_AT = "polled_at"
+_CURSOR = "cursor"
+_SEEN = "seen"
+
+
+class PollTrigger(Trigger[RepeatT, EventT]):
+    """A trigger that asks a service, at an interval, what it has.
+
+    ``poll`` returns an event for each thing it finds. The trigger keeps
+    what the workflow ran for, so that only something new starts a run:
+    ``key`` names the thing an event is about, and ``version`` says what
+    state the thing is in. By default a key runs once. A trigger whose
+    ``version`` is ``digest(event)`` also runs when the thing has changed.
+
+    An event is remembered when its run worked. If the run failed every
+    time it was tried, the next poll finds the event again, so a poll must
+    return it until then: by looking back far enough, or through the
+    cursor, which only moves on when every run of a poll worked.
+
+    The parameters say how often to ask. They are ``Repeat``, or a
+    dataclass that adds fields to it.
+    """
+
+    # How many keys are remembered. The ones that ran longest ago go first.
+    remembers: ClassVar[int] = 1000
+
+    @abc.abstractmethod
+    async def poll(
+        self, ctx: TriggerContext, params: RepeatT, cursor: str | None
+    ) -> Poll[EventT]:
+        """Ask the service, and return what it has.
+
+        ``cursor`` is what the last poll returned as its cursor, or
+        ``None`` if no poll has kept one.
+        """
+
+    @abc.abstractmethod
+    def key(self, event: EventT) -> str:
+        """Return what names the thing an event is about, such as its id."""
+
+    def version(self, event: EventT) -> str:
+        """Return what tells one state of the thing from another.
+
+        The workflow runs for a key again when this differs from the last
+        time it ran for the key.
+        """
+        return ""
+
+    async def events(
+        self, ctx: TriggerContext, params: RepeatT
+    ) -> AsyncGenerator[EventT, bool | None]:
+        """Poll each time the interval has passed, and yield what is new."""
+        while True:
+            await self._wait_until_due(ctx, params)
+            polled_at = _now()
+            found = await self.poll(ctx, params, await ctx.state.get(_CURSOR))
+            seen = await self._seen(ctx)
+            every_run_worked = True
+            for event in found.events:
+                key, version = self.key(event), self.version(event)
+                if seen.get(key) == version:
+                    continue
+                worked = yield event
+                if worked is False:
+                    every_run_worked = False
+                    continue
+                # Put last, so that the keys stay in the order they ran in.
+                seen.pop(key, None)
+                seen[key] = version
+                while len(seen) > self.remembers:
+                    del seen[next(iter(seen))]
+                await ctx.state.set(_SEEN, json.dumps(seen))
+            if every_run_worked and found.cursor is not None:
+                await ctx.state.set(_CURSOR, found.cursor)
+            # Kept only now, when the runs are over: a poll that a restart
+            # cut short is due again when Spanreed comes back.
+            await ctx.state.set(_POLLED_AT, polled_at.isoformat())
+
+    @staticmethod
+    async def _wait_until_due(ctx: TriggerContext, params: Repeat) -> None:
+        """Wait for the rest of the interval since the last poll."""
+        stored = await ctx.state.get(_POLLED_AT)
+        if stored is None:
+            return
+        try:
+            last = datetime.datetime.fromisoformat(stored)
+        except ValueError:
+            return
+        wait = (last + params.interval - _now()).total_seconds()
+        if wait > 0:
+            await _sleep(wait)
+
+    @staticmethod
+    async def _seen(ctx: TriggerContext) -> dict[str, str]:
+        """Return the version that the workflow last ran for, by key."""
+        stored = await ctx.state.get(_SEEN)
+        if stored is None:
+            return {}
+        try:
+            seen = json.loads(stored)
+        except ValueError:
+            return {}
+        return seen if isinstance(seen, dict) else {}
 
 
 class BlockRegistry:

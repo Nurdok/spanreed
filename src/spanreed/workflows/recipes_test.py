@@ -10,6 +10,7 @@ from spanreed.plugin import Plugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.todoist import TodoistPlugin
+from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.test_utils import (
     async_return_true,
@@ -30,7 +31,13 @@ def _real_registry() -> BlockRegistry:
     """Return the blocks of the real plugins that publish any."""
     Plugin.reset_registry()
     return BlockRegistry.from_plugins(
-        [WorkflowsPlugin(), TodoistPlugin(), ObsidianPlugin(), HealthConnectPlugin()]
+        [
+            WorkflowsPlugin(),
+            TodoistPlugin(),
+            ObsidianPlugin(),
+            HealthConnectPlugin(),
+            WithingsPlugin(),
+        ]
     )
 
 
