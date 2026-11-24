@@ -102,9 +102,12 @@ def template_problem(inputs: dict[str, str]) -> str | None:
 async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workflow]:
     """Give a user of the old plugin the workflow that does what it did.
 
-    Install the recipe with the folder and the templates the user had.
-    Return the workflow if it was installed. Doing this again installs
-    nothing.
+    Make it from the recipe, with the folder and the templates the user
+    had. Return the workflow if it was made. Doing this again makes nothing.
+
+    A template can name something that a workflow does not know, which the
+    plugin left empty. The workflow is stored all the same, and the user is
+    told what to change.
     """
     saved = await LitNotesPlugin.get_saved_config_data(user)
     if saved is None:
@@ -120,25 +123,30 @@ async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workf
         str(saved.get("note_content_template") or ""),
     )
 
-    def customize(new: Workflow) -> None:
-        for step in new.steps:
-            if step.id == NOTE_STEP:
-                step.inputs.update(inputs)
-
-    workflow = await engine.install(
-        user, all_recipes()[ADD_BOOK_NOTE_RECIPE], customize
-    )
-    problem = template_problem(inputs)
+    workflow = all_recipes()[ADD_BOOK_NOTE_RECIPE].workflow_for(user.id)
+    for step in workflow.steps:
+        if step.id == NOTE_STEP:
+            step.inputs.update(inputs)
+    # Stored even if it cannot run: the workflow then says why on its page,
+    # where the template can be changed. Not storing it would leave the user
+    # with neither the plugin's command nor their templates.
+    found = engine.problems(workflow)
+    await engine.save(workflow)
+    if found:
+        problem: str | None = found[0]
+        effect = "The workflow cannot run, and has no command, until"
+    else:
+        problem = template_problem(inputs)
+        effect = "The workflow fails there, after it asked everything, until"
     if problem is not None:
         _logger.warning(
-            f"The note templates of user {user.id} would fail in a workflow."
+            f"The note templates of user {user.id} do not work in a workflow."
         )
         bot = await UserInteractionApi.for_user(user)
         await bot.notify(
             "A note template of “Add book note” uses something that is not "
-            f"there. {problem} The plugin left that empty. The workflow "
-            "fails there instead, after it asked everything. Change the "
-            "template on its “Append to note” step.",
+            f"there. {problem} The plugin left that empty. {effect} the "
+            "template is changed on its “Append to note” step.",
             parse_html=False,
         )
     return [workflow]

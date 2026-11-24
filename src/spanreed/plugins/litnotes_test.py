@@ -397,7 +397,37 @@ def test_the_user_is_told_about_a_template_that_fails_in_a_workflow() -> None:
         (told,) = world.notified
         assert "The template of the text:" in told
         assert "subtitle" in told
+        assert "fails there, after it asked everything, until" in told
         assert "“Append to note”" in told
+
+    _run(scenario)
+
+
+def test_a_template_that_cannot_run_still_gets_the_user_the_workflow() -> None:
+    """Else the user would have neither the command nor their templates."""
+
+    async def scenario(world: World) -> None:
+        await world.save_old_settings(content="{{ book.title }} on {{ today }}")
+
+        workflow = await world.convert()
+
+        # It is stored, with the template as it was, and says why it cannot run.
+        (note,) = [step for step in workflow.steps if step.id == "note"]
+        assert note.inputs["text"].endswith("{{ book.title }} on {{ today }}")
+        (problem,) = world.engine.problems(workflow)
+        assert "“today”" in problem
+        assert commands.get_command(f"workflow.{workflow.id}") is None
+        (told,) = world.notified
+        assert "“today”" in told
+        assert "cannot run, and has no command, until" in told
+
+        # Changing the template is all it takes.
+        note.inputs["text"] = OLD_NAMES + "{{ book.title }}"
+        await world.engine.save(workflow)
+        assert world.engine.problems(workflow) == []
+        assert commands.get_command(f"workflow.{workflow.id}") is not None
+        # And the conversion does not come back.
+        assert await convert_to_workflows(world.engine, world.user) == []
 
     _run(scenario)
 

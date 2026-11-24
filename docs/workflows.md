@@ -875,7 +875,9 @@ Where the parts of the plugin went:
 - **A name that is not there fails the step.** The plugin left out what a
   template named that a book does not have. Templates of workflows do not.
   The conversion tries the user's templates on a made-up book, and tells the
-  user if one would fail.
+  user if one would fail. A template that names something no step gives
+  (`{{ today }}`) keeps the workflow from running at all: it is stored as it
+  is, says why on its page, and has no command until the template is changed.
 - **A title with a dot keeps all of it.** The plugin cut the name of the note
   at the last dot of the title: "Mr. Fox" became `Mr.md`.
 - **"Show more" is offered while there is more.** The plugin offered it under
