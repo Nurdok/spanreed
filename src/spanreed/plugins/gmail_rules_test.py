@@ -131,8 +131,8 @@ def _run(
         patch("spanreed.apis.gmail_blocks.GmailApi") as gmail_cls,
         patch("spanreed.apis.obsidian_blocks.ObsidianApi") as obsidian_cls,
         patch("spanreed.workflows.files.download", new=download),
-        patch("spanreed.workflows.builtin.UserInteractionApi") as message_bot,
-        patch("spanreed.workflows.files.UserInteractionApi") as file_bot,
+        patch("spanreed.workflows.blocks.UserInteractionApi") as message_bot,
+        patch("spanreed.workflows.blocks.UserInteractionApi") as file_bot,
     ):
         gmail_cls.for_user = AsyncMock(return_value=gmail)
         obsidian_cls.for_user = AsyncMock(return_value=obsidian)

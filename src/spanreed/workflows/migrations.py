@@ -113,7 +113,13 @@ class Conversion:
 
 def _conversions() -> list[Conversion]:
     # Imported here: the plugins import this module.
-    from spanreed.plugins import gmail_monitor, health_connect, hevy, withings
+    from spanreed.plugins import (
+        gmail_monitor,
+        health_connect,
+        hevy,
+        litnotes,
+        withings,
+    )
 
     return [
         Conversion(
@@ -152,6 +158,16 @@ def _conversions() -> list[Conversion]:
             off=(
                 "A rule that was off is a workflow that is off. One that "
                 "could not be turned on says why on its page."
+            ),
+        ),
+        Conversion(
+            canonical_name="lit-notes",
+            name="Lit Notes",
+            convert=litnotes.convert_to_workflows,
+            note=(
+                "The folder of the notes and the two note templates are on "
+                "the step “Append to note” of the workflow. The command is "
+                "still “Add book note”."
             ),
         ),
     ]

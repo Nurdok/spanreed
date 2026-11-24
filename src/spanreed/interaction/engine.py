@@ -339,6 +339,21 @@ def _remove_from_user_interaction_queue(
     )
 
 
+def holds_turn(user_id: int) -> bool:
+    """Return whether the task that asks has the user's turn right now.
+
+    True inside ``user_interaction`` for this user, in the task that
+    entered it. A command's callback is in that state: the flow that runs
+    it took the turn first.
+    """
+    current = _current.get(user_id)
+    return (
+        current is not None
+        and current.running
+        and current.task is asyncio.current_task()
+    )
+
+
 def get_pending_interaction_count(user_id: int) -> int:
     """Number of interactions waiting in the queue (not counting current)."""
     return sum(len(queue) for queue in _get_user_interaction_queues(user_id).values())
@@ -356,7 +371,15 @@ async def user_interaction(
 
     Direct port of ``TelegramBotApi.user_interaction`` — same queueing,
     priority, and preemption semantics — keyed by Spanreed user id.
+
+    A task that already has the user's turn keeps it: entering again joins
+    the interaction it is in, with that one's priority and scope. Without
+    this, a command that opens a conversation of its own would wait for
+    the turn that the flow which runs it holds, which is itself.
     """
+    if holds_turn(user_id):
+        yield
+        return
 
     interaction = UserInteraction(user_id, priority, scope=scope)
 

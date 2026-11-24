@@ -22,7 +22,6 @@ from urllib.parse import unquote, urljoin, urlparse
 
 import aiohttp
 
-from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, BlockKind, NoOutput, StepContext
 
 _logger = logging.getLogger(__name__)
@@ -339,8 +338,7 @@ class SendFile(Action[SendFileInput, NoOutput]):
 
     async def run(self, ctx: StepContext, inputs: SendFileInput) -> NoOutput:
         """Send the file."""
-        bot = await UserInteractionApi.for_user(ctx.user)
-        await bot.send_document(inputs.name, as_bytes(inputs.content))
+        await ctx.interaction.send_document(inputs.name, as_bytes(inputs.content))
         return NoOutput()
 
 

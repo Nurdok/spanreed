@@ -123,7 +123,7 @@ def _world() -> Iterator[World]:
         patch("spanreed.apis.withings_blocks._today", new=lambda: TODAY),
         patch("spanreed.apis.obsidian_blocks.ObsidianApi", autospec=True) as obsidian,
         patch("spanreed.workflows.engine.UserInteractionApi", autospec=True) as bot,
-        patch("spanreed.workflows.builtin.UserInteractionApi", new=bot),
+        patch("spanreed.workflows.blocks.UserInteractionApi", new=bot),
         patch("spanreed.workflows.migrations.UserInteractionApi", new=bot),
         patch("spanreed.apis.obsidian_blocks.UserInteractionApi", new=bot),
         # A failed run is tried again without the wait.

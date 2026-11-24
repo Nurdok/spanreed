@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from spanreed.apis.obsidian_blocks import (
+    AppendToNote,
+    AppendToNoteInput,
     CreateDailyNote,
     SetNoteProperties,
     SetNotePropertiesInput,
@@ -57,6 +59,7 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         "obsidian.set-note-properties",
         "obsidian.write-file",
         "obsidian.write-note",
+        "obsidian.append-to-note",
     ]
 
 
@@ -418,3 +421,28 @@ def test_write_file_deletes_for_empty_data_too(mock_obsidian: AsyncMock) -> None
 
     mock_obsidian.write_binary_file.assert_not_called()
     assert output.deleted
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_append_to_note_adds_text_to_the_end_or_under_a_heading(
+    mock_obsidian: AsyncMock,
+) -> None:
+    mock_obsidian.append_to_note = AsyncMock()
+
+    output = asyncio.run(
+        AppendToNote().run(
+            _context(), AppendToNoteInput(path="Books/Dune.md", text="# Dune")
+        )
+    )
+    asyncio.run(
+        AppendToNote().run(
+            _context(),
+            AppendToNoteInput(path="Daily/today.md", text="A line.", heading="Log"),
+        )
+    )
+
+    assert output.path == "Books/Dune.md"
+    assert [call.args for call in mock_obsidian.append_to_note.await_args_list] == [
+        ("Books/Dune.md", "# Dune", None),
+        ("Daily/today.md", "A line.", "Log"),
+    ]

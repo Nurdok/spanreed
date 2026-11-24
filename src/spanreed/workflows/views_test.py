@@ -122,10 +122,12 @@ def test_the_last_event_is_named_by_its_time_and_how_it_starts() -> None:
         # The plain values, not the event itself: an event can be large.
         "last": {"at": kept["at"], "summary": "date 2026-05-09 · weight 80.5"},
         "now": False,
+        "asks": False,
     }
     assert views.detail(engine, workflow_of(), None)["test"] == {
         "last": None,
         "now": False,
+        "asks": False,
     }
 
 

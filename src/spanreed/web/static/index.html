@@ -269,6 +269,11 @@
   .round.side { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   .round.side .side-h { padding: 5px 9px; font-size: 13px; color: var(--muted); }
   .round.side .trace { padding: 8px 9px; border-top: 1px solid var(--line); }
+  /* What a step asked, and the answer, as the two sides of a chat. */
+  .talk { grid-column: 2; display: flex; flex-direction: column; gap: 3px; margin: 4px 0; max-width: 460px; font-size: 13px; }
+  .talk-q, .talk-a { padding: 4px 9px; border-radius: 9px; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .talk-q { align-self: flex-start; background: var(--bubble); border: 1px solid var(--line); }
+  .talk-a { align-self: flex-end; background: var(--mine); }
   @media (max-width: 720px) {
     .lane { flex-direction: column; align-items: stretch; overflow-x: visible; padding-right: 2px;
             -webkit-mask-image: none; mask-image: none; }
@@ -1491,6 +1496,11 @@ function testDraft() {
       redrawEditor();
       $("workflow-main").scrollTo(0, 0);
     };
+    if (offer.asks) {
+      sheet.append(el("div", "", "A workflow that asks you something is not tested here: a test is not a conversation. " +
+                                 "Save it and use Run now."));
+      return;
+    }
     sheet.append(el("div", "foot", "A test runs the steps as they are here, saved or not, once and for real: " +
                                    "what they write is written, and what they send is sent."));
     if (offer.last) {
@@ -1600,11 +1610,28 @@ function traceStep(step, cards, place) {
   row.append(el("span", "num", card ? card.number : place), h);
   traceLines(row, "got", step.inputs);
   if (step.rounds) row.append(traceRounds(step, cards));
+  if (step.conversation) row.append(traceTalk(step.conversation));
   traceLines(row, "gave", step.outputs);
   if (step.inside) row.append(traceSide(step, cards));
   if (step.reason) row.append(el("div", "kv", step.reason));
   if (step.error) row.append(el("div", "kv err", step.error));
   return row;
+}
+
+// What a step asked and said, and what the user answered, in order.
+function traceTalk(lines) {
+  const box = el("div", "talk");
+  for (const line of lines) {
+    if (line.asked !== undefined) {
+      const asked = el("div", "talk-q", line.asked), answer = el("div", "talk-a", line.answer);
+      box.append(asked, answer);
+    } else if (line.said !== undefined) {
+      box.append(el("div", "talk-q", line.said));
+    } else if (line.sent !== undefined) {
+      box.append(el("div", "talk-q", "Sent the file " + line.sent));
+    }
+  }
+  return box;
 }
 
 // The side of a branch that ran, with its steps.

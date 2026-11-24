@@ -902,6 +902,16 @@ async def test_workflow(workflow_id: str) -> Any:
         problems.insert(0, "The trigger of a workflow cannot be changed.")
     if problems:
         return jsonify({"error": "This cannot run.", "problems": problems}), 400
+    if wf_engine.asks(edited):
+        return (
+            jsonify(
+                {
+                    "error": "A workflow that asks you something is not tested "
+                    "here. Save it and use Run now."
+                }
+            ),
+            400,
+        )
     trace = await wf_engine.run_test(edited, g.user, source)
     if trace is None:
         return jsonify({"error": "There is no event to test with."}), 409

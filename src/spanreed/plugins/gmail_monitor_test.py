@@ -111,7 +111,7 @@ def _world() -> Iterator[World]:
         patch.object(Plugin, "is_registered", async_return_true),
         patch("spanreed.apis.gmail_blocks.GmailApi") as gmail_cls,
         patch("spanreed.workflows.engine.UserInteractionApi", autospec=True) as bot,
-        patch("spanreed.workflows.builtin.UserInteractionApi", new=bot),
+        patch("spanreed.workflows.blocks.UserInteractionApi", new=bot),
         patch("spanreed.workflows.migrations.UserInteractionApi", new=bot),
         patch("spanreed.workflows.engine._sleep", new=AsyncMock()),
         patch("spanreed.workflows.blocks._sleep", new=polls.sleep),

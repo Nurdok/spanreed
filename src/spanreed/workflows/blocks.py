@@ -10,7 +10,9 @@ There are two shapes of block:
   Blocks that ask the user something and blocks that hold logic are actions
   too; ``kind`` says which, for the editor. A ``Loop`` is an action that
   holds steps, and runs them once for each of its rounds. A ``Branch``
-  holds two lists of steps, and runs one of them.
+  holds two lists of steps, and runs one of them. An action that
+  ``converses`` holds a conversation with the user, through
+  ``StepContext.interaction``.
 - A ``Trigger`` starts runs. It yields one event for each run, and says
   whether, and how, it can be started by hand. A ``PushTrigger`` is a
   trigger that a plugin feeds: the plugin says what changed, and the
@@ -41,8 +43,11 @@ from typing import (
     Literal,
     Protocol,
     TypeVar,
+    cast,
 )
 
+from spanreed.interaction import UserInteractionApi
+from spanreed.interaction.surface import MessageHandle
 from spanreed.user import User
 
 if TYPE_CHECKING:
@@ -83,12 +88,18 @@ class ManualError(Exception):
 
 
 class StopRun(Exception):
-    """Raised by a block to end the run at this step without failing it."""
+    """Raised by a block to end the run at this step without failing it.
 
-    def __init__(self, reason: str) -> None:
+    In a loop, that ends the round the step is in, and the loop goes on
+    with the next one. ``whole_run`` ends the loop as well, and the run:
+    the user cancelled, or the run lost its turn to talk.
+    """
+
+    def __init__(self, reason: str, *, whole_run: bool = False) -> None:
         """Create the signal. ``reason`` is shown in the run's trace."""
         super().__init__(reason)
         self.reason = reason
+        self.whole_run = whole_run
 
 
 @dataclass
@@ -151,6 +162,97 @@ class RunInfo:
     manual: bool
 
 
+# How much of one text of a conversation the trace keeps, and how many
+# questions, answers and messages of one step.
+SAID_MAX_TEXT = 500
+SAID_MAX_LINES = 50
+
+
+def _said(text: str) -> str:
+    return text if len(text) <= SAID_MAX_TEXT else text[:SAID_MAX_TEXT] + "…"
+
+
+class Interaction:
+    """What a block that converses talks to the user through.
+
+    It has the methods of ``UserInteractionApi`` that a conversation is
+    made of, with the same arguments, so the body of a plugin's
+    conversation moves into a block as it is. What is asked, answered and
+    said is kept as well, for the trace of the step.
+
+    The engine has taken the user's turn to talk before it calls a block
+    that ``converses``. A block must not take it again. A block that only
+    sends something, and asks nothing, needs no turn: it sends through
+    this without setting ``converses``.
+    """
+
+    def __init__(self, user: User) -> None:
+        """Create the way to talk to ``user``."""
+        self._user = user
+        self._lines: list[dict[str, str]] = []
+        self._talked = False
+
+    @property
+    def talked(self) -> bool:
+        """Return whether the user was asked or told anything through this."""
+        return self._talked
+
+    def keep_in(self, lines: list[dict[str, str]]) -> None:
+        """Keep what is asked and said from now on in ``lines``."""
+        self._lines = lines
+
+    def _keep(self, **line: str) -> None:
+        self._talked = True
+        if len(self._lines) < SAID_MAX_LINES:
+            self._lines.append({name: _said(text) for name, text in line.items()})
+
+    async def request_user_choice(
+        self,
+        prompt: str,
+        choices: list[str] | list[str | list[str]],
+        *,
+        columns: int = 1,
+    ) -> int:
+        """Ask the user to pick one of ``choices``. Return its place, from 0.
+
+        A choice that is a list is a row of its own, and its texts count
+        as choices in the order they are read.
+        """
+        bot = await UserInteractionApi.for_user(self._user)
+        choice = await bot.request_user_choice(prompt, choices, columns=columns)
+        texts: list[str] = []
+        for item in choices:
+            texts.extend(item if isinstance(item, list) else [item])
+        answer = texts[choice] if 0 <= choice < len(texts) else str(choice)
+        self._keep(asked=prompt, answer=answer)
+        return choice
+
+    async def request_user_input(self, prompt: str) -> str:
+        """Ask the user for a text, and return it."""
+        bot = await UserInteractionApi.for_user(self._user)
+        answer = await bot.request_user_input(prompt)
+        self._keep(asked=prompt, answer=answer)
+        return answer
+
+    async def send_message(
+        self, text: str, *, parse_html: bool = True, parse_markdown: bool = False
+    ) -> MessageHandle:
+        """Send the user a message, on the surfaces of the conversation."""
+        bot = await UserInteractionApi.for_user(self._user)
+        handle = await bot.send_message(
+            text, parse_html=parse_html, parse_markdown=parse_markdown
+        )
+        self._keep(said=text)
+        return handle
+
+    async def send_document(self, file_name: str, data: bytes) -> MessageHandle:
+        """Send the user a file, on the surfaces of the conversation."""
+        bot = await UserInteractionApi.for_user(self._user)
+        handle = await bot.send_document(file_name, data)
+        self._keep(sent=file_name)
+        return handle
+
+
 @dataclass(frozen=True)
 class StepContext:
     """What the engine hands to an action besides its inputs."""
@@ -158,6 +260,13 @@ class StepContext:
     user: User
     workflow_id: str
     run: RunInfo
+    # For a block that ``converses``. One for the whole run.
+    interaction: Interaction = dataclasses.field(default=cast(Interaction, None))
+
+    def __post_init__(self) -> None:
+        """Make the way to talk to the user, if none was given."""
+        if self.interaction is None:
+            object.__setattr__(self, "interaction", Interaction(self.user))
 
 
 class TriggerState(Protocol):
@@ -242,11 +351,20 @@ class Action(Block, Generic[InT, OutT]):
 
     Raise ``StopRun`` to end the run here without failing it. Any other
     exception fails the run.
+
+    A block that asks the user something sets ``converses``, and talks
+    through ``ctx.interaction``. Before the engine calls such a block, the
+    run takes the user's turn to talk, and it keeps the turn until it
+    ends. Two inputs say how, if the block has them (see
+    ``spanreed.workflows.asking`` for their types): ``priority``, how the
+    run waits for the turn, and ``give_up_after``, for how many minutes
+    the step waits for the user.
     """
 
     kind = BlockKind.ACTION
     Input: ClassVar[type[Any]]
     Output: ClassVar[type[Any]]
+    converses: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Take ``Input`` and ``Output`` from the type arguments."""

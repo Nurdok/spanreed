@@ -10,6 +10,7 @@ from spanreed.plugin import Plugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.hevy import HevyPlugin
+from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
@@ -40,6 +41,7 @@ def _real_registry() -> BlockRegistry:
             HealthConnectPlugin(),
             WithingsPlugin(),
             HevyPlugin(),
+            LitNotesPlugin(),
         ]
     )
 
@@ -115,7 +117,7 @@ def _run_no_overdue(mock_bot: AsyncMock, tasks: list[Any]) -> tuple[Any, list[An
     with fake_storage(), patch(
         "spanreed.apis.todoist_blocks.Todoist", autospec=True
     ) as mock_todoist, patch.object(Plugin, "is_registered", async_return_true), patch(
-        "spanreed.workflows.builtin.UserInteractionApi", new=mock_bot
+        "spanreed.workflows.blocks.UserInteractionApi", new=mock_bot
     ), patch(
         # The schedule waits for its interval instead of running too.
         "spanreed.workflows.store.StoredTriggerState.get",
@@ -137,7 +139,7 @@ def test_no_overdue_moves_the_overdue_tasks_and_says_so(mock_bot: AsyncMock) -> 
     assert [c.args[0] for c in todoist.set_due_date_to_today.await_args_list] == tasks
     assert run["status"] == "finished"
     mock_bot.send_message.assert_any_await(
-        "Updated 2 overdue tasks to today.", parse_html=False
+        "Updated 2 overdue tasks to today.", parse_html=False, parse_markdown=False
     )
 
 
@@ -148,7 +150,7 @@ def test_no_overdue_is_silent_when_nothing_is_overdue(mock_bot: AsyncMock) -> No
     todoist.set_due_date_to_today.assert_not_awaited()
     assert run["status"] == "stopped"
     assert [step["id"] for step in run["steps"]] == ["find", "any"]
-    # Only the line that every run by hand ends with.
+    # Only the line that a run by hand ends with if it said nothing.
     mock_bot.send_message.assert_awaited_once_with(
         "Daily chores never overdue: done. The run ended at step 2, Only continue if.",
         parse_html=False,

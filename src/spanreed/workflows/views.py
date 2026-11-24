@@ -313,6 +313,8 @@ def detail(
                 else None
             ),
             "now": bool(test_events and test_events["now"]),
+            # A workflow that asks the user something is not tested.
+            "asks": engine.asks(workflow),
         },
         "by_hand": by_hand,
         # The command exists only for a workflow that can be started by

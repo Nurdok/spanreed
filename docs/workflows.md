@@ -139,9 +139,14 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | Block | Kind | Published by |
 | --- | --- | --- |
 | `core.schedule` On a schedule | trigger | Workflows |
+| `core.command` When I run its command | trigger | Workflows |
 | `core.continue-if` Only continue if | logic | Workflows |
 | `core.if` If | logic | Workflows |
 | `core.for-each` For each | logic | Workflows |
+| `core.stop` End the run | logic | Workflows |
+| `core.ask-choice` Ask me to choose | ask | Workflows |
+| `core.ask-text` Ask me for text | ask | Workflows |
+| `core.ask-list` Ask me for a list | ask | Workflows |
 | `core.send-message` Send message | ask | Workflows |
 | `core.send-file` Send file | ask | Workflows |
 | `core.download-file` Download a file | action | Workflows |
@@ -151,6 +156,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `obsidian.set-note-properties` Set note properties | action | Obsidian |
 | `obsidian.write-file` Write file | action | Obsidian |
 | `obsidian.write-note` Write note | action | Obsidian |
+| `obsidian.append-to-note` Append to note | action | Obsidian |
 | `health-connect.day-changed` A day's data changed | trigger | Health Connect |
 | `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
 | `withings.new-measurements` New measurements for a day | trigger | Withings |
@@ -158,8 +164,97 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `gmail.new-email` New email | trigger | Gmail Monitor |
 | `gmail.get-attachments` Get attachments | action | Gmail Monitor |
 | `gmail.find-links` Find links | action | Gmail Monitor |
+| `lit-notes.search-books` Search books | action | Lit Notes |
 
 More arrive with each plugin whose behavior becomes a recipe.
+
+### Asking
+
+Three blocks ask the user something. Each has the same two inputs at its end,
+**Priority** and **Give up after** (see [The turn to talk](#the-turn-to-talk)).
+
+| Block | Asks | Gives |
+| --- | --- | --- |
+| Ask me to choose | A question with one button for each option | `chosen`, `answer` (the text), `item` (the option as it was given), `index` (from 1) |
+| Ask me for text | A question that is answered in writing | `answer`, `answered` |
+| Ask me for a list | "Add one?" and then the question, until the answer is No | `answers`, `count` |
+
+- **The options of "Ask me to choose"** are texts, or things that have a text
+  to show, such as the books of a search. For those the text is their
+  `label`, `title` or `name`, or what **Show** names, and `item` is the whole
+  thing that was chosen: `{{ book.item.title }}`.
+- **A long list** is shown some **at a time**, with "Show more" while there is
+  more.
+- **One option** can be asked about with a question of its own (**If one**),
+  with Yes and No.
+- **Choosing nothing** does not end the run. `chosen` is false for Cancel, for
+  No, and when there was nothing to choose from. An "If" after the step
+  decides what happens then.
+- **"Ask me for text" can ask first** whether there is anything to write
+  (**Ask first**). On No, the answer is empty.
+
+"End the run" ends the run where it is, without failing it. Inside a loop it
+ends the loop too, where "Only continue if" ends only the round it is in.
+
+"When I run its command" is the trigger of a workflow that is only a command:
+it starts no run by itself.
+
+### The turn to talk
+
+Spanreed talks to a user about one thing at a time: a plugin takes the
+user's turn to talk around a conversation, and others wait for it
+(`UserInteractionApi.user_interaction`). A run does the same.
+
+- **A run takes the turn at its first step that asks**, and keeps it until
+  the run ends. Its questions are one conversation, and nothing else asks in
+  between. The steps before the first question run without the turn.
+- **A run started by hand has the turn already.** The flow of its command
+  took it, so the questions come up where the command was started.
+- **Priority** says how a run in the background waits for the turn. `normal`
+  waits behind a conversation that is open, and gives way to a command that
+  the user starts. `low` also gives way to any other conversation that
+  starts. Only the first question's priority counts: the run has the turn
+  after it.
+- **A run that gives way ends there**, without failing: `stopped at step 3,
+  Ask me to choose. Another conversation took over.` It is not tried again.
+  Its trigger goes on with the next event.
+- **Give up after** is how many minutes a step waits for the user. After
+  that the run ends, without failing. 0 waits for as long as it takes, and
+  the workflow runs for nothing else in that time.
+- **A run that waits for the turn lets a run by hand of the same workflow go
+  first.** The run by hand has the turn, and would wait for the workflow in
+  return.
+- **A run by hand that spoke is not summed up.** If the one run of a command
+  asked or told the user something and did not fail, nothing is added to
+  that. See [Commands](#commands).
+- **A workflow that asks is not tested** by the editor: a test is not a
+  conversation. Use **Run now**.
+
+The history keeps, with each step that asked, what was asked and what the
+answer was.
+
+A block that asks sets `converses` and talks through `ctx.interaction`. That
+has the methods of `UserInteractionApi` that a conversation is made of
+(`request_user_choice`, `request_user_input`, `send_message`,
+`send_document`), so the body of a plugin's conversation moves into a block
+as it is. The engine takes the turn before it calls the block. The block does
+not take it:
+
+```python
+class ProcessScan(Action[ProcessScanInput, ProcessScanOutput]):
+    id = "timekiller.process-scan"
+    title = "Process a scan"
+    converses = True
+
+    async def run(self, ctx: StepContext, inputs: ProcessScanInput) -> ProcessScanOutput:
+        bot = ctx.interaction
+        choice = await bot.request_user_choice("Keep this scan?", ["Yes", "No"])
+        ...
+```
+
+Give the inputs a `priority` and a `give_up_after` with `priority_field()`
+and `give_up_field()` of `spanreed.workflows.asking`, and the card has the
+two inputs that the built-in blocks have.
 
 ### Files
 
@@ -418,12 +513,19 @@ surface, for the user who owns it. The command:
   "Daily chores never overdue" ships hidden;
 - goes away while the workflow is off.
 
-A run started by hand happens inside the command's flow, so its messages stay
-on the surface it was started from. It is not tried again if it fails, and it
-ends with one line that says how it went: `Daily chores never overdue: done.
-The run ended at step 2, Only continue if.` Several runs are counted: `3 runs.
-1 finished, 2 ended early, 0 failed.` A run that a block ended on purpose did
-what it was asked to, so the line does not call it stopped.
+A run started by hand happens inside the command's flow, so its messages and
+its questions stay on the surface it was started from. It is not tried again
+if it fails, and it ends with one line that says how it went: `Daily chores
+never overdue: done. The run ended at step 2, Only continue if.` Several runs
+are counted: `3 runs. 1 finished, 2 ended early, 0 failed.` A run that a block
+ended on purpose did what it was asked to, so the line does not call it
+stopped. There is no such line after one run that asked or told the user
+something and did not fail: "Updated 2 overdue tasks to today." needs no
+"finished." after it.
+
+A command that opens a conversation of its own, as plugins do with `async with
+bot.user_interaction()`, used to wait for the turn that its own flow held. A
+task that has the turn now enters again without waiting.
 
 `spanreed.interaction.commands` can now register a command for one user, and
 surfaces check a command with `get_command_for_user` before they run it.
@@ -447,8 +549,11 @@ surfaces check a command with `get_command_for_user` before they run it.
   ended. A step's inputs and outputs are kept only in the run's trace.
 - **Turning a workflow on or off takes effect at once.**
 
-Not there yet: blocks that ask the user a question. A question a run is
-waiting on would not survive a restart.
+- **A run that asks holds the user's turn to talk** from its first question
+  to its end. See [The turn to talk](#the-turn-to-talk).
+
+Not there yet: a question that survives a restart. A run that waits for an
+answer when Spanreed stops is gone, and so is the question.
 
 ## Editing
 
@@ -513,6 +618,8 @@ it, without storing it, and returns the trace.
 - **The kept event reads like the original** in templates: `{{ trigger.date
   }}`, `{{ each.item.reps }}`. A block gets plain values from it, not the
   objects the trigger made.
+- **A workflow that asks the user something is not tested.** The route
+  answers 400 and the page says so. Run it by hand.
 
 ### What a step writes
 
@@ -577,6 +684,7 @@ behavior: the setup tells them which recipes to add.
 | Withings | Holds the login, and publishes the trigger that asks Withings | Withings → daily note |
 | Hevy | Holds the API key, and publishes the trigger that asks Hevy | Hevy workouts → set notes |
 | Gmail Monitor | Holds the Gmail login, and publishes the Gmail blocks | None: a workflow for each rule the user had |
+| Lit Notes | Publishes the search of Google Books | Add book note |
 
 #### Health Connect
 
@@ -737,3 +845,49 @@ What differs from the plugin:
 - **Mail is asked for by the second**, not by date (see Gmail above).
 - **A rule that the plugin could not run** (a pattern that is no regular
   expression) becomes a workflow that is off and says what is wrong.
+
+#### Lit Notes
+
+Lit Notes had one command, "Add book note": a conversation that ends with a
+note for a book. It is the recipe "Add book note" now, and the plugin
+publishes the search.
+
+![Add book note as a workflow](images/web-ui-workflow-ask-desktop.png)
+
+![Running it](images/web-ui-workflow-ask-run-desktop.png)
+
+Where the parts of the plugin went:
+
+| Was | Is now |
+| --- | --- |
+| The command Add book note | The command of the workflow, with the same name |
+| The folder of the notes | The start of **Path** on "Append to note" |
+| The template of the title | The rest of **Path**, before `.md` |
+| The template of the note | **Text** on "Append to note" |
+| The vault name | Gone. It was for a link that made the note when there was no vault plugin |
+
+- **A template keeps the names it used.** The plugin gave a template `book`,
+  `recommended_by` and `free_text`. In the workflow these are values of the
+  steps that asked: `book.item`, `recommended_by.answers`,
+  `free_text.answer`. A converted template starts with three `{% set %}`
+  that give them their old names, and goes on as the user wrote it. The
+  recipe as it ships uses the new names.
+- **A name that is not there fails the step.** The plugin left out what a
+  template named that a book does not have. Templates of workflows do not.
+  The conversion tries the user's templates on a made-up book, and tells the
+  user if one would fail. A template that names something no step gives
+  (`{{ today }}`) keeps the workflow from running at all: it is stored as it
+  is, says why on its page, and has no command until the template is changed.
+- **A title with a dot keeps all of it.** The plugin cut the name of the note
+  at the last dot of the title: "Mr. Fox" became `Mr.md`.
+- **"Show more" is offered while there is more.** The plugin offered it under
+  the last books too, and then showed none.
+- **A line of authors has its spaces.** "Terry Pratchett and Neil Gaiman",
+  where the plugin wrote "Terry Pratchettand Neil Gaiman".
+- **If Obsidian does not answer, the run fails** at "Append to note" and says
+  so. The answers are in the history of the run. The plugin sent a link that
+  made the note.
+
+`spanreed/plugins/litnotes_test_data.py` holds six conversations and what the
+plugin asked, said and wrote in each, taken by running it before it was
+removed. The tests run the workflow on the same answers and compare.

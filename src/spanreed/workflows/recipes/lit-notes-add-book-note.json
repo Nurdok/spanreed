@@ -1,0 +1,99 @@
+{
+  "id": "lit-notes-add-book-note",
+  "name": "Add book note",
+  "description": "Asks which book, finds it on Google Books, and writes a note for it.",
+  "requires": ["lit-notes", "obsidian"],
+  "command_name": "Add book note",
+  "trigger": {
+    "block": "core.command",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "query",
+      "block": "core.ask-text",
+      "inputs": {"question": "Which book do you want to add a note for?"}
+    },
+    {
+      "id": "search",
+      "block": "lit-notes.search-books",
+      "inputs": {"query": "{{ query.answer }}"}
+    },
+    {
+      "id": "none_found",
+      "block": "core.if",
+      "inputs": {"condition": "{{ search.count == 0 }}"},
+      "steps": [
+        {
+          "id": "say_none",
+          "block": "core.send-message",
+          "inputs": {"message": "No books found. This incident will be reported."}
+        },
+        {
+          "id": "end_none",
+          "block": "core.stop",
+          "inputs": {"reason": "No books were found."}
+        }
+      ]
+    },
+    {
+      "id": "book",
+      "block": "core.ask-choice",
+      "inputs": {
+        "question": "Found multiple books. Which one did you mean?",
+        "options": "{{ search.books }}",
+        "at_a_time": 5,
+        "if_one": "Found one book: {{ search.books[0].label }}.\nIs this the one you meant?"
+      }
+    },
+    {
+      "id": "not_chosen",
+      "block": "core.if",
+      "inputs": {"condition": "{{ not book.chosen }}"},
+      "steps": [
+        {
+          "id": "say_sorry",
+          "block": "core.send-message",
+          "inputs": {
+            "message": "Sorry I couldn't find the book you were looking for. {{ 'I will forever live in shame for my failure today.' if search.count == 1 else 'I have brought shame upon my family.' }}"
+          }
+        },
+        {
+          "id": "end_sorry",
+          "block": "core.stop",
+          "inputs": {"reason": "No book was chosen."}
+        }
+      ]
+    },
+    {
+      "id": "recommended_by",
+      "block": "core.ask-list",
+      "inputs": {
+        "add_question": "Add \"Recommended by\"?",
+        "question": "Who recommended it?",
+        "add_another_question": "Add another \"Recommended by\"?"
+      }
+    },
+    {
+      "id": "free_text",
+      "block": "core.ask-text",
+      "inputs": {
+        "question": "Enter free text:",
+        "ask_first": "Any free text to add to the note?"
+      }
+    },
+    {
+      "id": "note",
+      "block": "obsidian.append-to-note",
+      "inputs": {
+        "path": "Books/{{ book.item.short_title }}.md",
+        "text": "# {{ book.item.title }}\n\nauthor:: {{ book.item.formatted_authors }}\nyear:: {{ book.item.publication_year }}\n{% for person in recommended_by.answers %}recommended_by:: [[{{ person }}]]\n{% endfor %}\n{{ free_text.answer }}\n"
+      }
+    },
+    {
+      "id": "done",
+      "block": "core.send-message",
+      "inputs": {"message": "Note created in Obsidian!"}
+    }
+  ]
+}
