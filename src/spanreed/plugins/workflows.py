@@ -195,7 +195,7 @@ class WorkflowsPlugin(Plugin):
             return
         recipe = recipes[choice]
 
-        missing = await self._missing_plugins(user, recipe)
+        missing = await self.missing_plugins(user, recipe)
         if missing:
             await bot.send_message(
                 f"“{recipe.name}” needs {' and '.join(missing)} first. "
@@ -210,7 +210,7 @@ class WorkflowsPlugin(Plugin):
         )
 
     @staticmethod
-    async def _missing_plugins(user: User, recipe: Recipe) -> list[str]:
+    async def missing_plugins(user: User, recipe: Recipe) -> list[str]:
         """Return the names of the plugins a recipe needs and the user lacks."""
         missing = []
         for plugin in await Plugin.get_all_plugins():

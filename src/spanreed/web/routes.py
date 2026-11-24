@@ -36,8 +36,10 @@ from spanreed.user import User
 from spanreed.web import auth, google_auth, push
 from spanreed.workflows import editing as workflow_editing
 from spanreed.workflows import views as workflow_views
+from spanreed.workflows.blocks import Trigger as WorkflowTrigger
 from spanreed.workflows.engine import WorkflowEngine
-from spanreed.workflows.model import Workflow
+from spanreed.workflows.model import TriggerSpec, Workflow, new_workflow_id
+from spanreed.workflows.recipes import all_recipes
 
 _logger = logging.getLogger(__name__)
 
@@ -691,6 +693,133 @@ async def workflows() -> Any:
     return _no_store(jsonify({"workflows": shown}))
 
 
+@blueprint.get("/api/workflows/catalog")
+@api_auth
+async def workflow_catalog() -> Any:
+    """Return what a workflow can be made of: the blocks and the recipes.
+
+    A block of a plugin that the user is not registered to is listed too,
+    and says so: the page shows how to get it. A recipe says which plugins
+    the user still lacks for it, and whether the user has it already.
+    """
+    user: User = g.user
+    wf_engine = await _workflow_engine()
+    if wf_engine is None:
+        return jsonify({"error": "Workflows are not running yet."}), 503
+    registered: dict[str, bool] = {}
+    names: dict[str, str] = {}
+    blocks = []
+    for block in wf_engine.registry.all():
+        plugin = wf_engine.registry.plugin_of(block.id)
+        name = plugin.canonical_name()
+        if name not in registered:
+            registered[name] = await plugin.is_registered(user)
+            names[name] = plugin.name()
+        blocks.append(workflow_views.block_entry(wf_engine, block, registered[name]))
+    for plugin in await Plugin.get_all_plugins():
+        name = plugin.canonical_name()
+        if name not in registered:
+            registered[name] = await plugin.is_registered(user)
+            names[name] = plugin.name()
+    installed = {w.recipe for w in await wf_engine.store.list_for_user(user.id)}
+    recipes = [
+        {
+            "id": recipe.id,
+            "name": recipe.name,
+            "description": recipe.description,
+            "missing": [
+                names.get(name, name)
+                for name in recipe.requires
+                if not registered.get(name, False)
+            ],
+            "installed": recipe.id in installed,
+        }
+        for recipe in all_recipes().values()
+    ]
+    return _no_store(jsonify({"blocks": blocks, "recipes": recipes}))
+
+
+@blueprint.post("/api/workflows")
+@api_auth
+async def create_workflow() -> Any:
+    """Give the user a new workflow: from a recipe, or with only a trigger.
+
+    A workflow from a recipe is on, as when it is added in chat. One that
+    starts with only a trigger is off: it has no steps yet, and its
+    trigger must not start to count things as done.
+    """
+    user: User = g.user
+    wf_engine = await _workflow_engine()
+    if wf_engine is None:
+        return jsonify({"error": "Workflows are not running yet."}), 503
+    body = await request.get_json(silent=True) or {}
+    recipe_id, trigger_id = body.get("recipe"), body.get("trigger")
+
+    if isinstance(recipe_id, str):
+        recipe = all_recipes().get(recipe_id)
+        if recipe is None:
+            return jsonify({"error": "There is no such recipe."}), 404
+        missing = await WorkflowsPlugin.missing_plugins(user, recipe)
+        if missing:
+            needed = " and ".join(missing)
+            return (
+                jsonify(
+                    {
+                        "error": f"“{recipe.name}” needs {needed} first. "
+                        "Register with “Manage plugins”."
+                    }
+                ),
+                409,
+            )
+        workflow = await wf_engine.install(user, recipe)
+    elif isinstance(trigger_id, str):
+        trigger = wf_engine.registry.get(trigger_id)
+        if not isinstance(trigger, WorkflowTrigger):
+            return jsonify({"error": "There is no such trigger."}), 404
+        plugin = wf_engine.registry.plugin_of(trigger_id)
+        if not await plugin.is_registered(user):
+            return (
+                jsonify(
+                    {
+                        "error": f"{plugin.name()} is not set up. Register "
+                        "with “Manage plugins”."
+                    }
+                ),
+                409,
+            )
+        workflow = Workflow(
+            id=new_workflow_id(),
+            user_id=user.id,
+            name="New workflow",
+            trigger=TriggerSpec(block=trigger_id),
+            steps=[],
+            enabled=False,
+        )
+        problems = wf_engine.problems(workflow)
+        if problems:
+            # A trigger whose parameters have no defaults cannot start empty.
+            return jsonify({"error": problems[0]}), 400
+        await wf_engine.save(workflow)
+    else:
+        return jsonify({"error": "Name a recipe or a trigger."}), 400
+
+    _logger.info(f"User {user.id} added workflow {workflow.id}")
+    return jsonify(await _workflow_detail(wf_engine, workflow)), 201
+
+
+@blueprint.delete("/api/workflows/<workflow_id>")
+@api_auth
+async def delete_workflow(workflow_id: str) -> Any:
+    """Delete a workflow with its history."""
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    await wf_engine.delete(workflow)
+    _logger.info(f"User {workflow.user_id} deleted workflow {workflow.id}")
+    return jsonify({"deleted": workflow.id})
+
+
 @blueprint.get("/api/workflows/<workflow_id>")
 @api_auth
 async def workflow_detail(workflow_id: str) -> Any:
@@ -719,6 +848,13 @@ async def save_workflow(workflow_id: str) -> Any:
     except workflow_editing.FormError as e:
         return jsonify({"error": "This cannot be saved.", "problems": e.problems}), 400
     problems = wf_engine.problems(edited)
+    if edited.trigger.block != workflow.trigger.block:
+        # What the old trigger remembers would not fit the new one.
+        problems.insert(
+            0,
+            "The trigger of a workflow cannot be changed. Make a new workflow "
+            "with the other trigger.",
+        )
     if problems:
         return jsonify({"error": "This cannot be saved.", "problems": problems}), 400
     await wf_engine.save(edited)

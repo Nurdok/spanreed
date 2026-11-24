@@ -9,6 +9,7 @@ loop also has the cards of the steps inside it.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import typing
 from typing import Any
 
@@ -53,9 +54,11 @@ def _field(name: str, label: str, value: Any) -> dict[str, Any]:
 def _fields(cls: type[Any], stored: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the values of a block's inputs, in the order of its fields.
 
-    A field that is not stored shows its default. A stored value that the
-    block has no field for is shown last, as it is. Each field of the block
-    also says how the editor edits it (see ``spanreed.workflows.editing``).
+    A field that is not stored shows its default, or nothing if it has
+    none: the editor has to show an input that still needs a value. A
+    stored value that the block has no field for is shown last, as it is.
+    Each field of the block also says how the editor edits it (see
+    ``spanreed.workflows.editing``).
     """
     labels = {f["name"]: f["label"] for f in config_form.form_schema(cls)["fields"]}
     edits = editing.fields(cls, stored)
@@ -68,7 +71,7 @@ def _fields(cls: type[Any], stored: dict[str, Any]) -> list[dict[str, Any]]:
         elif field.default_factory is not dataclasses.MISSING:
             value = field.default_factory()
         else:
-            continue
+            value = None
         shown.append(_field(field.name, labels.get(field.name, field.name), value))
         if field.name in edits:
             shown[-1]["edit"] = edits[field.name]
@@ -166,6 +169,39 @@ def _flat(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         flat.append(card)
         flat.extend(_flat(card.get("steps", [])))
     return flat
+
+
+def _description(block: Block) -> str:
+    """Return what a block does, in a sentence: the start of its docstring."""
+    doc = inspect.getdoc(type(block)) or ""
+    return " ".join(doc.split("\n\n")[0].split())
+
+
+def block_entry(
+    engine: WorkflowEngine, block: Block, connected: bool
+) -> dict[str, Any]:
+    """Return what the editor's list of blocks shows of one block.
+
+    ``connected`` says whether the user is registered to the block's
+    plugin. ``card`` is the card of a new step of the block, with every
+    input at its default.
+    """
+    expected: type[Block] = Trigger if isinstance(block, Trigger) else Action
+    card = _card(engine, block.id, {}, "", expected)
+    card["steps"] = []
+    if isinstance(block, Loop):
+        card["inside_title"] = block.inside_title
+    return {
+        "block": block.id,
+        "title": block.title,
+        "app": card["app"],
+        "kind": block.kind.value,
+        "description": _description(block),
+        "connected": connected,
+        # A trigger that cannot be started by hand gives no command.
+        "by_hand": isinstance(block, Trigger) and block.Manual is not None,
+        "card": card,
+    }
 
 
 def run_view(trace: dict[str, Any]) -> dict[str, Any]:
