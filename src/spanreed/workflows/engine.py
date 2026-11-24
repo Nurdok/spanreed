@@ -261,6 +261,9 @@ class _Caller:
             self._interaction.note_talk()
         if trace["status"] == FAILED:
             raise RuntimeError(f"“{workflow.name}” {outcome(trace)}")
+        if trace.get("conversation_over"):
+            # The conversation that both runs were in is gone.
+            raise StopRun(trace["steps"][-1]["reason"], conversation_over=True)
         return Called(
             name=workflow.name, status=trace["status"], outcome=outcome(trace)
         )
@@ -621,7 +624,10 @@ class WorkflowEngine:
                     trace["status"] = CANCELLED
                     raise
                 trace["status"] = STOPPED
+                trace["conversation_over"] = True
             finally:
+                if trace["steps"] and trace["steps"][-1].get("conversation_over"):
+                    trace["conversation_over"] = True
                 trace["finished_at"] = _now()
                 if ctx.interaction.talked:
                     trace["talked"] = True
@@ -725,6 +731,8 @@ class WorkflowEngine:
             entry["reason"] = stop.reason
             if stop.whole_run:
                 entry["ends_run"] = True
+            if stop.conversation_over:
+                entry["conversation_over"] = True
         except asyncio.CancelledError:
             if not await self._turns[ctx.run.id].lost():
                 raise
@@ -734,6 +742,7 @@ class WorkflowEngine:
             entry["status"] = STOPPED
             entry["reason"] = TOOK_OVER
             entry["ends_run"] = True
+            entry["conversation_over"] = True
         except _InsideFailed as failed:
             # The step inside wrote the failure to the log already.
             entry["status"] = FAILED
@@ -843,7 +852,9 @@ class WorkflowEngine:
             entry["rounds"].append(kept)
         if ends_run:
             raise StopRun(
-                steps[-1].get("reason") or "A step ended the run.", whole_run=True
+                steps[-1].get("reason") or "A step ended the run.",
+                whole_run=True,
+                conversation_over=bool(steps[-1].get("conversation_over")),
             )
         if status == FAILED:
             failed = steps[-1]
@@ -885,6 +896,7 @@ class WorkflowEngine:
             raise StopRun(
                 last.get("reason") or "A step ended the run.",
                 whole_run=bool(last.get("ends_run")),
+                conversation_over=bool(last.get("conversation_over")),
             )
 
     def _speaks(

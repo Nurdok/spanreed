@@ -95,13 +95,25 @@ class StopRun(Exception):
     In a loop, that ends the round the step is in, and the loop goes on
     with the next one. ``whole_run`` ends the loop as well, and the run:
     the user cancelled, or the run lost its turn to talk.
+
+    ``conversation_over`` says that the run ended because its conversation
+    did: another one took the turn, or the user did not answer. Such an
+    end goes further than the run: a workflow that had this one run ends
+    too, since it was in the same conversation.
     """
 
-    def __init__(self, reason: str, *, whole_run: bool = False) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        whole_run: bool = False,
+        conversation_over: bool = False,
+    ) -> None:
         """Create the signal. ``reason`` is shown in the run's trace."""
         super().__init__(reason)
         self.reason = reason
-        self.whole_run = whole_run
+        self.whole_run = whole_run or conversation_over
+        self.conversation_over = conversation_over
 
 
 @dataclass
@@ -244,7 +256,7 @@ class Interaction:
             if not limit.expired():
                 # Not the wait for the user: something else timed out.
                 raise
-            raise StopRun(self._gave_up, whole_run=True) from None
+            raise StopRun(self._gave_up, conversation_over=True) from None
 
     def _keep(self, **line: str) -> None:
         self._talked = True
@@ -356,7 +368,9 @@ class Called:
 
     # The name of the workflow that ran.
     name: str
-    # ``finished``, or ``stopped`` if one of its steps ended it early.
+    # ``finished``, or ``stopped`` if one of its steps ended it early. A
+    # run whose conversation ended does not come back as this: ``run``
+    # raises ``StopRun`` for it, so that the step's run ends too.
     status: str
     # The same as the end of a sentence: "stopped at step 2, Only continue if."
     outcome: str

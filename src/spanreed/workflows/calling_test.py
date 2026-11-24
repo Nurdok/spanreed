@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 from spanreed.interaction import commands
 from spanreed.interaction import engine as turns
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
-from spanreed.workflows.asking import AskText
+from spanreed.workflows.asking import AskText, Stop
 from spanreed.workflows.blocks import BlockRegistry, NoParams, NoQuestion
 from spanreed.workflows.builtin import SendMessage
 from spanreed.workflows.calling import (
@@ -277,6 +277,88 @@ def test_a_part_asks_in_the_conversation_of_the_run_that_runs_it(
 
     assert record.texts == ["Dune", "after"]
     assert said == []
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+@patch_user_interaction("spanreed.workflows.blocks")
+def test_a_part_whose_conversation_ends_ends_the_run_that_ran_it(
+    bot: AsyncMock, _: AsyncMock
+) -> None:
+    """What comes after the part would act on a conversation that never was."""
+    record = Record()
+    part = _part(
+        "Ask",
+        Step(id="book", block="core.ask-text", inputs={"question": "Which book?"}),
+    )
+    main = workflow_of(
+        _call("Ask"), _say("after", "asked"), events=["a", "b"], name="Main"
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        unanswered: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        asked = asyncio.Event()
+
+        async def first_waits(prompt: str) -> str:
+            if not asked.is_set():
+                asked.set()
+                return await unanswered
+            return "Dune"
+
+        bot.request_user_input.side_effect = first_waits
+        engine = _engine(record)
+        await engine.save(part)
+        await engine.save(main)
+        async with asyncio.timeout(3):
+            await asked.wait()
+            # Another conversation takes the turn from the part.
+            async with turns.user_interaction(
+                USER_ID, priority=turns.UserInteractionPriority.HIGH
+            ):
+                pass
+            await drain(engine, main)
+        runs = await _runs(engine, main)
+        await engine.stop()
+        return runs
+
+    with fake_storage(), _sleeps() as sleep:
+        lost, answered = asyncio.run(scenario())
+
+    assert lost["status"] == "stopped"
+    assert lost["steps"][0]["reason"] == "Another conversation took over."
+    assert lost["conversation_over"] is True
+    # The next event runs as usual, and gets past the part.
+    assert answered["status"] == "finished"
+    assert record.texts == ["asked"]
+    sleep.assert_not_awaited()
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_part_that_ends_its_own_run_does_not_end_the_run_that_ran_it(
+    _: AsyncMock,
+) -> None:
+    record = Record()
+    part = _part(
+        "Nothing to do",
+        Step(id="end", block="core.stop", inputs={"reason": "Done already."}),
+        _say("never", "never"),
+    )
+    main = workflow_of(
+        _call("Nothing to do"), _say("after", "{{ call.status }}"), name="Main"
+    )
+
+    async def scenario() -> None:
+        engine = WorkflowEngine(
+            registry_of(record, WhenCalled(), CallWorkflow(), Stop())
+        )
+        await engine.save(part)
+        await engine.save(main)
+        await engine.run_by_hand(main.id, mock_user_find_by_id(USER_ID))
+        await engine.stop()
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+    assert record.texts == ["stopped"]
 
 
 # -- one of several ----------------------------------------------------------
