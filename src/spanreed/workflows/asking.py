@@ -28,6 +28,7 @@ from typing import Any, Literal
 from spanreed.config_form import HELP_KEY
 from spanreed.workflows.blocks import (
     Action,
+    AskLoop,
     Block,
     BlockKind,
     NoOutput,
@@ -364,6 +365,113 @@ class AskChoice(Action[AskChoiceInput, AskChoiceOutput]):
             return AskChoiceOutput(chosen=False)
 
 
+@dataclass
+class AskEachInput:
+    """What ``AskEach`` asks, and among what."""
+
+    question: str
+    # What each button says, and the value that picking it gives.
+    options: dict[str, Any]
+    leave_out: list[Any] = field(
+        default_factory=list,
+        metadata={HELP_KEY: "Values that are not offered: the ones done already"},
+    )
+    done: str = field(
+        default="Cancel", metadata={HELP_KEY: "The choice that ends the asking"}
+    )
+    columns: int = field(
+        default=1, metadata={HELP_KEY: "How many options go side by side"}
+    )
+    priority: Priority = priority_field()
+    give_up_after: int = give_up_field()
+
+    def __post_init__(self) -> None:
+        """Raise ``ValueError`` for what cannot be asked."""
+        if self.columns < 1:
+            raise ValueError("“Columns” is 1 or more.")
+        if not self.done:
+            raise ValueError("“Done” needs a text: it is the way out.")
+
+
+@dataclass
+class AskEachOutput:
+    """One pick, for the steps inside. After the loop, all of them."""
+
+    # What the button said, and the value it gave. After the loop: of the
+    # last pick, or empty if there was none.
+    answer: str = ""
+    value: Any = None
+    # Every value picked so far, in order. After the loop: all of them.
+    picked: list[Any] = field(default_factory=list)
+    count: int = 0
+    # How many options are still on offer.
+    left: int = 0
+
+
+class AskEach(AskLoop[AskEachInput, AskEachOutput]):
+    """Ask the user to pick options, one at a time, until they are done.
+
+    The steps inside run for each pick as it is made, so a pick is acted on
+    even if the user never gets to the end. An option that was picked is
+    not offered again. Nothing is asked when no option is on offer.
+    """
+
+    id = "core.ask-each"
+    title = "Ask me to pick, one at a time"
+    inside_title = "After each pick"
+    round_name = "Pick"
+
+    @staticmethod
+    def _on_offer(
+        inputs: AskEachInput, earlier: list[AskEachOutput]
+    ) -> list[tuple[str, Any]]:
+        gone = [*inputs.leave_out, *(pick.value for pick in earlier)]
+        return [
+            (text, value) for text, value in inputs.options.items() if value not in gone
+        ]
+
+    def anything_to_ask(
+        self, inputs: AskEachInput, earlier: list[AskEachOutput]
+    ) -> bool:
+        """Return whether an option is still on offer."""
+        return bool(self._on_offer(inputs, earlier))
+
+    async def ask(
+        self, ctx: StepContext, inputs: AskEachInput, earlier: list[AskEachOutput]
+    ) -> AskEachOutput | None:
+        """Ask for the next pick. Return it, or ``None`` when the asking is over."""
+        offered = self._on_offer(inputs, earlier)
+        if not offered:
+            return None
+        choices: list[str | list[str]] = [text for text, _ in offered]
+        # The way out gets a row of its own under several columns.
+        choices.append(inputs.done if inputs.columns == 1 else [inputs.done])
+        choice = await ctx.interaction.request_user_choice(
+            inputs.question, choices, columns=inputs.columns
+        )
+        if not 0 <= choice < len(offered):
+            return None
+        text, value = offered[choice]
+        return AskEachOutput(
+            answer=text,
+            value=value,
+            picked=[*(pick.value for pick in earlier), value],
+            count=len(earlier) + 1,
+            left=len(offered) - 1,
+        )
+
+    def after(self, inputs: AskEachInput, rounds: list[AskEachOutput]) -> AskEachOutput:
+        """Return every pick, and how many options were left."""
+        last = rounds[-1] if rounds else AskEachOutput()
+        return AskEachOutput(
+            answer=last.answer,
+            value=last.value,
+            picked=[pick.value for pick in rounds],
+            count=len(rounds),
+            left=len(self._on_offer(inputs, rounds)),
+        )
+
+
 def asking_blocks() -> list[Block]:
     """Return the blocks for asking, with what a workflow that asks needs."""
-    return [Command(), AskChoice(), AskText(), AskList(), Stop()]
+    return [Command(), AskChoice(), AskEach(), AskText(), AskList(), Stop()]

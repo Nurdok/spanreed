@@ -32,7 +32,7 @@ import random
 import secrets
 import sys
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, cast
 
 from telegram.error import RetryAfter
@@ -50,6 +50,7 @@ from spanreed.user import User
 from spanreed.workflows import expressions, model
 from spanreed.workflows.blocks import (
     Action,
+    AskLoop,
     BlockRegistry,
     Branch,
     Interaction,
@@ -598,15 +599,24 @@ class WorkflowEngine:
                 )
             inputs = from_data(block.Input, expressions.render(step.inputs, context))
             entry["inputs"] = to_data(inputs)
-            if isinstance(block, Loop):
-                await self._run_rounds(step, block, inputs, ctx, context, entry)
             said: list[dict[str, str]] = []
-            ctx.interaction.keep_in(said)
             try:
-                if block.converses:
-                    outputs = await self._converse(block, ctx, inputs)
+                if isinstance(block, AskLoop):
+                    outputs = await self._run_asked_rounds(
+                        step, block, inputs, ctx, context, entry, said
+                    )
                 else:
-                    outputs = await self._call(block, ctx, inputs)
+                    if isinstance(block, Loop):
+                        await self._run_rounds(step, block, inputs, ctx, context, entry)
+                    ctx.interaction.keep_in(said)
+
+                    def run() -> Awaitable[Any]:
+                        return block.run(ctx, inputs)
+
+                    if block.converses:
+                        outputs = await self._converse(block, ctx, inputs, run)
+                    else:
+                        outputs = await self._call(block, ctx, run)
             finally:
                 # What a step that only sends has sent is in its inputs.
                 if said and block.converses:
@@ -667,24 +677,88 @@ class WorkflowEngine:
         entry["rounds"] = []
         for number, value in enumerate(values, start=1):
             entry["rounds_run"] = number
-            steps: list[dict[str, Any]] = []
-            status = await self._run_steps(
-                step.steps, ctx, {**context, step.id: value}, steps
+            await self._run_round(
+                step, loop, value, f"{number} of {len(values)}", ctx, context, entry
             )
-            kept = {"number": number, "status": status, "steps": steps}
-            ends_run = status == STOPPED and bool(steps[-1].get("ends_run"))
-            if len(entry["rounds"]) < self.ROUNDS_KEPT or status == FAILED or ends_run:
-                entry["rounds"].append(kept)
-            if ends_run:
-                raise StopRun(
-                    steps[-1].get("reason") or "A step ended the run.", whole_run=True
-                )
-            if status == FAILED:
-                failed = steps[-1]
-                raise _InsideFailed(
-                    f"{loop.round_name} {number} of {len(values)}, {failed['title']}: "
-                    f"{failed['error']}"
-                )
+
+    async def _run_asked_rounds(
+        self,
+        step: Step,
+        loop: AskLoop,
+        inputs: Any,
+        ctx: StepContext,
+        context: dict[str, Any],
+        entry: dict[str, Any],
+        said: list[dict[str, str]],
+    ) -> Any:
+        """Run the steps inside a loop once for each answer the user gives.
+
+        The loop asks for a round, the steps inside run for the answer,
+        and the loop asks again, until it has no more to ask. Each question
+        is a step that asks: the run takes the turn to talk for the first
+        one, and each gets the minutes of ``give_up_after``.
+
+        Add the rounds to the loop's ``entry`` of the trace, keep what the
+        loop asked in ``said``, and return what the steps after it see.
+        """
+        values: list[Any] = []
+        entry["round_name"] = loop.round_name
+        entry["round_count"] = 0
+        entry["rounds_run"] = 0
+        entry["rounds"] = []
+
+        def ask() -> Awaitable[Any]:
+            return loop.ask(ctx, inputs, values)
+
+        while True:
+            if not loop.anything_to_ask(inputs, values):
+                return loop.after(inputs, values)
+            # The steps of the round before kept what they said themselves.
+            ctx.interaction.keep_in(said)
+            value = await self._converse(loop, ctx, inputs, ask)
+            if value is None:
+                return loop.after(inputs, values)
+            values.append(value)
+            # How many there will be is not known: count them as they come.
+            entry["round_count"] = entry["rounds_run"] = len(values)
+            await self._run_round(
+                step, loop, value, str(len(values)), ctx, context, entry
+            )
+
+    async def _run_round(
+        self,
+        step: Step,
+        loop: Loop,
+        value: Any,
+        which: str,
+        ctx: StepContext,
+        context: dict[str, Any],
+        entry: dict[str, Any],
+    ) -> None:
+        """Run the steps inside a loop for one round, and add it to the trace.
+
+        ``which`` names the round in a failure: "3 of 5". Raise ``StopRun``
+        if a step inside ends the whole run, and ``_InsideFailed`` if one
+        fails.
+        """
+        number = entry["rounds_run"]
+        steps: list[dict[str, Any]] = []
+        status = await self._run_steps(
+            step.steps, ctx, {**context, step.id: value}, steps
+        )
+        kept = {"number": number, "status": status, "steps": steps}
+        ends_run = status == STOPPED and bool(steps[-1].get("ends_run"))
+        if len(entry["rounds"]) < self.ROUNDS_KEPT or status == FAILED or ends_run:
+            entry["rounds"].append(kept)
+        if ends_run:
+            raise StopRun(
+                steps[-1].get("reason") or "A step ended the run.", whole_run=True
+            )
+        if status == FAILED:
+            failed = steps[-1]
+            raise _InsideFailed(
+                f"{loop.round_name} {which}, {failed['title']}: {failed['error']}"
+            )
 
     async def _run_side(
         self,
@@ -722,8 +796,14 @@ class WorkflowEngine:
                 whole_run=bool(last.get("ends_run")),
             )
 
-    async def _converse(self, block: Action, ctx: StepContext, inputs: Any) -> Any:
-        """Call a block that asks the user something.
+    async def _converse(
+        self,
+        block: Action,
+        ctx: StepContext,
+        inputs: Any,
+        call: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """Call a block that asks the user something, through ``call``.
 
         Take the user's turn to talk first, unless the run has it. Then
         give the user the minutes of the step's ``give_up_after`` to get
@@ -735,10 +815,10 @@ class WorkflowEngine:
         await self._turns[ctx.run.id].take(priority)
         minutes = getattr(inputs, "give_up_after", 0)
         if not isinstance(minutes, int) or minutes <= 0:
-            return await self._call(block, ctx, inputs)
+            return await self._call(block, ctx, call)
         try:
             async with asyncio.timeout(minutes * self.GIVE_UP_UNIT_S) as limit:
-                return await self._call(block, ctx, inputs)
+                return await self._call(block, ctx, call)
         except TimeoutError:
             if not limit.expired():
                 # The block's own: a service that did not answer.
@@ -749,8 +829,10 @@ class WorkflowEngine:
                 whole_run=True,
             ) from None
 
-    async def _call(self, block: Action, ctx: StepContext, inputs: Any) -> Any:
-        """Call a block. Wait and call it again during flood control.
+    async def _call(
+        self, block: Action, ctx: StepContext, call: Callable[[], Awaitable[Any]]
+    ) -> Any:
+        """Call a block, through ``call``. Wait and call again during flood control.
 
         A run that the user started by hand does not wait: the user is
         there, and is told at once.
@@ -758,7 +840,7 @@ class WorkflowEngine:
         waits = 0
         while True:
             try:
-                return await block.run(ctx, inputs)
+                return await call()
             except (RetryAfter, SurfaceBusyError) as e:
                 if ctx.run.manual or waits >= self.FLOOD_MAX_WAITS:
                     raise

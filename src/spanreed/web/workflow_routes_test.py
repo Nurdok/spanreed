@@ -715,6 +715,7 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
                 "core.send-message",
                 "core.command",
                 "core.ask-choice",
+                "core.ask-each",
                 "core.ask-text",
                 "core.ask-list",
                 "core.stop",

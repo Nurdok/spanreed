@@ -57,6 +57,7 @@ def test_name() -> None:
         "core.send-message",
         "core.command",
         "core.ask-choice",
+        "core.ask-each",
         "core.ask-text",
         "core.ask-list",
         "core.stop",

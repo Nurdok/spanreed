@@ -12,7 +12,8 @@ There are two shapes of block:
   holds steps, and runs them once for each of its rounds. A ``Branch``
   holds two lists of steps, and runs one of them. An action that
   ``converses`` holds a conversation with the user, through
-  ``StepContext.interaction``.
+  ``StepContext.interaction``. An ``AskLoop`` is a loop that asks for each
+  of its rounds.
 - A ``Trigger`` starts runs. It yields one event for each run, and says
   whether, and how, it can be started by hand. A ``PushTrigger`` is a
   trigger that a plugin feeds: the plugin says what changed, and the
@@ -423,6 +424,53 @@ class Loop(Action[InT, OutT]):
     @abc.abstractmethod
     def rounds(self, inputs: InT) -> list[OutT]:
         """Return what the steps inside see, for each time they run."""
+
+
+class AskLoop(Loop[InT, OutT]):
+    """A loop whose rounds are what the user answers, one answer at a time.
+
+    The engine calls ``ask`` before each round, with the values of the
+    rounds before it. ``ask`` asks the user through ``ctx.interaction`` and
+    returns the value of the next round, or ``None`` when there are no
+    more: the user is done, or there is nothing left to ask about. The
+    steps inside run for an answer before the next question is asked, so
+    they can act on each answer as it comes.
+
+    After the loop, the id of the step refers to what ``after`` returns
+    for the rounds there were.
+    """
+
+    kind = BlockKind.ASK
+    converses = True
+    inside_title: ClassVar[str] = "After each answer"
+    round_name: ClassVar[str] = "Answer"
+
+    def rounds(self, inputs: InT) -> list[OutT]:
+        """Return nothing: the rounds are not known before they are asked for."""
+        return []
+
+    def anything_to_ask(self, inputs: InT, earlier: list[OutT]) -> bool:
+        """Return whether ``ask`` would ask the user anything now.
+
+        The engine ends the loop without calling ``ask`` if not, so that a
+        run does not wait for the user's turn to talk and then say nothing.
+        Yes by default.
+        """
+        return True
+
+    @abc.abstractmethod
+    async def ask(
+        self, ctx: StepContext, inputs: InT, earlier: list[OutT]
+    ) -> OutT | None:
+        """Ask for the next round. Return its value, or ``None`` to end the loop."""
+
+    @abc.abstractmethod
+    def after(self, inputs: InT, rounds: list[OutT]) -> OutT:
+        """Return what the steps after the loop see, for the rounds there were."""
+
+    async def run(self, ctx: StepContext, inputs: InT) -> OutT:
+        """Return what ``after`` gives for no rounds. The engine does not call this."""
+        return self.after(inputs, [])
 
 
 class Branch(Action[InT, OutT]):
