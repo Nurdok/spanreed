@@ -51,6 +51,7 @@ def test_name() -> None:
     assert plugin.canonical_name() == "workflows"
     assert [block.id for block in plugin.blocks()] == [
         "core.schedule",
+        "core.at-time",
         "core.random-schedule",
         "core.continue-if",
         "core.if",

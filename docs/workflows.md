@@ -139,6 +139,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | Block | Kind | Published by |
 | --- | --- | --- |
 | `core.schedule` On a schedule | trigger | Workflows |
+| `core.at-time` At a time of day | trigger | Workflows |
 | `core.random-schedule` At random times | trigger | Workflows |
 | `core.called` When another workflow runs it | trigger | Workflows |
 | `core.command` When I run its command | trigger | Workflows |
@@ -160,6 +161,8 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `core.download-file` Download a file | action | Workflows |
 | `todoist.find-tasks` Find tasks | action | Todoist |
 | `todoist.set-due-date` Set due date | action | Todoist |
+| `todoist.read-tally` Get the dates on a task | action | Todoist |
+| `todoist.write-tally` Write the dates to a task | action | Todoist |
 | `obsidian.create-daily-note` Create today's daily note | action | Obsidian |
 | `obsidian.query-dataview` Query Dataview | action | Obsidian |
 | `obsidian.get-note-property` Get note property | action | Obsidian |
@@ -267,8 +270,9 @@ user's turn to talk around a conversation, and others wait for it
 - **Priority** says how a run in the background waits for the turn. `normal`
   waits behind a conversation that is open, and gives way to a command that
   the user starts. `low` also gives way to any other conversation that
-  starts. Only the first question's priority counts: the run has the turn
-  after it.
+  starts. `high` takes the turn from a conversation of normal or low
+  priority, and gives way to nothing. Only the first question's priority
+  counts: the run has the turn after it.
 - **A run that gives way ends there**, without failing: `stopped at step 3,
   Ask me to choose. Another conversation took over.` It is not tried again.
   Its trigger goes on with the next event.
@@ -655,6 +659,13 @@ class WorkoutChoice:
 once if it is due and waits for the rest of its interval if it is not. A new
 workflow fires at once.
 
+`core.at-time` fires at a **Time** of day, on every day or on one day of the
+week (**On**), in the timezone of the user's profile or in one of its own
+(**Timezone**). It keeps when the next event is due: an event that came up
+while Spanreed was not running fires when it is back, if that is within 12
+hours, and is passed over after that. A new workflow waits for its first
+time. The `date` and `time` of an event are those it was due at.
+
 `core.random-schedule` waits a different time before each event, picked at
 random between **At least** and **At most**. With **Only from** and **Only
 until**, two times of day in the user's timezone, a wait that ends outside
@@ -829,10 +840,13 @@ gets the recipe and is told so, and the registration is dropped.
 | Todoist No Overdue | Daily chores never overdue |
 | Habit Tracker | Habit check-in |
 | Audible Book Progress | Audible progress → book notes |
+| Recurring Payments | A workflow for each payment the user had. For a new one: Recurring payment |
 
 A retired plugin can carry over the config it had saved for a user
 (`RetiredPlugin.keep_settings`), and what it remembered for the user
 (`RetiredPlugin.carry_over`). Both stay in Redis after the plugin is gone.
+A plugin that held several things, each of which is a workflow now, makes
+them itself (`RetiredPlugin.move`).
 A workflow that waits for what a plugin remembered is off until it has it,
 and a move that stopped halfway is finished at the next start.
 
@@ -929,6 +943,59 @@ is asked a second time.
   for the next hour.
 
 `spanreed/plugins/book_progress_test_data.py` holds fourteen cases and what
+the plugin did in each, taken by running it before it was removed. The tests
+run the workflow on the same cases and compare.
+
+#### Recurring Payments
+
+The plugin kept, for each payment that comes up every week, a Todoist task
+that lists the dates not paid yet and says what they come to: "Pay therapist
+$450 (for 2026-11-10, 2026-11-17, 2026-11-24)". At the time of a payment it
+added the date, after asking if the user wanted that, and logged it to a
+note. Paying is checking the task off: the next date makes a new one.
+
+Each payment a user had is a workflow of its own now. There is no recipe
+behind it: `spanreed/plugins/recurring_payments.py` builds the workflow from
+the payment as the plugin saved it. The recipe "Recurring payment" is the
+same workflow for a payment that is new.
+
+![A recurring payment as a workflow](images/web-ui-workflow-payment-desktop.png)
+
+![One time of the payment](images/web-ui-workflow-payment-history-desktop.png)
+
+Where the parts of a payment went:
+
+| Was | Is now |
+| --- | --- |
+| The day of the week, the time and the timezone | **On**, **Time** and **Timezone** of the trigger "At a time of day" |
+| The label of the task | **Label** on the two Todoist steps |
+| The cost of one time | **Cost** on "Get the dates on a task" |
+| The template of the task's name | **Name** on "Write the dates to a task" |
+| The project | **Project** on the same step, as its id |
+| Asking first | The two steps "Ask me to choose" and "Only continue if". A payment that did not ask has neither |
+| The note, and the template of a line | **Path** and **Text** on "Append to note". A payment without a note has no such step |
+| The 13 questions that set a payment up in chat | The page of the workflow, or the recipe |
+| The date format | Gone. The plugin asked for it and wrote every date as 2026-11-24 |
+
+- **A template keeps the names it used.** The name of the task knew `dates`
+  and `total_cost`, and the line of the note knew `date`. A converted
+  template starts with a `{% set %}` for each, and goes on as the user wrote
+  it.
+- **The note is written for a date that the workflow added, once.** The
+  workflow remembers that the note is owed a line from the moment the date
+  is on the task, and forgets it when the line is written. So a run that
+  fails at the note writes it when it is tried again, without adding the
+  date or asking a second time. The plugin told the user to add the line by
+  hand.
+- **A time that came up during a restart still fires**, within 12 hours. The
+  plugin missed it, and the date with it.
+- **Text after the dates in the task's comment keeps its place.** The plugin
+  put one more empty line before it each week.
+- **The question is asked with high priority**, as the plugin asked it.
+- **The workflows have no command**, as the plugin had none. Run now on the
+  page adds today's date.
+
+`spanreed/plugins/recurring_payments_test_data.py` holds 13 cases and what
 the plugin did in each, taken by running it before it was removed. The tests
 run the workflow on the same cases and compare.
 

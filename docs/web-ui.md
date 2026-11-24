@@ -186,6 +186,14 @@ history of a workflow that it ran:
 ![A workflow that runs another on a phone](images/web-ui-workflow-call-phone.png)
 ![The history of the one it ran on a phone](images/web-ui-workflow-called-history-phone.png)
 
+A workflow at a time of day, with a question inside an "If":
+
+![A recurring payment on desktop](images/web-ui-workflow-payment-desktop.png)
+![One time of it in the history, on desktop](images/web-ui-workflow-payment-history-desktop.png)
+
+![A recurring payment on a phone](images/web-ui-workflow-payment-phone.png)
+![One time of it in the history, on a phone](images/web-ui-workflow-payment-history-phone.png)
+
 "Kill time" started from the page: it asks which of its four parts to run,
 and the part goes on in the same conversation:
 

@@ -10,7 +10,8 @@ Every block here has the two inputs that say how a run waits:
 
 - ``priority``: ``normal`` waits for its turn behind a conversation that is
   open, and gives way to a command the user starts. ``low`` also gives way
-  to any other conversation that starts.
+  to any other conversation that starts. ``high`` takes the turn from a
+  conversation of normal or low priority, and gives way to nothing.
 - ``give_up_after``: the minutes a question waits for the user before the
   run ends. 0 waits for as long as it takes.
 
@@ -41,7 +42,7 @@ from spanreed.workflows.blocks import (
 )
 from spanreed.workflows.builtin import Tick
 
-Priority = Literal["normal", "low"]
+Priority = Literal["normal", "low", "high"]
 
 YES_NO = ["Yes", "No"]
 SHOW_MORE = "Show more"
@@ -55,7 +56,7 @@ def priority_field() -> Any:
         default="normal",
         metadata={
             HELP_KEY: "low waits until no other conversation is open, and "
-            "gives way when one starts"
+            "gives way when one starts. high takes the turn from the others"
         },
     )
 
