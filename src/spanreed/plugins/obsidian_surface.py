@@ -164,9 +164,9 @@ class ObsidianSurfacePlugin(Plugin):
         self, user: User, instance_id: str, payload: dict
     ) -> None:
         command_id = payload["command_id"]
-        command = commands.get_command(command_id)
         # Server-side revalidation (R3): the palette cache may be stale.
-        if command is None or command.plugin_canonical_name not in user.plugins:
+        command = commands.get_command_for_user(user, command_id)
+        if command is None:
             await self._surface.send_feedback(
                 user.id,
                 instance_id,
