@@ -1287,12 +1287,20 @@ def test_a_workflow_that_never_ran_is_tested_with_an_event_made_now(
         await engine.save(workflow)
         await engine.save(asking)
         user = mock_user_find_by_id(4)
-        assert await engine.test_events(workflow) == {"last": None, "now": True}
+        assert await engine.test_events(workflow) == {
+            "last": None,
+            "now": True,
+            "asks": False,
+        }
         assert await engine.run_test(workflow, user, "last") is None
         trace = await engine.run_test(workflow, user, "now")
         assert trace is not None and trace["status"] == "finished"
         # A trigger that asks first cannot make an event by itself.
-        assert await engine.test_events(asking) == {"last": None, "now": False}
+        assert await engine.test_events(asking) == {
+            "last": None,
+            "now": False,
+            "asks": False,
+        }
         assert await engine.run_test(asking, user, "now") is None
 
     with fake_storage():

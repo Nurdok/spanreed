@@ -1,0 +1,369 @@
+"""The blocks that ask the user something, and what goes with them.
+
+A block that asks sets ``converses`` and talks through ``ctx.interaction``.
+The engine takes the user's turn to talk before it calls the block, and
+the run keeps the turn until it ends, so the questions of a run are one
+conversation. A workflow's command runs it in the conversation that the
+command was started in.
+
+Every block here has the two inputs that say how a run waits:
+
+- ``priority``: ``normal`` waits for its turn behind a conversation that is
+  open, and gives way to a command the user starts. ``low`` also gives way
+  to any other conversation that starts.
+- ``give_up_after``: the minutes the step waits for the user before the run
+  ends. 0 waits for as long as it takes.
+
+A run that gives way ends there, without failing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from spanreed.config_form import HELP_KEY
+from spanreed.workflows.blocks import (
+    Action,
+    Block,
+    BlockKind,
+    NoOutput,
+    NoParams,
+    NoQuestion,
+    StepContext,
+    StopRun,
+    Trigger,
+    TriggerContext,
+)
+from spanreed.workflows.builtin import Tick
+
+Priority = Literal["normal", "low"]
+
+YES_NO = ["Yes", "No"]
+SHOW_MORE = "Show more"
+# Where the text of an option is looked for, if the step does not say.
+_LABEL_FIELDS = ("label", "title", "name")
+
+
+def priority_field() -> Any:
+    """Return the ``priority`` input of a block that asks."""
+    return field(
+        default="normal",
+        metadata={
+            HELP_KEY: "low waits until no other conversation is open, and "
+            "gives way when one starts"
+        },
+    )
+
+
+def give_up_field() -> Any:
+    """Return the ``give_up_after`` input of a block that asks."""
+    return field(
+        default=0,
+        metadata={
+            HELP_KEY: "Minutes to wait for an answer. 0 waits for as long as it takes"
+        },
+    )
+
+
+def _now() -> datetime.datetime:
+    # Indirection so that tests can set the clock.
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+class Command(Trigger[NoParams, Tick]):
+    """Start a run when the user runs the workflow's command, and only then.
+
+    This is the trigger of a workflow that is a command: it is in the
+    command menu of every surface under the workflow's command name.
+    """
+
+    id = "core.command"
+    title = "When I run its command"
+    Manual = NoQuestion
+
+    async def events(
+        self, ctx: TriggerContext, params: NoParams
+    ) -> AsyncGenerator[Tick, bool | None]:
+        """Yield nothing: only the user starts a run."""
+        never = asyncio.Event()
+        while not await never.wait():
+            yield self._tick(ctx)
+
+    async def manual_events(
+        self, ctx: TriggerContext, params: NoParams, answer: NoQuestion
+    ) -> list[Tick]:
+        """Return one event, for now."""
+        return [self._tick(ctx)]
+
+    @staticmethod
+    def _tick(ctx: TriggerContext) -> Tick:
+        local = _now().astimezone(ctx.user.tzinfo)
+        return Tick(date=local.date().isoformat(), time=local.strftime("%H:%M"))
+
+
+@dataclass
+class StopInput:
+    """The input of ``Stop``."""
+
+    # Shown in the history of the run.
+    reason: str = ""
+
+
+class Stop(Action[StopInput, NoOutput]):
+    """End the run here, without failing it.
+
+    Inside a loop this ends the loop as well. ``Only continue if`` ends
+    just the round it is in.
+    """
+
+    id = "core.stop"
+    title = "End the run"
+    kind = BlockKind.LOGIC
+
+    async def run(self, ctx: StepContext, inputs: StopInput) -> NoOutput:
+        """Raise ``StopRun`` for the whole run."""
+        raise StopRun(
+            inputs.reason or "The workflow ends the run here.", whole_run=True
+        )
+
+
+@dataclass
+class AskTextInput:
+    """What ``AskText`` asks."""
+
+    question: str
+    ask_first: str = field(
+        default="",
+        metadata={
+            HELP_KEY: "A yes or no question to ask before. On No, the answer is empty"
+        },
+    )
+    priority: Priority = priority_field()
+    give_up_after: int = give_up_field()
+
+
+@dataclass
+class AskTextOutput:
+    """What the user wrote."""
+
+    # Empty if the user said no to the question before.
+    answer: str
+    # Whether the user wrote an answer.
+    answered: bool
+
+
+class AskText(Action[AskTextInput, AskTextOutput]):
+    """Ask the user to write something.
+
+    With ``ask_first``, the user is first asked whether they want to: "Any
+    free text to add to the note?". On No, the question is not asked.
+    """
+
+    id = "core.ask-text"
+    title = "Ask me for text"
+    kind = BlockKind.ASK
+    converses = True
+
+    async def run(self, ctx: StepContext, inputs: AskTextInput) -> AskTextOutput:
+        """Ask, and return the answer."""
+        bot = ctx.interaction
+        if inputs.ask_first:
+            if await bot.request_user_choice(inputs.ask_first, YES_NO) != 0:
+                return AskTextOutput(answer="", answered=False)
+        answer = (await bot.request_user_input(inputs.question)).strip()
+        return AskTextOutput(answer=answer, answered=True)
+
+
+@dataclass
+class AskListInput:
+    """What ``AskList`` asks."""
+
+    # Asked before each answer, with Yes and No: Add "Recommended by"?
+    add_question: str
+    # Asked for each answer: Who recommended it?
+    question: str
+    add_another_question: str = field(
+        default="",
+        metadata={
+            HELP_KEY: "Asked in place of the first question once there is "
+            "an answer. Empty: the same question"
+        },
+    )
+    priority: Priority = priority_field()
+    give_up_after: int = give_up_field()
+
+
+@dataclass
+class AskListOutput:
+    """What the user wrote, in order."""
+
+    answers: list[str]
+    count: int
+
+
+class AskList(Action[AskListInput, AskListOutput]):
+    """Ask the user for texts, one at a time, until they say that was all."""
+
+    id = "core.ask-list"
+    title = "Ask me for a list"
+    kind = BlockKind.ASK
+    converses = True
+
+    async def run(self, ctx: StepContext, inputs: AskListInput) -> AskListOutput:
+        """Ask until the user answers No, and return the answers."""
+        bot = ctx.interaction
+        answers: list[str] = []
+        while True:
+            prompt = inputs.add_question
+            if answers and inputs.add_another_question:
+                prompt = inputs.add_another_question
+            if await bot.request_user_choice(prompt, YES_NO) != 0:
+                break
+            answers.append((await bot.request_user_input(inputs.question)).strip())
+        return AskListOutput(answers=answers, count=len(answers))
+
+
+@dataclass
+class AskChoiceInput:
+    """What ``AskChoice`` asks, and among what."""
+
+    question: str
+    # Texts, or things that have a text to show: the books of a search.
+    options: list[Any]
+    show: str = field(
+        default="",
+        metadata={
+            HELP_KEY: "For options that are not texts: the name of the value "
+            "to show. Empty: label, title or name"
+        },
+    )
+    at_a_time: int = field(
+        default=0,
+        metadata={
+            HELP_KEY: "Show this many options at a time, with “Show more”. 0 shows all"
+        },
+    )
+    if_one: str = field(
+        default="",
+        metadata={
+            HELP_KEY: "Asked in place of the question when there is one "
+            "option, with Yes and No"
+        },
+    )
+    cancel: str = field(
+        default="Cancel",
+        metadata={HELP_KEY: "The choice that picks nothing. Empty: there is none"},
+    )
+    columns: int = field(
+        default=1, metadata={HELP_KEY: "How many options go side by side"}
+    )
+    priority: Priority = priority_field()
+    give_up_after: int = give_up_field()
+
+    def __post_init__(self) -> None:
+        """Raise ``ValueError`` for counts that mean nothing."""
+        if self.at_a_time < 0:
+            raise ValueError("“At a time” is 0 or more.")
+        if self.columns < 1:
+            raise ValueError("“Columns” is 1 or more.")
+
+
+@dataclass
+class AskChoiceOutput:
+    """What the user chose."""
+
+    # False if the user chose nothing, or if there was nothing to choose.
+    chosen: bool
+    # The text of the option.
+    answer: str = ""
+    # The option as it was given: a text, or the whole thing.
+    item: Any = None
+    # The place of the option, from 1. 0 if nothing was chosen.
+    index: int = 0
+
+
+def option_text(option: Any, show: str = "") -> str:
+    """Return the text that stands for an option in a question."""
+    if isinstance(option, str):
+        return option
+    for name in (show,) if show else _LABEL_FIELDS:
+        value = (
+            option.get(name)
+            if isinstance(option, dict)
+            else getattr(option, name, None)
+        )
+        if value is not None and not callable(value):
+            return str(value)
+    if show:
+        raise ValueError(f"An option has no “{show}” to show.")
+    return str(option)
+
+
+class AskChoice(Action[AskChoiceInput, AskChoiceOutput]):
+    """Ask the user to choose one of a list of options.
+
+    The options are texts, or things with a text to show, such as what a
+    search found: then ``item`` is the whole thing that was chosen. A long
+    list can be shown some at a time.
+
+    The step does not end the run if the user chooses nothing. Look at
+    ``chosen`` in the steps after it.
+    """
+
+    id = "core.ask-choice"
+    title = "Ask me to choose"
+    kind = BlockKind.ASK
+    converses = True
+
+    async def run(self, ctx: StepContext, inputs: AskChoiceInput) -> AskChoiceOutput:
+        """Ask, some options at a time, and return the choice."""
+        options = inputs.options
+        texts = [option_text(option, inputs.show) for option in options]
+        if not options:
+            return AskChoiceOutput(chosen=False)
+        bot = ctx.interaction
+        if len(options) == 1 and inputs.if_one:
+            if await bot.request_user_choice(inputs.if_one, YES_NO) != 0:
+                return AskChoiceOutput(chosen=False)
+            return AskChoiceOutput(
+                chosen=True, answer=texts[0], item=options[0], index=1
+            )
+
+        start = 0
+        while True:
+            size = inputs.at_a_time or len(options)
+            shown = texts[start : start + size]
+            more = start + size < len(options)
+            extras = ([SHOW_MORE] if more else []) + (
+                [inputs.cancel] if inputs.cancel else []
+            )
+            # The extra choices get a row of their own under several columns.
+            choices: list[str | list[str]] = [*shown]
+            if extras and inputs.columns == 1:
+                choices.extend(extras)
+            elif extras:
+                choices.append(extras)
+            choice = await bot.request_user_choice(
+                inputs.question, choices, columns=inputs.columns
+            )
+            if 0 <= choice < len(shown):
+                place = start + choice
+                return AskChoiceOutput(
+                    chosen=True,
+                    answer=texts[place],
+                    item=options[place],
+                    index=place + 1,
+                )
+            if more and choice == len(shown):
+                start += size
+                continue
+            return AskChoiceOutput(chosen=False)
+
+
+def asking_blocks() -> list[Block]:
+    """Return the blocks for asking, with what a workflow that asks needs."""
+    return [Command(), AskChoice(), AskText(), AskList(), Stop()]

@@ -6,6 +6,11 @@ block, and stops at the first step that fails or that ends the run. A step
 whose block is a loop runs the steps inside it once for each round. What
 each step received and returned is kept as the run's trace.
 
+A step whose block converses asks the user something. The run takes the
+user's turn to talk at its first such step, as a plugin does around a
+conversation, and keeps it until it ends. If another conversation takes the
+turn, the run ends there, without failing.
+
 A run that fails is tried again for the same event, from its first step,
 after a pause that doubles each time. So a step can run more than once for
 one event, and a block must be safe to repeat. A workflow whose runs keep
@@ -19,25 +24,35 @@ anything the user's services know. They are kept in the trace only.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import functools
 import logging
 import random
 import secrets
+import sys
 import time
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from telegram.error import RetryAfter
 
-from spanreed.interaction import PluginCommand, SurfaceBusyError, UserInteractionApi
+from spanreed.interaction import (
+    PluginCommand,
+    SurfaceBusyError,
+    UserInteractionApi,
+    UserInteractionPreempted,
+    UserInteractionPriority,
+)
 from spanreed.interaction import commands
+from spanreed.interaction import engine as turns
 from spanreed.user import User
 from spanreed.workflows import expressions, model
 from spanreed.workflows.blocks import (
     Action,
     BlockRegistry,
     Branch,
+    Interaction,
     Loop,
     ManualError,
     NoQuestion,
@@ -70,8 +85,85 @@ _sleep = asyncio.sleep
 _NO_MORE = object()
 
 
+# Why a run ended that lost its turn to talk, and one that got no answer.
+TOOK_OVER = "Another conversation took over."
+
+# How a step that asks waits for the user's turn, by its ``priority`` input.
+_PRIORITIES = {
+    "normal": UserInteractionPriority.NORMAL,
+    "low": UserInteractionPriority.LOW,
+}
+
+
 class _InsideFailed(Exception):
     """A step inside a loop or a branch failed. The message says where and why."""
+
+
+class _Turn:
+    """What a run holds while it goes: its workflow's lock, and the turn to talk.
+
+    The runs of a workflow go one at a time, so a run holds the lock of
+    its workflow. A run that asks the user something also takes the user's
+    turn to talk (``interaction.engine.user_interaction``) at its first
+    step that asks, and keeps it until it ends, so that its questions are
+    one conversation.
+
+    A run that the user started by hand has the turn already: the flow of
+    its command took it. Such a run would wait for the lock while a run in
+    the background, which holds the lock, waits for the turn. So a run
+    gives the lock up while it waits for the turn, and takes it back
+    after. A run by hand can go in between.
+    """
+
+    def __init__(self, user_id: int, lock: asyncio.Lock) -> None:
+        self._user_id = user_id
+        self._lock = lock
+        self._locked = False
+        self._held: contextlib.AbstractAsyncContextManager[None] | None = None
+
+    async def start(self) -> None:
+        """Wait for the workflow's other runs to be over."""
+        await self._lock.acquire()
+        self._locked = True
+
+    async def take(self, priority: UserInteractionPriority) -> None:
+        """Wait for the user's turn to talk, unless the run has it."""
+        if self._held is not None or turns.holds_turn(self._user_id):
+            return
+        self._lock.release()
+        self._locked = False
+        turn = turns.user_interaction(self._user_id, priority=priority)
+        await turn.__aenter__()
+        self._held = turn
+        await self._lock.acquire()
+        self._locked = True
+
+    async def lost(self) -> bool:
+        """Return whether the run was cancelled to give its turn away.
+
+        Call this while handling the ``CancelledError``. The turn is given
+        up either way. ``False`` means the run itself is to end: its
+        workflow was turned off, or Spanreed stops.
+        """
+        if self._held is None:
+            return False
+        turn, self._held = self._held, None
+        try:
+            await turn.__aexit__(*sys.exc_info())
+        except UserInteractionPreempted:
+            return True
+        return False
+
+    async def end(self) -> None:
+        """Give up the turn to talk, if the run has it, and the lock."""
+        turn, self._held = self._held, None
+        try:
+            if turn is not None:
+                await turn.__aexit__(None, None, None)
+        finally:
+            if self._locked:
+                self._locked = False
+                self._lock.release()
 
 
 def _now() -> str:
@@ -85,14 +177,15 @@ def outcome(trace: dict[str, Any]) -> str:
         return "finished."
     if status == CANCELLED:
         return "was cancelled."
-    step = trace["steps"][-1]
     if status == STOPPED:
         return f"stopped at {_where(trace)}."
-    return f"failed at {_where(trace)}: {step['error']}"
+    return f"failed at {_where(trace)}: {trace['steps'][-1]['error']}"
 
 
 def _where(trace: dict[str, Any]) -> str:
     """Return the last step that a run got to: its number and its title."""
+    if not trace["steps"]:
+        return "its start"
     return f"step {len(trace['steps'])}, {trace['steps'][-1]['title']}"
 
 
@@ -115,6 +208,9 @@ class WorkflowEngine:
     # The trace of a loop keeps this many of its rounds: the first ones,
     # and one that failed.
     ROUNDS_KEPT = 50
+    # The seconds in one of the minutes that a step waits for an answer.
+    # Tests make it shorter.
+    GIVE_UP_UNIT_S = 60.0
 
     def __init__(
         self,
@@ -132,6 +228,8 @@ class WorkflowEngine:
         self._command_plugin = command_plugin
         self._sources: dict[str, asyncio.Task] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # What each run in progress holds, by the id of the run.
+        self._turns: dict[str, _Turn] = {}
         # Workflows whose user was told that they fail, until a run works,
         # each with the time of its last failed try.
         self._failing: dict[str, float] = {}
@@ -211,6 +309,19 @@ class WorkflowEngine:
         """Return whether the workflow's trigger can be started by hand."""
         trigger = self._registry.get(workflow.trigger.block)
         return isinstance(trigger, Trigger) and trigger.Manual is not None
+
+    def asks(self, workflow: Workflow) -> bool:
+        """Return whether a step of the workflow asks the user something."""
+
+        def any_asks(steps: list[Step]) -> bool:
+            return any(
+                getattr(self._registry.get(step.block), "converses", False)
+                or any_asks(step.steps)
+                or any_asks(step.otherwise)
+                for step in steps
+            )
+
+        return any_asks(workflow.steps)
 
     def _command_id(self, workflow_id: str) -> str:
         # The id of the workflow, not its name, so that a rename does not
@@ -374,7 +485,9 @@ class WorkflowEngine:
         ``test`` marks a run that the editor made to try a workflow out.
         """
         run = RunInfo(id=secrets.token_hex(6), manual=manual)
-        ctx = StepContext(user=user, workflow_id=workflow.id, run=run)
+        ctx = StepContext(
+            user=user, workflow_id=workflow.id, run=run, interaction=Interaction(user)
+        )
         context: dict[str, Any] = {model.TRIGGER_NAME: event, model.RUN_NAME: run}
         trace: dict[str, Any] = {
             "id": run.id,
@@ -393,17 +506,28 @@ class WorkflowEngine:
             trace["test"] = True
         else:
             await self._keep_event(workflow, trace["started_at"], event)
-        async with self._locks.setdefault(workflow.id, asyncio.Lock()):
+        turn = _Turn(user.id, self._locks.setdefault(workflow.id, asyncio.Lock()))
+        self._turns[run.id] = turn
+        try:
+            await turn.start()
             try:
                 trace["status"] = await self._run_steps(
                     workflow.steps, ctx, context, trace["steps"]
                 )
             except asyncio.CancelledError:
-                trace["status"] = CANCELLED
-                raise
+                # A step turns the loss of the turn into its own end, so
+                # this is the run being cancelled, unless the turn was lost
+                # between two steps.
+                if not await turn.lost():
+                    trace["status"] = CANCELLED
+                    raise
+                trace["status"] = STOPPED
             finally:
                 trace["finished_at"] = _now()
                 await self._keep(workflow, trace)
+        finally:
+            del self._turns[run.id]
+            await turn.end()
         return trace
 
     async def _keep(self, workflow: Workflow, trace: dict[str, Any]) -> None:
@@ -474,7 +598,16 @@ class WorkflowEngine:
             entry["inputs"] = to_data(inputs)
             if isinstance(block, Loop):
                 await self._run_rounds(step, block, inputs, ctx, context, entry)
-            outputs = await self._call(block, ctx, inputs)
+            said: list[dict[str, str]] = []
+            ctx.interaction.keep_in(said)
+            try:
+                if block.converses:
+                    outputs = await self._converse(block, ctx, inputs)
+                else:
+                    outputs = await self._call(block, ctx, inputs)
+            finally:
+                if said:
+                    entry["conversation"] = said
             context[step.id] = outputs
             entry["outputs"] = to_data(outputs)
             if isinstance(block, Branch):
@@ -482,6 +615,17 @@ class WorkflowEngine:
         except StopRun as stop:
             entry["status"] = STOPPED
             entry["reason"] = stop.reason
+            if stop.whole_run:
+                entry["ends_run"] = True
+        except asyncio.CancelledError:
+            if not await self._turns[ctx.run.id].lost():
+                raise
+            # Another conversation took the user's turn to talk. That is
+            # no failure: end the run here, as a plugin drops a question
+            # that is preempted.
+            entry["status"] = STOPPED
+            entry["reason"] = TOOK_OVER
+            entry["ends_run"] = True
         except _InsideFailed as failed:
             # The step inside wrote the failure to the log already.
             entry["status"] = FAILED
@@ -525,8 +669,13 @@ class WorkflowEngine:
                 step.steps, ctx, {**context, step.id: value}, steps
             )
             kept = {"number": number, "status": status, "steps": steps}
-            if len(entry["rounds"]) < self.ROUNDS_KEPT or status == FAILED:
+            ends_run = status == STOPPED and bool(steps[-1].get("ends_run"))
+            if len(entry["rounds"]) < self.ROUNDS_KEPT or status == FAILED or ends_run:
                 entry["rounds"].append(kept)
+            if ends_run:
+                raise StopRun(
+                    steps[-1].get("reason") or "A step ended the run.", whole_run=True
+                )
             if status == FAILED:
                 failed = steps[-1]
                 raise _InsideFailed(
@@ -564,7 +713,38 @@ class WorkflowEngine:
             failed = entry["inside"][-1]
             raise _InsideFailed(f"{failed['title']}: {failed['error']}")
         if status == STOPPED:
-            raise StopRun(entry["inside"][-1].get("reason") or "A step ended the run.")
+            last = entry["inside"][-1]
+            raise StopRun(
+                last.get("reason") or "A step ended the run.",
+                whole_run=bool(last.get("ends_run")),
+            )
+
+    async def _converse(self, block: Action, ctx: StepContext, inputs: Any) -> Any:
+        """Call a block that asks the user something.
+
+        Take the user's turn to talk first, unless the run has it. Then
+        give the user the minutes of the step's ``give_up_after`` to get
+        through it, if it sets any, and end the run if that is not enough.
+        """
+        priority = _PRIORITIES.get(
+            getattr(inputs, "priority", ""), UserInteractionPriority.NORMAL
+        )
+        await self._turns[ctx.run.id].take(priority)
+        minutes = getattr(inputs, "give_up_after", 0)
+        if not isinstance(minutes, int) or minutes <= 0:
+            return await self._call(block, ctx, inputs)
+        try:
+            async with asyncio.timeout(minutes * self.GIVE_UP_UNIT_S) as limit:
+                return await self._call(block, ctx, inputs)
+        except TimeoutError:
+            if not limit.expired():
+                # The block's own: a service that did not answer.
+                raise
+            raise StopRun(
+                f"There was no answer for {minutes} "
+                f"{'minute' if minutes == 1 else 'minutes'}.",
+                whole_run=True,
+            ) from None
 
     async def _call(self, block: Action, ctx: StepContext, inputs: Any) -> Any:
         """Call a block. Wait and call it again during flood control.
@@ -648,6 +828,7 @@ class WorkflowEngine:
         return {
             "last": await self._store.last_event(workflow.id),
             "now": isinstance(trigger, Trigger) and trigger.Manual is NoQuestion,
+            "asks": self.asks(workflow),
         }
 
     async def run_test(
@@ -663,7 +844,15 @@ class WorkflowEngine:
 
         The steps do what they do: a test is a real run. It is not tried
         again if it fails, and it is kept in the history, marked as a test.
+
+        A workflow that asks the user something is not run here: a test is
+        not a conversation. Raise ``ValueError``; see ``asks``.
         """
+        if self.asks(workflow):
+            raise ValueError(
+                "A workflow that asks you something cannot be tested here. "
+                "Run it by hand."
+            )
         event: Any
         if source == "last":
             kept = await self._store.last_event(workflow.id)

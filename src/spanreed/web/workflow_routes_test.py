@@ -594,7 +594,7 @@ def test_a_workflow_that_has_not_run_can_be_tested_with_an_event_made_now() -> N
             await _login(client)
             url = f"/app/api/workflows/{workflow.id}"
             shown = await _json(await client.get(url))
-            assert shown["test"] == {"last": None, "now": True}
+            assert shown["test"] == {"last": None, "now": True, "asks": False}
             form = _form_of(shown)
             # Not saved: the test runs what the editor holds.
             form["steps"][1]["inputs"]["condition"] = "{{ find.count == 0 }}"
@@ -713,6 +713,11 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
                 "core.if",
                 "core.for-each",
                 "core.send-message",
+                "core.command",
+                "core.ask-choice",
+                "core.ask-text",
+                "core.ask-list",
+                "core.stop",
                 "core.download-file",
                 "core.send-file",
                 "todoist.find-tasks",
