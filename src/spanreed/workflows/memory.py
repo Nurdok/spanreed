@@ -10,6 +10,7 @@ go on only if nothing is found, ask, and remember it.
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,6 +65,10 @@ class RecallOutput:
     value: Any = None
     # When it was kept, in UTC. Empty if nothing is.
     at: str = ""
+    # How many hours ago that was. 0 if nothing is kept. For doing
+    # something at most every so often: ``not last.found or
+    # last.age_hours > 72``.
+    age_hours: float = 0.0
 
 
 class Recall(Action[RecallInput, RecallOutput]):
@@ -78,7 +83,9 @@ class Recall(Action[RecallInput, RecallOutput]):
         kept = await ctx.memory.get(inputs.name)
         if kept is None:
             return RecallOutput(found=False)
-        return RecallOutput(found=True, value=kept.value, at=kept.at)
+        return RecallOutput(
+            found=True, value=kept.value, at=kept.at, age_hours=_hours_since(kept.at)
+        )
 
 
 @dataclass
@@ -105,6 +112,22 @@ class Forget(Action[ForgetInput, ForgetOutput]):
     async def run(self, ctx: StepContext, inputs: ForgetInput) -> ForgetOutput:
         """Drop it, and return whether there was anything."""
         return ForgetOutput(found=await ctx.memory.forget(inputs.name))
+
+
+def _now() -> datetime.datetime:
+    # Indirection so that tests can set the clock.
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _hours_since(at: str) -> float:
+    """Return how many hours ago a time that a memory kept was."""
+    try:
+        moment = datetime.datetime.fromisoformat(at)
+    except ValueError:
+        return 0.0
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.timezone.utc)
+    return round(max((_now() - moment).total_seconds(), 0.0) / 3600, 2)
 
 
 def memory_blocks() -> list[Block]:

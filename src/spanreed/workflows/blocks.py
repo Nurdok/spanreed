@@ -203,6 +203,14 @@ class Interaction:
         """Return whether the user was asked or told anything through this."""
         return self._talked
 
+    def note_talk(self) -> None:
+        """Take note that the user was talked to on the run's behalf.
+
+        A run that had another workflow run counts as having said what
+        that one said.
+        """
+        self._talked = True
+
     def keep_in(self, lines: list[dict[str, str]]) -> None:
         """Keep what is asked and said from now on in ``lines``."""
         self._lines = lines
@@ -343,6 +351,53 @@ class LocalMemory:
 
 
 @dataclass(frozen=True)
+class Called:
+    """How the run of a workflow that a step started went."""
+
+    # The name of the workflow that ran.
+    name: str
+    # ``finished``, or ``stopped`` if one of its steps ended it early.
+    status: str
+    # The same as the end of a sentence: "stopped at step 2, Only continue if."
+    outcome: str
+
+
+class Workflows(Protocol):
+    """The user's other workflows, for a step that runs one of them.
+
+    A workflow runs inside the run that the step is part of: in the same
+    conversation, and it is over when ``run`` returns. Its trace is kept in
+    its own history.
+    """
+
+    async def on_offer(self, names: Iterable[str]) -> list[str]:
+        """Return which of these names are workflows that ``run`` can run now.
+
+        Those of the user that are on, have nothing wrong with them, and
+        whose trigger can start a run without a question.
+        """
+
+    async def run(self, name: str) -> Called:
+        """Run the user's workflow of this name, and return how it went.
+
+        Raise ``ValueError`` if there is no such workflow or it cannot be
+        run, and ``RuntimeError`` if its run failed.
+        """
+
+
+class NoWorkflows:
+    """The other workflows where there is no engine: in a test of a block."""
+
+    async def on_offer(self, names: Iterable[str]) -> list[str]:
+        """Return none of them."""
+        return []
+
+    async def run(self, name: str) -> Called:
+        """Raise ``ValueError``: there is nothing to run a workflow with."""
+        raise ValueError(f"There is no workflow “{name}” here.")
+
+
+@dataclass(frozen=True)
 class StepContext:
     """What the engine hands to an action besides its inputs."""
 
@@ -353,13 +408,17 @@ class StepContext:
     interaction: Interaction = dataclasses.field(default=cast(Interaction, None))
     # What the workflow remembers between runs.
     memory: Memory = dataclasses.field(default=cast(Memory, None))
+    # The user's other workflows, for a step that runs one.
+    workflows: Workflows = dataclasses.field(default=cast(Workflows, None))
 
     def __post_init__(self) -> None:
-        """Make the way to talk to the user and a memory, if none was given."""
+        """Fill in what was not given, with what a test of a block can use."""
         if self.interaction is None:
             object.__setattr__(self, "interaction", Interaction(self.user))
         if self.memory is None:
             object.__setattr__(self, "memory", LocalMemory())
+        if self.workflows is None:
+            object.__setattr__(self, "workflows", NoWorkflows())
 
 
 class TriggerState(Protocol):

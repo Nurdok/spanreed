@@ -51,6 +51,7 @@ def test_name() -> None:
     assert plugin.canonical_name() == "workflows"
     assert [block.id for block in plugin.blocks()] == [
         "core.schedule",
+        "core.random-schedule",
         "core.continue-if",
         "core.if",
         "core.for-each",
@@ -61,6 +62,9 @@ def test_name() -> None:
         "core.ask-text",
         "core.ask-list",
         "core.stop",
+        "core.called",
+        "core.call-workflow",
+        "core.run-one",
         "core.remember",
         "core.recall",
         "core.forget",

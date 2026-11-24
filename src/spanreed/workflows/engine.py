@@ -53,6 +53,7 @@ from spanreed.workflows.blocks import (
     AskLoop,
     BlockRegistry,
     Branch,
+    Called,
     Interaction,
     Loop,
     ManualError,
@@ -190,6 +191,81 @@ def _where(trace: dict[str, Any]) -> str:
     return f"step {len(trace['steps'])}, {trace['steps'][-1]['title']}"
 
 
+class _Caller:
+    """The user's other workflows, for the steps of one run. See ``Workflows``."""
+
+    def __init__(
+        self,
+        engine: WorkflowEngine,
+        user: User,
+        manual: bool,
+        chain: tuple[str, ...],
+        interaction: Interaction,
+    ) -> None:
+        self._engine = engine
+        self._user = user
+        self._manual = manual
+        # The workflows that are running on the way to this run, this one
+        # last. None of them can be run again from here.
+        self._chain = chain
+        self._interaction = interaction
+
+    async def _find(self, name: str) -> Workflow | None:
+        """Return the user's workflow of this name, if there is exactly one."""
+        workflows = await self._engine.store.list_for_user(self._user.id)
+        for same in (
+            [w for w in workflows if w.name == name],
+            [w for w in workflows if w.name.lower() == name.lower()],
+        ):
+            if len(same) == 1:
+                return same[0]
+        return None
+
+    def _why_not(self, name: str, workflow: Workflow | None) -> str | None:
+        """Return why a workflow cannot be run from here, if it cannot."""
+        if workflow is None:
+            return f"There is not one workflow called “{name}”."
+        if workflow.id in self._chain:
+            return f"“{workflow.name}” is running: it cannot run itself."
+        if not workflow.enabled:
+            return f"“{workflow.name}” is off."
+        found = self._engine.problems(workflow)
+        if found:
+            return f"“{workflow.name}” cannot run. {found[0]}"
+        trigger = self._engine.registry.get(workflow.trigger.block)
+        if not (isinstance(trigger, Trigger) and trigger.Manual is NoQuestion):
+            return (
+                f"“{workflow.name}” cannot be run by another workflow: its "
+                "trigger asks before it starts, or cannot be started by hand."
+            )
+        return None
+
+    async def on_offer(self, names: Iterable[str]) -> list[str]:
+        """Return which of these names are workflows that ``run`` can run now."""
+        return [
+            name
+            for name in names
+            if self._why_not(name, await self._find(name)) is None
+        ]
+
+    async def run(self, name: str) -> Called:
+        """Run the user's workflow of this name, and return how it went."""
+        workflow = await self._find(name)
+        why_not = self._why_not(name, workflow)
+        if workflow is None or why_not is not None:
+            raise ValueError(why_not)
+        trace = await self._engine.run_called(
+            workflow, self._user, manual=self._manual, chain=self._chain
+        )
+        if trace.get("talked"):
+            self._interaction.note_talk()
+        if trace["status"] == FAILED:
+            raise RuntimeError(f"“{workflow.name}” {outcome(trace)}")
+        return Called(
+            name=workflow.name, status=trace["status"], outcome=outcome(trace)
+        )
+
+
 class WorkflowEngine:
     """Runs the workflows of every user."""
 
@@ -212,6 +288,9 @@ class WorkflowEngine:
     # The seconds in one of the minutes that a step waits for an answer.
     # Tests make it shorter.
     GIVE_UP_UNIT_S = 60.0
+    # How long a step that runs another workflow waits while that one is
+    # in a run of its own, before the step fails.
+    CALL_WAIT_S = 60.0
 
     def __init__(
         self,
@@ -480,18 +559,24 @@ class WorkflowEngine:
         manual: bool,
         attempt: int,
         test: bool = False,
+        chain: tuple[str, ...] = (),
+        called_by: str | None = None,
     ) -> dict[str, Any]:
         """Run the steps of a workflow for one event, and return the trace.
 
         ``test`` marks a run that the editor made to try a workflow out.
+        ``chain`` holds the workflows whose steps had this one run, first
+        one first, and ``called_by`` is the name of the last of them.
         """
         run = RunInfo(id=secrets.token_hex(6), manual=manual)
+        interaction = Interaction(user)
         ctx = StepContext(
             user=user,
             workflow_id=workflow.id,
             run=run,
-            interaction=Interaction(user),
+            interaction=interaction,
             memory=self._store.memory(workflow.id),
+            workflows=_Caller(self, user, manual, (*chain, workflow.id), interaction),
         )
         context: dict[str, Any] = {model.TRIGGER_NAME: event, model.RUN_NAME: run}
         trace: dict[str, Any] = {
@@ -507,6 +592,8 @@ class WorkflowEngine:
             "steps": [],
             "status": FINISHED,
         }
+        if called_by is not None:
+            trace["called_by"] = called_by
         if test:
             trace["test"] = True
         else:
@@ -514,7 +601,14 @@ class WorkflowEngine:
         turn = _Turn(user.id, self._locks.setdefault(workflow.id, asyncio.Lock()))
         self._turns[run.id] = turn
         try:
-            await turn.start()
+            if called_by is None:
+                await turn.start()
+            else:
+                # The step that waits for this run holds its own workflow
+                # in the meantime. Two workflows that run each other must
+                # not wait for each other for good.
+                async with asyncio.timeout(self.CALL_WAIT_S):
+                    await turn.start()
             try:
                 trace["status"] = await self._run_steps(
                     workflow.steps, ctx, context, trace["steps"]
@@ -842,6 +936,42 @@ class WorkflowEngine:
                     f" control; trying the step again in {delay:.0f}s."
                 )
                 await _sleep(delay)
+
+    # -- from a step of another workflow -----------------------------------
+
+    async def run_called(
+        self, workflow: Workflow, user: User, *, manual: bool, chain: tuple[str, ...]
+    ) -> dict[str, Any]:
+        """Run a workflow because a step of another one asked, and return the trace.
+
+        The run is for an event that the trigger makes without asking, as
+        for a run by hand. It happens in the task of the step, so in its
+        conversation, and it is not tried again if it fails: the step
+        fails, and its own run is.
+        """
+        trigger = self._trigger_of(workflow)
+        params = from_data(trigger.Params, workflow.trigger.params)
+        events = await trigger.manual_events(
+            self._trigger_context(workflow, user), params, NoQuestion()
+        )
+        if not events:
+            raise ValueError(f"“{workflow.name}” has nothing to run for.")
+        caller = await self._store.get(chain[-1]) if chain else None
+        try:
+            return await self._run(
+                workflow,
+                user,
+                events[0],
+                manual=manual,
+                attempt=1,
+                chain=chain,
+                called_by=caller.name if caller is not None else "another workflow",
+            )
+        except TimeoutError:
+            raise RuntimeError(
+                f"“{workflow.name}” is in a run of its own, and still was after "
+                f"{self.CALL_WAIT_S:.0f} seconds."
+            ) from None
 
     # -- by hand ----------------------------------------------------------
 

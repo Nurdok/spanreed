@@ -31,6 +31,10 @@ from spanreed.workflows.values import to_data
 CORE_APP = "Spanreed"
 
 
+# How many of the names in a workflow's memory the page gets.
+MEMORY_SHOWN = 200
+
+
 def _app(engine: WorkflowEngine, block: Block) -> str:
     plugin = engine.registry.plugin_of(block.id)
     if plugin.canonical_name() == engine.command_plugin:
@@ -282,13 +286,16 @@ def detail(
     last_run: dict[str, Any] | None,
     others: Iterable[Workflow] = (),
     test_events: dict[str, Any] | None = None,
+    remembers: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Return everything the page shows of one workflow.
 
     ``others`` are the user's other workflows, for what they write too.
     ``test_events`` is what the workflow can be tried out with (see
-    ``WorkflowEngine.test_events``).
+    ``WorkflowEngine.test_events``). ``remembers`` are the names its memory
+    keeps something under.
     """
+    names = list(remembers)
     trigger = _card(
         engine, workflow.trigger.block, workflow.trigger.params, "trigger", Trigger
     )
@@ -327,6 +334,9 @@ def detail(
         # The text the command was given. ``None``: it is the name.
         "command_name": workflow.command_name,
         "last_run": _last_run(last_run),
+        # What the workflow remembers between runs: how many names, and
+        # the first of them.
+        "remembers": {"count": len(names), "names": names[:MEMORY_SHOWN]},
         # What ``{{ run.… }}`` offers.
         "run_outputs": [field.name for field in dataclasses.fields(RunInfo)],
         "trigger": trigger,

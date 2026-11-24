@@ -680,6 +680,7 @@ async def _workflow_detail(wf_engine: WorkflowEngine, workflow: Workflow) -> Any
         runs[0] if runs else None,
         others=await wf_engine.store.list_for_user(workflow.user_id),
         test_events=await wf_engine.test_events(workflow),
+        remembers=await wf_engine.store.memory(workflow.id).shown(),
     )
 
 
@@ -970,6 +971,34 @@ async def set_workflow_command(workflow_id: str) -> Any:
         return jsonify({"error": "Say whether the command is hidden."}), 400
     workflow.command_hidden = body["hidden"]
     await wf_engine.save(workflow)
+    return jsonify(await _workflow_detail(wf_engine, workflow))
+
+
+@blueprint.post("/api/workflows/<workflow_id>/forget")
+@api_auth
+async def forget_workflow_memory(workflow_id: str) -> Any:
+    """Make a workflow forget what it remembers: one name, or all of it.
+
+    The body holds ``name`` for one. Without it, everything goes. What the
+    workflow's trigger remembers (a cursor, what it ran for) is not part
+    of this.
+    """
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    body = await request.get_json(silent=True) or {}
+    memory = wf_engine.store.memory(workflow.id)
+    name = body.get("name")
+    if name is None:
+        for kept in await memory.shown():
+            await memory.forget(kept)
+    elif not isinstance(name, str) or not await memory.forget(name):
+        return jsonify({"error": "The workflow remembers nothing of that name."}), 404
+    _logger.info(
+        f"User {workflow.user_id} made workflow {workflow.id} forget"
+        f" {'one thing' if name is not None else 'everything'}"
+    )
     return jsonify(await _workflow_detail(wf_engine, workflow))
 
 

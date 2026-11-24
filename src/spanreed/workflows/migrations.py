@@ -30,6 +30,7 @@ from spanreed.user import User
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Workflow
 from spanreed.workflows.recipes import all_recipes
+from spanreed.workflows.store import MOVED_MARKER
 
 _logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class RetiredPlugin:
 
 
 # The name under which a workflow remembers that ``carry_over`` is done.
-CARRIED_OVER = "moved-from-plugin"
+CARRIED_OVER = MOVED_MARKER
 
 
 def _retired_plugins() -> list[RetiredPlugin]:

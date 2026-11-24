@@ -123,6 +123,8 @@ new ones.
   run asks and says shows up.
 - **Show it / Hide it** puts the workflow's command in the command menu or
   takes it out.
+- **Remembers…** is there if the workflow keeps something between runs.
+  **Show** lists the names, and can make it forget one or all of them.
 
 ![A workflow's history on desktop](images/web-ui-workflow-history-desktop.png)
 
@@ -174,6 +176,20 @@ this loop. History shows what it asked in each round:
 
 ![A loop with a conversation in a block on a phone](images/web-ui-workflow-audible-phone.png)
 ![Its history on a phone](images/web-ui-workflow-audible-history-phone.png)
+
+A workflow that runs one of several others, at random times, and the
+history of a workflow that it ran:
+
+![A workflow that runs another on desktop](images/web-ui-workflow-call-desktop.png)
+![The history of the one it ran on desktop](images/web-ui-workflow-called-history-desktop.png)
+
+![A workflow that runs another on a phone](images/web-ui-workflow-call-phone.png)
+![The history of the one it ran on a phone](images/web-ui-workflow-called-history-phone.png)
+
+What a workflow remembers:
+
+![What a workflow remembers on desktop](images/web-ui-workflow-memory-desktop.png)
+![What a workflow remembers on a phone](images/web-ui-workflow-memory-phone.png)
 
 A workflow that cannot run says why above its steps, and a card whose block
 no plugin publishes any more is outlined in red.
