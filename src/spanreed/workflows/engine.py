@@ -17,6 +17,10 @@ one event, and a block must be safe to repeat. A workflow whose runs keep
 failing, because a service is down for hours, is then tried only once every
 half hour until a run works.
 
+A run keeps its place after each of its steps (see ``_Place``). If Spanreed
+is restarted in the middle of a run, the run goes on from the step it was
+at: a question that waited for its answer is asked again.
+
 The engine never writes a step's inputs or outputs to the log: they can hold
 anything the user's services know. They are kept in the trace only.
 """
@@ -25,8 +29,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import datetime
 import functools
+import hashlib
+import json
 import logging
 import random
 import secrets
@@ -68,7 +75,15 @@ from spanreed.workflows.blocks import (
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
 from spanreed.workflows.store import WorkflowStore
-from spanreed.workflows.values import from_data, from_whole_data, to_data, whole_data
+from spanreed.workflows.values import (
+    NotPlain,
+    from_data,
+    from_whole_data,
+    make_again,
+    plain_data,
+    to_data,
+    whole_data,
+)
 
 # How a run, or a step of it, ended.
 OK = "ok"
@@ -167,6 +182,129 @@ class _Turn:
             if self._locked:
                 self._locked = False
                 self._lock.release()
+
+
+def digest(workflow: Workflow) -> str:
+    """Return a short text that differs when the trigger or the steps do."""
+    data = workflow.to_data()
+    parts = json.dumps([data["trigger"], data["steps"]], sort_keys=True)
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclasses.dataclass
+class _Again:
+    """What a run that a restart cut short goes on with."""
+
+    id: str
+    started_at: str
+    event: Any
+    # The steps that are done, as the trace had them, and what each gave.
+    entries: list[dict[str, Any]]
+    outputs: dict[str, Any]
+    talked: bool
+    # How many times the run was picked up before.
+    picked_up: int
+
+
+class _Place:
+    """How far a run got, kept so that it can go on after a restart.
+
+    The place is kept when the run starts and after each of its steps: the
+    event, the steps that are done as the trace has them, and what each of
+    them gave. It is dropped when the run is over. A run that finds its
+    place after a restart starts at its first step that is not done. A
+    restart in the middle of a step starts the step over, and a step that
+    holds steps is one step.
+
+    What a step gave is kept only if it can be made again as it was (see
+    ``values.plain_data``). From a step that gave more than that, bytes
+    for example, the place is the start of the run: the steps that go on
+    after a restart must not work with something else than they would
+    have. The same goes for the event of a run by hand. The event of
+    another run comes from its trigger again.
+
+    A place that would be larger than ``MAX_SIZE`` is not kept at all.
+    """
+
+    # In characters of JSON. An event can hold a day of health records.
+    MAX_SIZE = 200_000
+
+    def __init__(
+        self,
+        store: WorkflowStore,
+        workflow: Workflow,
+        trace: dict[str, Any],
+        event: Any,
+        event_class: type[Any],
+        output_class: Callable[[Step], type[Any]],
+    ) -> None:
+        """Create the place of the run with this trace, for this event.
+
+        ``event_class`` is the class of the trigger's events, and
+        ``output_class`` gives the class of what a step gives.
+        """
+        self._store = store
+        self._workflow = workflow
+        self._trace = trace
+        self._output_class = output_class
+        self._head: dict[str, Any] = {
+            "workflow": digest(workflow),
+            "manual": trace["manual"],
+            "started_at": trace["started_at"],
+            "event": whole_data(event),
+        }
+        try:
+            # What is plain is whole as it is: the event is kept once.
+            self._head["event"] = plain_data(event, event_class)
+            self._head["event_is_plain"] = True
+        except NotPlain:
+            self._head["event_is_plain"] = False
+        # What each step that is done gave, while all of it is plain.
+        self._outputs: dict[str, Any] | None = {}
+        self._logger = logging.getLogger("spanreed.workflows.engine")
+
+    async def keep(self, context: dict[str, Any], talked: bool) -> None:
+        """Keep the place of the run as it is now."""
+        entries = self._trace["steps"]
+        if self._outputs is not None:
+            try:
+                for step in self._workflow.steps[len(self._outputs) : len(entries)]:
+                    self._outputs[step.id] = plain_data(
+                        context[step.id], self._output_class(step)
+                    )
+            except NotPlain:
+                self._outputs = None
+        place = {
+            **self._head,
+            "picked_up": self._trace.get("picked_up", 0),
+            "talked": talked,
+            "steps": entries if self._outputs is not None else [],
+            "outputs": self._outputs or {},
+        }
+        try:
+            if len(json.dumps(place)) > self.MAX_SIZE:
+                # Not worth writing after every step. The run starts over
+                # after a restart, if its trigger gives the event again.
+                await self._store.drop_place(self._workflow.id, self._trace["id"])
+                return
+            await self._store.keep_place(self._workflow.id, self._trace["id"], place)
+        except Exception:
+            # The run goes on. It starts over after a restart, as it did
+            # before places were kept.
+            self._logger.exception(
+                f"Could not keep the place of run {self._trace['id']}"
+                f" of workflow {self._workflow.id}."
+            )
+
+    async def drop(self) -> None:
+        """Drop the place: the run is over."""
+        try:
+            await self._store.drop_place(self._workflow.id, self._trace["id"])
+        except Exception:
+            self._logger.exception(
+                f"Could not drop the place of run {self._trace['id']}"
+                f" of workflow {self._workflow.id}."
+            )
 
 
 def _now() -> str:
@@ -317,6 +455,10 @@ class WorkflowEngine:
         # Workflows whose user was told that they fail, until a run works,
         # each with the time of its last failed try.
         self._failing: dict[str, float] = {}
+        # The runs by hand that go on after a restart.
+        self._going_on: set[asyncio.Task[None]] = set()
+        # Whether the engine stops: a run that ends for that keeps its place.
+        self._stopping = False
         self._logger = logging.getLogger("spanreed.workflows.engine")
 
     @property
@@ -337,14 +479,24 @@ class WorkflowEngine:
     # -- what runs --------------------------------------------------------
 
     async def start(self, user_ids: Iterable[int]) -> None:
-        """Start the stored workflows of these users."""
+        """Start the stored workflows of these users.
+
+        A run that the last process did not get to the end of goes on. One
+        that its trigger started goes on when the trigger gives its event
+        again. One that the user started by hand goes on now.
+        """
         for user_id in user_ids:
             for workflow in await self._store.list_for_user(user_id):
                 self._apply(workflow)
+                await self._go_on_by_hand(workflow)
 
     async def stop(self) -> None:
-        """Stop every trigger, and any run that is in progress."""
-        tasks = list(self._sources.values())
+        """Stop every trigger, and any run that is in progress.
+
+        The runs keep their places, to go on when Spanreed is back.
+        """
+        self._stopping = True
+        tasks = [*self._sources.values(), *self._going_on]
         self._sources.clear()
         for task in tasks:
             task.cancel()
@@ -565,14 +717,25 @@ class WorkflowEngine:
         test: bool = False,
         chain: tuple[str, ...] = (),
         called_by: str | None = None,
+        kept: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the steps of a workflow for one event, and return the trace.
 
         ``test`` marks a run that the editor made to try a workflow out.
         ``chain`` holds the workflows whose steps had this one run, first
         one first, and ``called_by`` is the name of the last of them.
+        ``kept`` is the place of a run by hand that goes on after a
+        restart. A run that a trigger started looks for its place itself.
         """
-        run = RunInfo(id=secrets.token_hex(6), manual=manual)
+        # A test is not worth going on with, and a run inside the step of
+        # another run starts over with that step.
+        keeps = not test and called_by is None
+        if keeps and not manual:
+            kept = await self._cut_short(workflow, event)
+        again = self._made_again(workflow, kept, event) if kept else None
+        if again is not None:
+            event = again.event
+        run = RunInfo(id=again.id if again else secrets.token_hex(6), manual=manual)
         interaction = Interaction(user)
         ctx = StepContext(
             user=user,
@@ -586,7 +749,7 @@ class WorkflowEngine:
         trace: dict[str, Any] = {
             "id": run.id,
             "workflow_id": workflow.id,
-            "started_at": _now(),
+            "started_at": again.started_at if again else _now(),
             "manual": manual,
             "attempt": attempt,
             "trigger": {
@@ -600,8 +763,25 @@ class WorkflowEngine:
             trace["called_by"] = called_by
         if test:
             trace["test"] = True
-        else:
+        elif again is None:
             await self._keep_event(workflow, trace["started_at"], event)
+        if again is not None:
+            # The steps that are done, as they were, and what they gave.
+            trace["steps"] = list(again.entries)
+            trace["picked_up"] = again.picked_up + 1
+            context.update(again.outputs)
+            if again.talked:
+                interaction.note_talk()
+        place = None
+        if keeps:
+            place = _Place(
+                self._store,
+                workflow,
+                trace,
+                event,
+                self._trigger_of(workflow).Event,
+                lambda step: cast(Action, self._registry.get(step.block)).Output,
+            )
         turn = _Turn(user.id, self._locks.setdefault(workflow.id, asyncio.Lock()))
         self._turns[run.id] = turn
         try:
@@ -614,8 +794,19 @@ class WorkflowEngine:
                 async with asyncio.timeout(self.CALL_WAIT_S):
                     await turn.start()
             try:
+
+                async def keep_place() -> None:
+                    if place is not None:
+                        await place.keep(context, ctx.interaction.talked)
+
+                # Also before the first step: that one may be a question.
+                await keep_place()
                 trace["status"] = await self._run_steps(
-                    workflow.steps, ctx, context, trace["steps"]
+                    workflow.steps[len(trace["steps"]) :],
+                    ctx,
+                    context,
+                    trace["steps"],
+                    keep_place,
                 )
             except asyncio.CancelledError:
                 # A step turns the loss of the turn into its own end, so
@@ -632,11 +823,170 @@ class WorkflowEngine:
                 trace["finished_at"] = _now()
                 if ctx.interaction.talked:
                     trace["talked"] = True
-                await self._keep(workflow, trace)
+                if (
+                    place is not None
+                    and trace["status"] == CANCELLED
+                    and self._stopping
+                ):
+                    # Spanreed stops. The run is not over: it keeps its
+                    # place, and has no trace yet.
+                    pass
+                else:
+                    await self._keep(workflow, trace)
+                    if place is not None:
+                        await place.drop()
         finally:
             del self._turns[run.id]
             await turn.end()
         return trace
+
+    # -- going on after a restart -------------------------------------------
+
+    async def _cut_short(self, workflow: Workflow, event: Any) -> dict[str, Any] | None:
+        """Return the place of the run that a restart cut short for an event.
+
+        The run is one that the trigger started. There is at most one, and
+        it is the one for this event if the trigger says so. A place that
+        is for another event, or for the workflow as it was before a
+        change, is dropped: nothing will go on from it.
+        """
+        try:
+            places = await self._store.places(workflow.id)
+        except Exception:
+            self._logger.exception(
+                f"Could not read the places of the runs of workflow {workflow.id}."
+            )
+            return None
+        found = None
+        for run_id, place in places.items():
+            if place.get("manual") or run_id in self._turns:
+                continue
+            if (
+                found is None
+                and place.get("workflow") == digest(workflow)
+                and self._same_event(workflow, place, event)
+            ):
+                found = {**place, "id": run_id}
+            else:
+                await self._store.drop_place(workflow.id, run_id)
+        return found
+
+    def _same_event(
+        self, workflow: Workflow, place: dict[str, Any], event: Any
+    ) -> bool:
+        kept = place.get("event")
+        if not isinstance(kept, dict):
+            return False
+        try:
+            return self._trigger_of(workflow).same_event(kept, event)
+        except Exception:
+            self._logger.exception(
+                f"The trigger of workflow {workflow.id} could not tell whether"
+                " an event is the one a run was cut short for."
+            )
+            return False
+
+    def _made_again(
+        self, workflow: Workflow, place: dict[str, Any], event: Any
+    ) -> _Again | None:
+        """Return what a run goes on with, from the place that was kept.
+
+        ``event`` is what the trigger gave now, or ``None`` for a run by
+        hand: the event that was kept is used if it can be made again as
+        it was. Return ``None`` if there is no event to go on with.
+
+        The run starts at its first step if what the steps gave cannot be
+        made again.
+        """
+        if place.get("workflow") != digest(workflow):
+            return None
+        try:
+            if not place.get("event_is_plain"):
+                raise NotPlain("the event")
+            event = make_again(self._trigger_of(workflow).Event, place.get("event"))
+        except NotPlain:
+            if event is None:
+                return None
+        entries = place.get("steps")
+        given = place.get("outputs")
+        outputs: dict[str, Any] = {}
+        try:
+            if not isinstance(entries, list) or not isinstance(given, dict):
+                raise NotPlain("no steps")
+            if len(entries) > len(workflow.steps):
+                raise NotPlain("more steps than the workflow has")
+            for step, entry in zip(workflow.steps, entries):
+                if entry.get("id") != step.id or entry.get("status") != OK:
+                    raise NotPlain("a step that is not done")
+                block = cast(Action, self._registry.get(step.block))
+                outputs[step.id] = make_again(block.Output, given.get(step.id))
+        except (NotPlain, AttributeError):
+            entries, outputs = [], {}
+        picked_up = place.get("picked_up")
+        return _Again(
+            id=str(place["id"]),
+            started_at=str(place.get("started_at") or _now()),
+            event=event,
+            entries=entries,
+            outputs=outputs,
+            talked=bool(place.get("talked")),
+            picked_up=picked_up if isinstance(picked_up, int) else 0,
+        )
+
+    async def _go_on_by_hand(self, workflow: Workflow) -> None:
+        """Go on with the runs of a workflow that the user started by hand.
+
+        Each goes on in a task of its own. A run whose event cannot be
+        made again, or whose workflow changed or cannot run, is forgotten.
+        """
+        try:
+            places = await self._store.places(workflow.id)
+        except Exception:
+            self._logger.exception(
+                f"Could not read the places of the runs of workflow {workflow.id}."
+            )
+            return
+        for run_id, place in places.items():
+            if not place.get("manual"):
+                continue
+            kept = {**place, "id": run_id}
+            if self.problems(workflow) or not self._made_again(workflow, kept, None):
+                await self._store.drop_place(workflow.id, run_id)
+                continue
+            task = asyncio.create_task(
+                self._gone_on_by_hand(workflow, kept),
+                name=f"workflow-{workflow.id}-run-{run_id}",
+            )
+            self._going_on.add(task)
+            task.add_done_callback(self._going_on.discard)
+
+    async def _gone_on_by_hand(self, workflow: Workflow, kept: dict[str, Any]) -> None:
+        """Run the rest of a run by hand, and end it as ``run_by_hand`` does."""
+        try:
+            again = self._made_again(workflow, kept, None)
+            if again is None:
+                return
+            user = await User.find_by_id(workflow.user_id)
+            trace = await self._run(
+                workflow, user, again.event, manual=True, attempt=1, kept=kept
+            )
+            trigger = self._trigger_of(workflow)
+            await trigger.manual_run_done(
+                self._trigger_context(workflow, user),
+                from_data(trigger.Params, workflow.trigger.params),
+                again.event,
+                worked=trace["status"] != FAILED,
+            )
+            if trace.get("talked") and trace["status"] != FAILED:
+                return
+            bot = await UserInteractionApi.for_user(user)
+            await bot.send_message(self._summary(workflow, [trace]), parse_html=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._logger.exception(
+                f"Could not go on with run {kept['id']} of workflow {workflow.id}."
+            )
 
     async def _keep(self, workflow: Workflow, trace: dict[str, Any]) -> None:
         self._logger.info(
@@ -666,18 +1016,24 @@ class WorkflowEngine:
         ctx: StepContext,
         context: dict[str, Any],
         entries: list[dict[str, Any]],
+        after_each: Callable[[], Awaitable[None]] | None = None,
     ) -> str:
         """Run steps in order, up to one that fails or ends the run.
 
         Add the entry of each step that ran to ``entries``, as it ends, so
         that a run that is cancelled keeps the steps it got through. Return
         how the steps ended: ``FINISHED``, or the status of the last one.
+
+        ``after_each`` is awaited after each step that the next one
+        follows.
         """
         for step in steps:
             entry = await self._run_step(step, ctx, context)
             entries.append(entry)
             if entry["status"] != OK:
                 return str(entry["status"])
+            if after_each is not None:
+                await after_each()
         return FINISHED
 
     async def _run_step(
