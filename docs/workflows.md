@@ -29,6 +29,34 @@ Profile: every user is registered to it. It builds the block registry from
 `Plugin.blocks()` of every loaded plugin, starts the engine, and owns **Manage
 workflows**.
 
+### What a plugin is now
+
+A plugin does nothing for its users by itself. What plugins did are
+workflows, so a plugin is one or more of these:
+
+- **The connection to a service**: the user's registration, their settings,
+  and the code that talks to the service.
+- **A pack of blocks**, from `Plugin.blocks()`: the triggers and steps that
+  workflows are built from.
+- **Commands** that are about the connection, such as "Show Health Connect
+  setup".
+
+`Plugin.run()` does nothing unless a plugin overrides it. There is no loop
+for each user any more: `run_for_user`, and the supervisor that restarted
+it, are gone. Their work is the engine's: a trigger that fails is started
+again after a pause that doubles, a run that fails is tried again, and
+Telegram's flood control pauses a step (see
+[What the engine does](#what-the-engine-does)).
+
+Two plugins still listen for each of their users, because their service
+talks to Spanreed and not the other way around: Health Connect takes what
+the phone sent out of an inbox, and Obsidian reads what its own plugin says
+about itself. They call `serve_users` (`spanreed/service.py`) from their
+`run`. It runs a job for each user who is registered to the plugin, and
+reads the users again every minute: a user who registers is served without
+a restart, and the job of one who leaves is cancelled. A job that fails is
+started again after a pause that doubles from 60 seconds to 30 minutes.
+
 ## A workflow as JSON
 
 This is the recipe that replaced the Todoist No Overdue plugin:

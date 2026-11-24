@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass, field
 
 from spanreed.plugin import Plugin
+from spanreed.service import serve_users
 from spanreed.storage import redis_api
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
@@ -219,14 +220,18 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 text="Delete Health Connect data", callback=self._delete_data
             ),
         )
-        await super().run()
+        await serve_users(self, self._drain)
 
     async def _show_setup(self, user: User) -> None:
         bot: UserInteractionApi = await UserInteractionApi.for_user(user)
         config: UserConfig = await self.get_config(user)
         await bot.send_message(setup_instructions(config.token), parse_html=True)
 
-    async def run_for_user(self, user: User) -> None:
+    async def _drain(self, user: User) -> None:
+        """Take what the user's phone sent out of the inbox, for good.
+
+        Store each payload, and tell the user's workflows what changed.
+        """
         config: UserConfig = await self.get_config(user)
         # Re-register on every start so the token→user mapping survives a
         # Redis flush or a config restored from backup.
@@ -242,8 +247,9 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # One bad payload must not take the drain loop down (the
-                # supervisor would back off and the inbox would pile up).
+                # One bad payload must not take the drain loop down: it
+                # would start again only after a pause, and the inbox
+                # would pile up.
                 self._logger.exception("Failed to ingest Health Connect payload.")
 
     async def _ingest(self, user: User, raw: str) -> IngestSummary:

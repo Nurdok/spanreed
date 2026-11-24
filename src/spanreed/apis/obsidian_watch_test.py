@@ -191,8 +191,8 @@ def test_the_list_of_a_user_is_read_once(clock: _Clock) -> None:
         Plugin.reset_registry()
         plugin = ObsidianPlugin()
         user = mock_user_find_by_id(4)
-        # The plugin starts the reading for its users, and returns.
-        await plugin.run_for_user(user)
+        # The plugin starts the reading for a user, and returns.
+        await plugin._watch(user)
         obsidian_watch.start_reading(user)
         obsidian_watch.start_reading(mock_user_find_by_id(9))
         await asyncio.sleep(0)
@@ -201,6 +201,17 @@ def test_the_list_of_a_user_is_read_once(clock: _Clock) -> None:
         asyncio.run(run())
 
     assert started == [4, 9]
+
+
+def test_the_plugin_reads_for_each_of_its_users() -> None:
+    Plugin.reset_registry()
+    plugin = ObsidianPlugin()
+
+    async def serve_users(served: Any, job: Any) -> None:
+        assert (served, job) == (plugin, plugin._watch)
+
+    with patch("spanreed.apis.obsidian.serve_users", new=serve_users):
+        asyncio.run(plugin.run())
 
 
 def test_next_waits_on_the_list_of_the_user() -> None:

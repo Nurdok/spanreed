@@ -423,7 +423,8 @@ class WorkflowEngine:
     RETRY_RESET_UPTIME_S = 600.0
     # During Telegram flood control a step waits and is tried again, this
     # many times. The random extra wait spreads out the steps that were
-    # stopped together (see ``Plugin._run_for_user_supervised``).
+    # stopped together: a burst of them in the second that a ban lifts is
+    # how the ban comes back.
     FLOOD_MAX_WAITS = 3
     FLOOD_WAKE_JITTER_RANGE_S = (60.0, 600.0)
     # The trace of a loop keeps this many of its rounds: the first ones,

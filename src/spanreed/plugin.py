@@ -1,26 +1,15 @@
 from __future__ import annotations
 
 from spanreed.storage import redis_api
-import asyncio
 import logging
 import json
-import random
-import time
 from typing import TYPE_CHECKING, Generic, TypeVar, Optional, cast
 from spanreed.user import User
 import abc
 from dataclasses import asdict
 
-from telegram.error import RetryAfter
-
-from spanreed.interaction.errors import SurfaceBusyError
-
 if TYPE_CHECKING:
     from spanreed.workflows.blocks import Block
-
-# Indirection so tests can fake the supervisor's uptime clock without
-# patching time.monotonic globally (asyncio uses it internally too).
-_monotonic = time.monotonic
 
 UC = TypeVar("UC")
 
@@ -130,6 +119,13 @@ class Plugin(abc.ABC, Generic[UC]):
             return data.decode("utf-8")
         return data
 
+    async def user_ids(self) -> set[int]:
+        """Return the ids of the users who are registered to the plugin."""
+        return {
+            int(user_id)
+            for user_id in await redis_api.smembers(self._get_user_list_key())
+        }
+
     async def get_users(self) -> list[User]:
         self._logger.info(f"Getting users for plugin {self.canonical_name()}")
         self._logger.info(f"Getting user list key {self._get_user_list_key()}")
@@ -194,83 +190,14 @@ class Plugin(abc.ABC, Generic[UC]):
 
         commands.notify_user_plugins_changed(user)
 
-    async def run_for_user(self, user: User) -> None:
-        pass
-
-    # Crash-restart backoff: first restart after 60s, doubling to a 30-minute
-    # cap. A run that survives >10 minutes resets the backoff.
-    RESTART_BACKOFF_INITIAL_S = 60.0
-    RESTART_BACKOFF_MAX_S = 1800.0
-    RESTART_BACKOFF_RESET_UPTIME_S = 600.0
-    # Random extra sleep added to every flood-control wake, so plugins that
-    # were banned together don't all retry in the same second (a synchronized
-    # multi-plugin burst right after a ban lifts is how the ban re-arms).
-    FLOOD_WAKE_JITTER_RANGE_S = (60.0, 600.0)
-
-    async def _run_for_user_supervised(self, user: User) -> None:
-        """Run a user's loop, restarting it if it crashes.
-
-        `run_for_user` is typically an infinite loop. Without this, a single
-        unhandled exception (e.g. a Telegram flood-control `RetryAfter` that
-        escaped the rate limiter) would kill the task permanently: `run()` is
-        gathered in `__main__` with `return_exceptions=True` and never
-        restarted, so the plugin would stay dead until a full service restart.
-        Returning normally is treated as "done" and is not restarted.
-
-        Restarts back off exponentially: a persistent failure (e.g. the
-        Obsidian client being offline for hours) must not turn into a tight
-        crash-retry loop — on 2026-07-21 that produced 1,100+ restart cycles
-        in a day and the Telegram traffic they generated escalated a
-        flood-control ban to 18 hours.
-        """
-        crash_delay = self.RESTART_BACKOFF_INITIAL_S
-        while True:
-            started = _monotonic()
-            try:
-                await self.run_for_user(user)
-                return
-            except asyncio.CancelledError:
-                raise
-            except (RetryAfter, SurfaceBusyError) as e:
-                # Flood control, either raw from Telegram internals or
-                # translated to the surface-neutral SurfaceBusyError by the
-                # interaction facade (plugins only ever see the latter).
-                # The ban is on the shared bot token, so waiting the full
-                # retry_after is pointless per-plugin (the dispatcher already
-                # fails fast during the ban and reports the remaining time).
-                # Sleep up to an hour, plus jitter so the banned plugins wake
-                # spread out instead of as a synchronized herd.
-                delay = min(e.retry_after, 3600) + random.uniform(
-                    *self.FLOOD_WAKE_JITTER_RANGE_S
-                )
-                self._logger.warning(
-                    f"{self.canonical_name()} hit Telegram flood control for"
-                    f" user {user.id} (ban: {e.retry_after}s); sleeping"
-                    f" {delay:.0f}s before retry."
-                )
-                await asyncio.sleep(delay)
-            except Exception:
-                if _monotonic() - started > self.RESTART_BACKOFF_RESET_UPTIME_S:
-                    crash_delay = self.RESTART_BACKOFF_INITIAL_S
-                self._logger.exception(
-                    f"{self.canonical_name()} crashed for user {user.id};"
-                    f" restarting in {crash_delay:.0f}s."
-                )
-                await asyncio.sleep(crash_delay)
-                crash_delay = min(crash_delay * 2, self.RESTART_BACKOFF_MAX_S)
-
-    # This currently assumes that user <--> plugin subscription doesn't
-    # change during the lifetime of the plugin.
-    # TODO: Refactor to allow for dynamic subscription changes.
     async def run(self) -> None:
-        self._logger.info(f"Running plugin {self.canonical_name()}")
+        """Run what the plugin has to run for as long as Spanreed does.
 
-        async with asyncio.TaskGroup() as tg:
-            for user in await self.get_users():
-                self._logger.info(
-                    f"Running plugin {self.canonical_name()} for user" f" {user.id}"
-                )
-                tg.create_task(self._run_for_user_supervised(user))
+        Nothing, by default: what plugins did for their users are workflows
+        now. A plugin overrides this to register its commands, to serve a
+        surface, or to listen to its service for each of its users (see
+        ``spanreed.service.serve_users``).
+        """
 
     @classmethod
     def reset_registry(cls) -> None:
