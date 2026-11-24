@@ -111,10 +111,12 @@ new ones.
   bottom on a phone.
 - **A loop**, such as "For each", holds the cards of the steps inside it, top
   to bottom, numbered 1.1, 1.2.
+- **A branch**, "If", holds two lists of cards: the steps for when its
+  condition holds, and the steps for when it does not.
 - **History** lists the last 30 runs. Opening a run shows what the trigger
   gave and what each step got and gave, and where the run stopped or failed.
   A loop shows each time it went through its steps, as "Item 3 of 5". The one
-  that failed is open.
+  that failed is open. A branch shows the side that ran.
 - **The switch** turns the workflow on and off at once.
 - **Run now** is there if the trigger can be started by hand. It runs the
   workflow as its command does and goes to the conversation, where what the
@@ -186,6 +188,15 @@ its command can be changed there too.
 
 ![A loop being edited on a phone](images/web-ui-workflow-edit-loop-phone.png)
 ![The list of blocks on a phone](images/web-ui-workflow-add-step-phone.png)
+
+A branch: as it is shown, while it is edited, and in what a test did.
+
+![A workflow with a branch](images/web-ui-workflow-branch-desktop.png)
+![A branch being edited](images/web-ui-workflow-branch-edit-desktop.png)
+![The side of a branch that a test ran](images/web-ui-workflow-branch-test-desktop.png)
+
+![A workflow with a branch, on a phone](images/web-ui-workflow-branch-phone.png)
+![A branch being edited on a phone](images/web-ui-workflow-branch-edit-phone.png)
 
 What a test did:
 
