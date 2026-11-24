@@ -2,7 +2,8 @@
 
 The page draws a workflow as a row of cards: the trigger, then the steps.
 A card has the block's title, the plugin it comes from, its inputs as they
-are stored (templates and all) and the names of its outputs.
+are stored (templates and all) and the names of its outputs. The card of a
+loop also has the cards of the steps inside it.
 """
 
 from __future__ import annotations
@@ -11,9 +12,9 @@ import dataclasses
 from typing import Any
 
 from spanreed import config_form
-from spanreed.workflows.blocks import Action, Block, BlockKind, Trigger
+from spanreed.workflows.blocks import Action, Block, BlockKind, Loop, Trigger
 from spanreed.workflows.engine import WorkflowEngine, outcome
-from spanreed.workflows.model import Workflow
+from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.values import to_data
 
 # What the blocks that Spanreed itself publishes are shown as coming from.
@@ -102,6 +103,36 @@ def _card(
     }
 
 
+def _step_cards(
+    engine: WorkflowEngine, steps: list[Step], prefix: str = ""
+) -> list[dict[str, Any]]:
+    """Return the cards of some steps, each with the cards of its own steps.
+
+    ``number`` is what the page and the engine's messages call a step:
+    ``2``, and ``2.1`` for the first step inside it.
+    """
+    cards = []
+    for position, step in enumerate(steps, start=1):
+        number = f"{prefix}{position}"
+        card = _card(engine, step.block, step.inputs, step.id, Action)
+        card["number"] = number
+        card["steps"] = _step_cards(engine, step.steps, prefix=f"{number}.")
+        block = engine.registry.get(step.block)
+        if isinstance(block, Loop):
+            card["inside_title"] = block.inside_title
+        cards.append(card)
+    return cards
+
+
+def _flat(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return some cards and the cards inside them, in the order they run."""
+    flat = []
+    for card in cards:
+        flat.append(card)
+        flat.extend(_flat(card.get("steps", [])))
+    return flat
+
+
 def run_view(trace: dict[str, Any]) -> dict[str, Any]:
     """Return the trace of a run, with a sentence end that says how it went."""
     return {**trace, "outcome": outcome(trace)}
@@ -127,10 +158,7 @@ def detail(
     trigger = _card(
         engine, workflow.trigger.block, workflow.trigger.params, "trigger", Trigger
     )
-    steps = [
-        {**_card(engine, step.block, step.inputs, step.id, Action), "number": number}
-        for number, step in enumerate(workflow.steps, start=1)
-    ]
+    steps = _step_cards(engine, workflow.steps)
     problems = engine.problems(workflow)
     by_hand = not problems and engine.can_run_by_hand(workflow)
     return {
@@ -157,7 +185,7 @@ def summary(
 ) -> dict[str, Any]:
     """Return what the list of workflows shows of one workflow."""
     full = detail(engine, workflow, last_run)
-    cards = [full["trigger"], *full["steps"]]
+    cards = [full["trigger"], *_flat(full["steps"])]
     return {
         "id": full["id"],
         "name": full["name"],

@@ -147,6 +147,13 @@
   .lane .join::before { content: ""; position: absolute; left: 0; right: 0; top: 20px; border-top: 2px solid var(--line); }
   .wcard { flex: none; width: 224px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
   .wcard.missing { border-color: var(--err); }
+  /* The card of a loop holds the cards of the steps inside it, top to bottom. */
+  .wcard.holds { width: 272px; }
+  .inner { display: flex; flex-direction: column; }
+  .inner .wcard { width: auto; background: var(--bg); }
+  .inner .wcard .val { background: var(--card); }
+  .inner .vjoin { height: 12px; position: relative; }
+  .inner .vjoin::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; border-left: 2px solid var(--line); }
   .wc-head { display: flex; align-items: center; gap: 9px; padding: 9px 10px 2px; }
   .wc-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .wc-title small { color: var(--muted); font-size: 12px; }
@@ -184,10 +191,16 @@
   .tstep .kv { grid-column: 2; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
   .tstep .kv b { color: var(--fg); font-weight: 500; }
   .tstep .kv.err { color: var(--err); }
+  .rounds { grid-column: 2; display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+  details.round { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  details.round summary { display: flex; align-items: center; gap: 8px; padding: 5px 9px; cursor: pointer; font-size: 13px; list-style: none; }
+  details.round summary::-webkit-details-marker { display: none; }
+  details.round summary small { color: var(--muted); }
+  details.round .trace { padding: 8px 9px; }
   @media (max-width: 720px) {
     .lane { flex-direction: column; align-items: stretch; overflow-x: visible; padding-right: 2px;
             -webkit-mask-image: none; mask-image: none; }
-    .wcard { width: auto; }
+    .wcard, .wcard.holds { width: auto; }
     .lane .join { width: auto; height: 16px; }
     .lane .join::before { left: 50%; right: auto; top: 0; bottom: 0; border-top: 0; border-left: 2px solid var(--line); }
   }
@@ -957,7 +970,8 @@ function richValue(value, sources, pairs) {
 }
 
 function renderCard(card, badge, sources) {
-  const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : ""));
+  const inside = card.steps || [];
+  const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : "") + (inside.length ? " holds" : ""));
   const head = el("div", "wc-head"), title = el("div", "wc-title");
   title.append(el("small", "", card.app || "Unknown block"), el("strong", "", card.title));
   head.append(glyph(card.app, card.kind), title, el("span", "num", badge));
@@ -977,16 +991,29 @@ function renderCard(card, badge, sources) {
     sec.append(el("div", "outs-l", "Outputs"), chips);
     c.append(sec);
   }
+  if (inside.length) {
+    // The steps of a loop, inside its card.
+    const sec = el("div", "wc-sec"), inner = el("div", "inner");
+    inside.forEach((step, i) => {
+      if (i) inner.append(el("span", "vjoin"));
+      inner.append(renderCard(step, step.number, sources));
+    });
+    sec.append(el("div", "outs-l", card.inside_title || "Steps inside"), inner);
+    c.append(sec);
+  }
   return c;
 }
+
+// Some steps and the steps inside them, in the order they run.
+const allSteps = (steps) => steps.flatMap((step) => [step, ...allSteps(step.steps || [])]);
 
 // The trigger and the steps, left to right. On a phone, top to bottom.
 function renderLane(d) {
   const sources = { trigger: { badge: "T", kind: "trigger" }, run: { badge: "run", kind: "logic" } };
-  for (const step of d.steps) sources[step.id] = { badge: String(step.number), kind: step.kind };
+  for (const step of allSteps(d.steps)) sources[step.id] = { badge: step.number, kind: step.kind };
   const lane = el("div", "lane");
   lane.append(renderCard(d.trigger, "T", sources));
-  for (const step of d.steps) lane.append(el("span", "join"), renderCard(step, String(step.number), sources));
+  for (const step of d.steps) lane.append(el("span", "join"), renderCard(step, step.number, sources));
   return lane;
 }
 
@@ -1006,6 +1033,47 @@ function traceLines(row, label, data) {
   row.append(line);
 }
 
+// One step of a run. A loop also shows its rounds, each with its own steps.
+function traceStep(step, cards, place) {
+  const card = cards[step.id];
+  const row = el("div", "tstep k-" + (card ? card.kind : "action")), h = el("div", "t-head");
+  const how = step.status === "ok" ? step.duration_ms + " ms"
+    : step.status === "stopped" ? "stopped here" : "failed";
+  h.append(el("strong", "", step.title), el("small", "", how));
+  // A step that the workflow no longer has is numbered by its place.
+  row.append(el("span", "num", card ? card.number : place), h);
+  traceLines(row, "got", step.inputs);
+  if (step.rounds) row.append(traceRounds(step, cards));
+  traceLines(row, "gave", step.outputs);
+  if (step.reason) row.append(el("div", "kv", step.reason));
+  if (step.error) row.append(el("div", "kv err", step.error));
+  return row;
+}
+
+function traceRounds(step, cards) {
+  const box = el("div", "rounds");
+  for (const round of step.rounds) {
+    const item = el("details", "round"), sum = el("summary");
+    const how = round.status === "failed" ? "failed" : round.status === "stopped" ? "stopped early" : "";
+    sum.append(el("span", "dot" + (round.status === "failed" ? " bad" : "")),
+               el("span", "", (step.round_name || "Round") + " " + round.number + " of " + step.round_count),
+               el("small", "", how));
+    const inner = el("div", "trace");
+    round.steps.forEach((s, i) => inner.append(traceStep(s, cards, String(i + 1))));
+    item.append(sum, inner);
+    // What went wrong is what the reader came for.
+    item.open = round.status === "failed";
+    box.append(item);
+  }
+  // A long loop keeps its first rounds. A loop that failed did not get to the rest.
+  const ran = step.rounds_run ?? step.round_count;
+  const notKept = ran - step.rounds.length, notRun = step.round_count - ran;
+  if (notKept > 0) box.append(el("div", "kv", "…and " + notKept + " more that ran, which are not kept."));
+  if (notRun > 0) box.append(el("div", "kv", "The other " + notRun + " did not run."));
+  if (!step.round_count) box.append(el("div", "kv", "There was nothing to repeat for."));
+  return box;
+}
+
 function renderTrace(run, d) {
   const trace = el("div", "trace");
   const first = el("div", "tstep k-trigger"), head = el("div", "t-head");
@@ -1013,19 +1081,8 @@ function renderTrace(run, d) {
   first.append(el("span", "num", "T"), head);
   traceLines(first, "gave", run.trigger.outputs);
   trace.append(first);
-  run.steps.forEach((step, i) => {
-    const card = d.steps.find((s) => s.id === step.id);
-    const row = el("div", "tstep k-" + (card ? card.kind : "action")), h = el("div", "t-head");
-    const how = step.status === "ok" ? step.duration_ms + " ms"
-      : step.status === "stopped" ? "stopped here" : "failed";
-    h.append(el("strong", "", step.title), el("small", "", how));
-    row.append(el("span", "num", String(i + 1)), h);
-    traceLines(row, "got", step.inputs);
-    traceLines(row, "gave", step.outputs);
-    if (step.reason) row.append(el("div", "kv", step.reason));
-    if (step.error) row.append(el("div", "kv err", step.error));
-    trace.append(row);
-  });
+  const cards = Object.fromEntries(allSteps(d.steps).map((step) => [step.id, step]));
+  run.steps.forEach((step, i) => trace.append(traceStep(step, cards, String(i + 1))));
   return trace;
 }
 

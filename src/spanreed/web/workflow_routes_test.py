@@ -123,7 +123,7 @@ def test_a_workflow_is_shown_as_its_trigger_and_its_steps() -> None:
             assert trigger["outputs"] == ["date", "time"]
 
             find, check, move, tell = shown["steps"]
-            assert [step["number"] for step in shown["steps"]] == [1, 2, 3, 4]
+            assert [step["number"] for step in shown["steps"]] == ["1", "2", "3", "4"]
             assert (find["id"], find["title"], find["app"]) == (
                 "find",
                 "Find tasks",
