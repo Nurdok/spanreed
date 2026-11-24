@@ -42,6 +42,8 @@ IGNORED_ERRORS = (
 ERROR_PAUSE = datetime.timedelta(minutes=30)
 # How long the reading waits after it failed itself.
 RETRY_S = 60.0
+# The seconds that one wait for the plugin takes, before the next starts.
+WAIT_S = 60
 
 _FIRED_AT = "fired_at"
 
@@ -106,8 +108,13 @@ def start_reading(user: User) -> None:
 
 
 async def _next(user_id: int) -> Any:
-    """Wait for the next thing the plugin of a user said, and return it."""
-    found = await redis_api.blpop(f"{QUEUE}:{user_id}")
+    """Wait for the next thing the plugin of a user said, and return it.
+
+    Return ``None`` if nothing came in ``WAIT_S``. The wait has an end
+    because a connection that is quiet for hours, as while Obsidian is
+    closed, gets cut on the way.
+    """
+    found = await redis_api.blpop(f"{QUEUE}:{user_id}", timeout=WAIT_S)
     return None if found is None else found[1]
 
 
@@ -116,7 +123,8 @@ async def _read(user_id: int) -> None:
         try:
             raw = await _next(user_id)
             if raw is None:
-                # Not from Redis, which waits. Do not spin.
+                # Redis has waited. What stands in for it in a test has
+                # not: do not spin.
                 await _sleep(1)
                 continue
             await take(user_id, raw)

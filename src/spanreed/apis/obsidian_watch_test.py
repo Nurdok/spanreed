@@ -210,7 +210,15 @@ def test_next_waits_on_the_list_of_the_user() -> None:
     with patch("spanreed.apis.obsidian_watch.redis_api", new=redis):
         assert asyncio.run(obsidian_watch._next(4)) == b'{"kind": "watchdog"}'
 
-    redis.blpop.assert_awaited_once_with("obsidian-plugin-monitor:4")
+    redis.blpop.assert_awaited_once_with("obsidian-plugin-monitor:4", timeout=60)
+
+
+def test_next_gives_nothing_when_the_wait_is_over() -> None:
+    redis = AsyncMock()
+    redis.blpop.return_value = None
+
+    with patch("spanreed.apis.obsidian_watch.redis_api", new=redis):
+        assert asyncio.run(obsidian_watch._next(4)) is None
 
 
 # -- Vault stopped answering -------------------------------------------------

@@ -12,6 +12,7 @@ Spanreed starts again.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import traceback
 from collections.abc import AsyncGenerator
@@ -22,6 +23,8 @@ from spanreed.storage import redis_api
 # The name is that of the plugin that read the list before workflows did.
 # It is kept, so that what waited in the list is not lost.
 QUEUE = "spanreed-monitor-exceptions"
+# The seconds that one wait for an error takes, before the next one starts.
+WAIT_S = 60
 
 
 async def report(text: str) -> None:
@@ -31,8 +34,15 @@ async def report(text: str) -> None:
 
 async def next_report() -> str:
     """Wait for an error, and return its text. The newest one comes first."""
-    _, text = await redis_api.blpop(QUEUE)
-    return text.decode("utf-8") if isinstance(text, bytes) else str(text)
+    while True:
+        # Not one wait without an end: a connection that is quiet for
+        # hours gets cut on the way.
+        found = await redis_api.blpop(QUEUE, timeout=WAIT_S)
+        if found is not None:
+            text = found[1]
+            return text.decode("utf-8") if isinstance(text, bytes) else str(text)
+        # Redis has waited. What stands in for it in a test has not.
+        await asyncio.sleep(0)
 
 
 async def drop_waiting() -> None:
