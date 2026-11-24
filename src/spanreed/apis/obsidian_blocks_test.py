@@ -69,6 +69,7 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         "obsidian.write-file",
         "obsidian.write-note",
         "obsidian.append-to-note",
+        "obsidian.stopped-answering",
     ]
 
 
