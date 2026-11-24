@@ -94,6 +94,7 @@ TOOK_OVER = "Another conversation took over."
 _PRIORITIES = {
     "normal": UserInteractionPriority.NORMAL,
     "low": UserInteractionPriority.LOW,
+    "high": UserInteractionPriority.HIGH,
 }
 
 
