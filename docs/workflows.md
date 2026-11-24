@@ -145,6 +145,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `core.for-each` For each | logic | Workflows |
 | `core.stop` End the run | logic | Workflows |
 | `core.ask-choice` Ask me to choose | ask | Workflows |
+| `core.ask-each` Ask me to pick, one at a time | ask | Workflows |
 | `core.ask-text` Ask me for text | ask | Workflows |
 | `core.ask-list` Ask me for a list | ask | Workflows |
 | `core.send-message` Send message | ask | Workflows |
@@ -153,7 +154,9 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `todoist.find-tasks` Find tasks | action | Todoist |
 | `todoist.set-due-date` Set due date | action | Todoist |
 | `obsidian.create-daily-note` Create today's daily note | action | Obsidian |
+| `obsidian.get-note-property` Get note property | action | Obsidian |
 | `obsidian.set-note-properties` Set note properties | action | Obsidian |
+| `obsidian.add-to-list-property` Add to list property | action | Obsidian |
 | `obsidian.write-file` Write file | action | Obsidian |
 | `obsidian.write-note` Write note | action | Obsidian |
 | `obsidian.append-to-note` Append to note | action | Obsidian |
@@ -170,12 +173,13 @@ More arrive with each plugin whose behavior becomes a recipe.
 
 ### Asking
 
-Three blocks ask the user something. Each has the same two inputs at its end,
+Four blocks ask the user something. Each has the same two inputs at its end,
 **Priority** and **Give up after** (see [The turn to talk](#the-turn-to-talk)).
 
 | Block | Asks | Gives |
 | --- | --- | --- |
 | Ask me to choose | A question with one button for each option | `chosen`, `answer` (the text), `item` (the option as it was given), `index` (from 1) |
+| Ask me to pick, one at a time | The same question again and again, without the options picked so far, until **Done** | For each pick: `answer`, `value`, `picked`, `count`, `left`. After: all of `picked` |
 | Ask me for text | A question that is answered in writing | `answer`, `answered` |
 | Ask me for a list | "Add one?" and then the question, until the answer is No | `answers`, `count` |
 
@@ -192,6 +196,41 @@ Three blocks ask the user something. Each has the same two inputs at its end,
   decides what happens then.
 - **"Ask me for text" can ask first** whether there is anything to write
   (**Ask first**). On No, the answer is empty.
+
+"Ask me to pick, one at a time" holds steps, as a loop does, under **After
+each pick**. They run for a pick before the next question is asked, so a
+pick is acted on even if the user never answers again:
+
+```json
+{
+  "id": "pick",
+  "block": "core.ask-each",
+  "inputs": {
+    "question": "Did you do any of these habits today?",
+    "options": {"Meditate": "meditate", "Read": "read"},
+    "leave_out": "{{ done.items }}"
+  },
+  "steps": [
+    {
+      "id": "mark",
+      "block": "obsidian.add-to-list-property",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "property": "habits",
+        "value": "{{ pick.value }}"
+      }
+    }
+  ]
+}
+```
+
+- **Options** are rows: what a button says, and the value that picking it
+  gives. The page edits them as rows, so adding an option is adding a row.
+- **Leave out** holds values that are not offered. Nothing is asked, and the
+  run does not take the turn to talk, when no option is on offer.
+- **A step inside that fails** fails the run: `failed at step 3, Ask me to
+  pick, one at a time: Pick 2, Add to list property: …`. The picks before it
+  were acted on.
 
 "End the run" ends the run where it is, without failing it. Inside a loop it
 ends the loop too, where "Only continue if" ends only the round it is in.
@@ -255,6 +294,12 @@ class ProcessScan(Action[ProcessScanInput, ProcessScanOutput]):
 Give the inputs a `priority` and a `give_up_after` with `priority_field()`
 and `give_up_field()` of `spanreed.workflows.asking`, and the card has the
 two inputs that the built-in blocks have.
+
+An `AskLoop` is a loop whose rounds are answers. The engine calls `ask`
+before each round with the rounds so far, and runs the steps inside for what
+it returns, until it returns `None`. `after` gives what the steps after the
+loop see. `anything_to_ask` lets the engine skip the turn to talk when
+`ask` would not ask.
 
 ### Files
 
@@ -664,10 +709,61 @@ gets the recipe and is told so, and the registration is dropped.
 | Plugin | Recipe |
 | --- | --- |
 | Todoist No Overdue | Daily chores never overdue |
+| Habit Tracker | Habit check-in |
 
-The schedule differs from the plugin in one way: the plugin ran at every
-start of Spanreed and then every 4 hours, and the recipe runs every 4 hours
-whether or not Spanreed was restarted in between.
+A retired plugin can carry over the config it had saved for a user
+(`RetiredPlugin.keep_settings`). The config stays in Redis after the plugin
+is gone.
+
+The schedule of "Daily chores never overdue" differs from the plugin in one
+way: the plugin ran at every start of Spanreed and then every 4 hours, and
+the recipe runs every 4 hours whether or not Spanreed was restarted in
+between.
+
+#### Habit Tracker
+
+The plugin asked, every hour, which of the user's habits were done today, and
+marked each one in a property of the daily note.
+
+![The habit check-in as a workflow](images/web-ui-workflow-ask-each-desktop.png)
+
+Where the parts of the plugin went:
+
+| Was | Is now |
+| --- | --- |
+| The habits | The rows of **Options** on "Ask me to pick, one at a time": what the button says, and the name that is written |
+| Add Habit, Remove Habit | Gone. Add or remove a row in the editor |
+| Track Habits | The command of the workflow, with the same name |
+| The folder of the daily notes | The start of **Note** on "Get note property" and "Add to list property" |
+| The name of the property | **Property** on the same two steps |
+| Asking with low priority | **Priority** `low` on the question |
+| A new question every hour | The schedule, every hour, and **Give up after** 60 minutes |
+
+`spanreed/plugins/habit_check_in.py` is what is left of the plugin: it turns
+the saved config into those inputs. A user who had no config gets the
+workflow turned off, with the recipe's example habits.
+
+- **A habit is shown as the plugin showed it**, with a capital first letter
+  and the rest in small letters, and written as the user named it: the row
+  `Take vitamin d` gives `take vitamin D`.
+- **The note is the one of the day the question is about**:
+  `{{ trigger.date }}`, the date of the schedule's event in the user's
+  timezone. A question asked at 23:30 and answered at 00:10 marks
+  yesterday's note. The plugin used the server's date, and dropped the
+  question at midnight.
+- **A question that gives way is asked again at the next hour**, not at once.
+  The plugin asked again as soon as the other conversation was over.
+- **The plugin's two messages are not sent.** A property that holds something
+  that is not a list counts as no habits done; the plugin said "Invalid
+  value" each time. A daily note that is not there after it was asked for
+  counts as one without the property; the plugin said "Generating today's
+  daily note..." and tried once more.
+- **Run by hand with nothing left to ask**, the workflow says "Habit
+  check-in: finished." The plugin's command said nothing.
+
+`spanreed/plugins/habit_check_in_test_data.py` holds five days and what the
+plugin did on each, taken by running it before it was removed. The tests run
+the workflow on the same days and compare.
 
 ### Converted: the plugin stays as the connection
 

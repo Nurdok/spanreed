@@ -370,8 +370,9 @@ class AskEachInput:
     """What ``AskEach`` asks, and among what."""
 
     question: str
-    # What each button says, and the value that picking it gives.
-    options: dict[str, Any]
+    options: dict[str, Any] = field(
+        metadata={HELP_KEY: "What a button says, and the value that picking it gives"}
+    )
     leave_out: list[Any] = field(
         default_factory=list,
         metadata={HELP_KEY: "Values that are not offered: the ones done already"},
