@@ -255,6 +255,50 @@ class WriteNote(Action[WriteNoteInput, WriteNoteOutput]):
         return WriteNoteOutput(path=inputs.path)
 
 
+@dataclass
+class AppendToNoteInput:
+    """What to add to which note."""
+
+    # The path of the note in the vault. A note that is not there is made.
+    path: str
+    text: str
+    # The heading to add the text under, at the end of its section. A
+    # heading that is not there is added at the end of the note.
+    heading: str | None = None
+
+
+@dataclass
+class AppendToNoteOutput:
+    """Where the text went."""
+
+    path: str
+
+
+class AppendToNote(Action[AppendToNoteInput, AppendToNoteOutput]):
+    """Add text to the end of a note, or of a section of it.
+
+    Unlike "Write note", this keeps what the note holds. Doing it again
+    after a failure adds the text again.
+    """
+
+    id = "obsidian.append-to-note"
+    title = "Append to note"
+
+    async def run(
+        self, ctx: StepContext, inputs: AppendToNoteInput
+    ) -> AppendToNoteOutput:
+        """Add the text."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        await obsidian.append_to_note(inputs.path, inputs.text, inputs.heading or None)
+        return AppendToNoteOutput(path=inputs.path)
+
+
 def obsidian_blocks() -> list[Block]:
     """Return the blocks that the Obsidian plugin publishes."""
-    return [CreateDailyNote(), SetNoteProperties(), WriteFile(), WriteNote()]
+    return [
+        CreateDailyNote(),
+        SetNoteProperties(),
+        WriteFile(),
+        WriteNote(),
+        AppendToNote(),
+    ]

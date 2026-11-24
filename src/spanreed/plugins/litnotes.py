@@ -1,39 +1,43 @@
-import pathlib
-import base64
-import urllib.parse
-from typing import List, Optional
-import jinja2
-from dataclasses import dataclass
+"""Publish the book search, for workflows that write a note for a book.
 
+The recipe "Add book note" does what this plugin used to do itself: it asks
+which book, lets the user choose among what Google Books finds, asks who
+recommended it and for free text, and writes the note. ``convert_to_workflows``
+gives it to a user who had the plugin before, with the folder and the two
+note templates they had.
+"""
+
+import datetime
+import logging
+
+from spanreed.apis.google_books import Book
+from spanreed.apis.google_books_blocks import google_books_blocks
+from spanreed.interaction import UserInteractionApi
 from spanreed.plugin import Plugin
 from spanreed.user import User
-from spanreed.apis.google_books import GoogleBooks, Book
-from spanreed.interaction import UserInteractionApi, PluginCommand
-from spanreed.apis.obsidian import (
-    ObsidianApi,
-    ObsidianApiTimeoutError,
-    ObsidianPlugin,
+from spanreed.workflows import expressions
+from spanreed.workflows.asking import AskChoiceOutput, AskListOutput, AskTextOutput
+from spanreed.workflows.blocks import Block
+from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.model import Workflow
+from spanreed.workflows.recipes import all_recipes
+
+_logger = logging.getLogger(__name__)
+
+# The recipe that does what this plugin used to do itself.
+ADD_BOOK_NOTE_RECIPE = "lit-notes-add-book-note"
+# The step of the recipe that writes the note.
+NOTE_STEP = "note"
+
+# The plugin's templates knew the book, the people who recommended it and
+# the free text by these names. In the workflow, each is a value of the
+# step that asked for it. Starting a template with this keeps the names,
+# so that a template goes on as the user wrote it.
+OLD_NAMES = (
+    "{% set book = book.item %}"
+    "{% set recommended_by = recommended_by.answers %}"
+    "{% set free_text = free_text.answer %}"
 )
-
-
-def _format_book(book: Book) -> str:
-    title: str = book.title
-    authors: str = ""
-    if book.authors:
-        authors = f" by "
-        if len(book.authors) == 1:
-            authors += book.authors[0]
-        else:
-            authors += ", ".join(book.authors[:-1]) + f"and {book.authors[-1]}"
-    return f"{title}{authors} ({book.publication_year})"
-
-
-@dataclass
-class UserConfig:
-    vault: str
-    file_location: str
-    note_title_template: str
-    note_content_template: str
 
 
 class LitNotesPlugin(Plugin):
@@ -43,220 +47,98 @@ class LitNotesPlugin(Plugin):
 
     @classmethod
     def has_user_config(cls) -> bool:
-        return True
+        return False
 
-    @classmethod
-    def get_config_class(cls) -> Optional[type[UserConfig]]:
-        return UserConfig
+    def blocks(self) -> list[Block]:
+        """Return the book search for workflows."""
+        return google_books_blocks()
 
-    async def run(self) -> None:
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(text="Add book note", callback=self._ask_for_book_note),
-        )
 
-    async def _ask_for_book_note(self, user: User) -> None:
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+# -- from a plugin that writes the note to a workflow that does ----------------
 
-        async with bot.user_interaction():
-            self._logger.info("Asking for book")
-            book: Optional[Book] = await self._ask_for_book(bot)
-            if book is None:
-                return
-            recommended_by: List[str] = await self._ask_for_recommendation(bot)
-            free_text: str = await self._ask_for_free_text(bot)
 
-            await self._add_note_for_book(user, bot, book, recommended_by, free_text)
+def note_inputs(
+    file_location: str, title_template: str, content_template: str
+) -> dict[str, str]:
+    """Return where and what the workflow writes, from the plugin's settings.
 
-    async def _ask_for_free_text(self, bot: UserInteractionApi) -> str:
-        choice = await bot.request_user_choice(
-            "Any free text to add to the note?", ["Yes", "No"]
-        )
-        if choice == 0:
-            return await bot.request_user_input("Enter free text:")
-        return ""
+    The plugin wrote the note to the folder ``file_location``, under the
+    title that ``title_template`` gave, with ``.md`` after it.
+    """
+    folder = file_location.strip("/")
+    return {
+        "path": f"{OLD_NAMES}{folder + '/' if folder else ''}{title_template}.md",
+        "text": f"{OLD_NAMES}{content_template}",
+    }
 
-    async def _ask_for_recommendation(self, bot: UserInteractionApi) -> List[str]:
-        self._logger.info("Asking for recommendation")
-        recommended_by: list[str] = []
-        while True:
-            if recommended_by:
-                prompt = 'Add another "Recommended by"?'
-            else:
-                prompt = 'Add "Recommended by"?'
-            choice = await bot.request_user_choice(
-                prompt,
-                ["Yes", "No"],
-            )
-            if choice == 1:
-                break
 
-            recommended_by.append(await bot.request_user_input("Who recommended it?"))
-        return recommended_by
+def template_problem(inputs: dict[str, str]) -> str | None:
+    """Return why a template of the note would fail in a workflow, if one would.
 
-    async def _ask_for_book(self, bot: UserInteractionApi) -> Optional[Book]:
-        google_books_api: GoogleBooks = GoogleBooks("")
-        book_query = await bot.request_user_input(
-            "Which book do you want to add a note for?"
-        )
-        books: List[Book] = await google_books_api.get_books(query=book_query)
-
-        if not books:
-            await bot.send_message("No books found. This incident will be reported.")
-            return None
-
-        if len(books) == 1:
-            book = books[0]
-            choice = await bot.request_user_choice(
-                f"Found one book: {_format_book(book)}.\n" "Is this the one you meant?",
-                ["Yes", "No"],
-            )
-            if choice == 0:
-                return book
-            else:
-                await bot.send_message(
-                    "Sorry I couldn't find the book you were looking for. "
-                    "I will forever live in shame for my failure today."
-                )
-                return None
-
-        # More than one book found.
-        while True:
-            options_to_show = min(5, len(books))
-            book_choice = await bot.request_user_choice(
-                "Found multiple books. Which one did you mean?",
-                [_format_book(book) for book in books[:options_to_show]]
-                + ["Show more", "Cancel"],
-            )
-            if book_choice == options_to_show:  # Show more
-                books = books[options_to_show:]
-                continue
-
-            if book_choice == options_to_show + 1:  # Cancel
-                await bot.send_message(
-                    "Sorry I couldn't find the book you were looking for. "
-                    "I have brought shame upon my family."
-                )
-                return None
-            book = books[book_choice]
-            return book
-
-    async def _add_note_for_book(
-        self,
-        user: User,
-        bot: UserInteractionApi,
-        book: Book,
-        recommended_by: List[str],
-        free_text: str,
-    ) -> None:
-        user_config: UserConfig = await self.get_config(user)
-
-        env = jinja2.Environment()
-        template_params = dict(
-            book=book, recommended_by=recommended_by, free_text=free_text
-        )
-        self._logger.info(f"{template_params=}")
-
-        note_title_template: jinja2.Template = env.from_string(
-            user_config.note_title_template
-        )
-        note_title = note_title_template.render(template_params)
-
-        note_content_template: jinja2.Template = env.from_string(
-            user_config.note_content_template
-        )
-        note_content = note_content_template.render(template_params)
-        self._logger.info(f"{note_content=}")
-
-        if await ObsidianPlugin.is_registered(user):
-            await self._create_note_in_vault(
-                user, bot, user_config, note_title, note_content
-            )
-        else:
-            await self._send_obsidian_uri(bot, user_config, note_title, note_content)
-
-    async def _create_note_in_vault(
-        self,
-        user: User,
-        bot: UserInteractionApi,
-        user_config: UserConfig,
-        note_title: str,
-        note_content: str,
-    ) -> None:
-        """Write the note into the vault through the Obsidian plugin.
-
-        If Obsidian does not answer, send the link that creates the note
-        instead, so that what the user entered is not lost.
-        """
-        self._logger.info("Creating note through the Obsidian plugin")
-        obsidian: ObsidianApi = await ObsidianApi.for_user(user)
+    The plugin left out what a template named that a book does not have. A
+    workflow fails there instead. Try the templates on a made-up book.
+    """
+    book = Book(
+        title="A Title: And a Subtitle",
+        authors=["An Author", "Another Author"],
+        publisher="A Publisher",
+        publication_date=datetime.date(2000, 1, 1),
+        description="A description.",
+        thumbnail_url="https://example.com/cover.jpg",
+    )
+    context = {
+        "book": AskChoiceOutput(chosen=True, answer=book.label, item=book, index=1),
+        "recommended_by": AskListOutput(answers=["Someone"], count=1),
+        "free_text": AskTextOutput(answer="Some text.", answered=True),
+    }
+    for name, template in (("path", "title"), ("text", "text")):
         try:
-            await obsidian.append_to_note(
-                str(
-                    (
-                        pathlib.PurePosixPath(user_config.file_location) / note_title
-                    ).with_suffix(".md")
-                ),
-                note_content,
-            )
-        except ObsidianApiTimeoutError:
-            await bot.send_message(
-                "Obsidian didn't answer, so the note was not created. "
-                "Use this link to create it:"
-            )
-            await self._send_obsidian_uri(bot, user_config, note_title, note_content)
-            return
+            expressions.render(inputs[name], context)
+        except expressions.ExpressionError as e:
+            return f"The template of the {template}: {e.__cause__ or e}."
+    return None
 
-        await bot.send_message(f"Note created in Obsidian!")
 
-    async def _send_obsidian_uri(
-        self,
-        bot: UserInteractionApi,
-        user_config: UserConfig,
-        note_title: str,
-        note_content: str,
-    ) -> None:
-        def e(text: str) -> str:
-            return urllib.parse.quote(text, safe="")
+async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workflow]:
+    """Give a user of the old plugin the workflow that does what it did.
 
-        obsidian_uri = "https://amir.rachum.com/fwdr?url=" + base64.urlsafe_b64encode(
-            f"obsidian://new?vault={e(user_config.vault)}"
-            f"&file={e(user_config.file_location)}{e(note_title)}"
-            f"&content={e(note_content)}".encode()
-        ).decode("utf-8")
-        message = (
-            f'<b><a href="{obsidian_uri}">'
-            f"Click here to create the note in Obsidian</a></b>"
-        )
-        self._logger.info(f"Sending {message=}")
-        await bot.send_message(
-            text=message,
-            parse_html=True,
-        )
+    Install the recipe with the folder and the templates the user had.
+    Return the workflow if it was installed. Doing this again installs
+    nothing.
+    """
+    saved = await LitNotesPlugin.get_saved_config_data(user)
+    if saved is None:
+        # Registered, but never set up: the command had nothing to write with.
+        return []
+    workflows = await engine.store.list_for_user(user.id)
+    if any(workflow.recipe == ADD_BOOK_NOTE_RECIPE for workflow in workflows):
+        return []
 
-    @classmethod
-    async def ask_for_user_config(cls, user: User) -> None:
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+    inputs = note_inputs(
+        str(saved.get("file_location") or ""),
+        str(saved.get("note_title_template") or ""),
+        str(saved.get("note_content_template") or ""),
+    )
 
-        # No need to acquire the user interaction lock here, since we're
-        # being called by a method that has it already.
-        vault = await bot.request_user_input(
-            "What is the name of the Obsidian vault you want to use?"
-        )
-        file_location = await bot.request_user_input(
-            "What is the file location of the note you want to create?"
-        )
-        note_title_template = await bot.request_user_input(
-            "What is the template for the note title?"
-        )
-        note_content_template = await bot.request_user_input(
-            "What is the template for the note content?"
-        )
+    def customize(new: Workflow) -> None:
+        for step in new.steps:
+            if step.id == NOTE_STEP:
+                step.inputs.update(inputs)
 
-        user_config = UserConfig(
-            vault=vault,
-            file_location=file_location,
-            note_title_template=note_title_template,
-            note_content_template=note_content_template,
+    workflow = await engine.install(
+        user, all_recipes()[ADD_BOOK_NOTE_RECIPE], customize
+    )
+    problem = template_problem(inputs)
+    if problem is not None:
+        _logger.warning(
+            f"The note templates of user {user.id} would fail in a workflow."
         )
-        await cls.set_config(user, user_config)
+        bot = await UserInteractionApi.for_user(user)
+        await bot.notify(
+            "A note template of “Add book note” uses something that is not "
+            f"there. {problem} The plugin left that empty. The workflow "
+            "fails there instead, after it asked everything. Change the "
+            "template on its “Append to note” step.",
+            parse_html=False,
+        )
+    return [workflow]

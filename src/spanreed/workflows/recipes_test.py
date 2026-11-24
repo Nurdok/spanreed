@@ -10,6 +10,7 @@ from spanreed.plugin import Plugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.hevy import HevyPlugin
+from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
@@ -40,6 +41,7 @@ def _real_registry() -> BlockRegistry:
             HealthConnectPlugin(),
             WithingsPlugin(),
             HevyPlugin(),
+            LitNotesPlugin(),
         ]
     )
 

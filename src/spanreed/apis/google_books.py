@@ -47,6 +47,16 @@ class Book:
     def cover_image_url(self) -> str:
         return self.thumbnail_url
 
+    @property
+    def label(self) -> str:
+        """Return the book in a line, to choose it by: title, authors, year."""
+        by = ""
+        if len(self.authors) == 1:
+            by = f" by {self.authors[0]}"
+        elif self.authors:
+            by = f" by {', '.join(self.authors[:-1])} and {self.authors[-1]}"
+        return f"{self.title}{by} ({self.publication_year})"
+
 
 def parse_date(date_str: Optional[str]) -> Optional[datetime.date]:
     if date_str is None:
