@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import random
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from spanreed.config_form import HELP_KEY
 
 from spanreed.workflows.blocks import (
     Action,
@@ -24,6 +27,13 @@ from spanreed.workflows.blocks import (
 )
 
 _LAST_FIRED = "last_fired"
+_NEXT_AT = "next_at"
+
+# Indirections so that tests can skip the waits and say how long one is.
+_sleep = asyncio.sleep
+_uniform = random.uniform
+
+_UNIT_SECONDS = {"minutes": 60.0, "hours": 3600.0, "days": 86400.0}
 
 
 def _now() -> datetime.datetime:
@@ -90,6 +100,108 @@ class Schedule(Trigger[Repeat, Tick]):
     def _tick(ctx: TriggerContext, instant: datetime.datetime) -> Tick:
         local = instant.astimezone(ctx.user.tzinfo)
         return Tick(date=local.date().isoformat(), time=local.strftime("%H:%M"))
+
+
+def _time_of_day(text: str) -> datetime.time:
+    """Return a time written as HH:MM. Raise ``ValueError`` if it is not one."""
+    try:
+        return datetime.time.fromisoformat(text.strip())
+    except ValueError:
+        raise ValueError(f"“{text}” is not a time of day, such as 08:00.") from None
+
+
+@dataclass
+class RandomTimes:
+    """How far apart a trigger fires, give or take, and in which hours."""
+
+    at_least: int = 1
+    at_most: int = 2
+    unit: Literal["minutes", "hours", "days"] = "hours"
+    only_from: str = field(
+        default="",
+        metadata={HELP_KEY: "A time of day, such as 08:00. Empty: at any time"},
+    )
+    only_until: str = field(
+        default="",
+        metadata={HELP_KEY: "A time of day, such as 22:00. Empty: at any time"},
+    )
+
+    def __post_init__(self) -> None:
+        """Raise ``ValueError`` for waits and hours that mean nothing."""
+        if self.at_least < 1:
+            raise ValueError("A trigger fires every 1 or more.")
+        if self.at_most < self.at_least:
+            raise ValueError("“At most” cannot be less than “At least”.")
+        if bool(self.only_from.strip()) != bool(self.only_until.strip()):
+            raise ValueError("Give both times of day, or neither.")
+        if self.only_from.strip():
+            _time_of_day(self.only_from)
+            _time_of_day(self.only_until)
+
+    def allows(self, local: datetime.datetime) -> bool:
+        """Return whether a moment, in the user's timezone, is in the hours."""
+        if not self.only_from.strip():
+            return True
+        start, end = _time_of_day(self.only_from), _time_of_day(self.only_until)
+        now = local.time()
+        if start <= end:
+            return start <= now < end
+        # Over midnight: from 22:00 until 06:00.
+        return now >= start or now < end
+
+
+class RandomSchedule(Trigger[RandomTimes, Tick]):
+    """Fire again and again, a different time apart each time.
+
+    The wait before the next event is picked at random between the two
+    numbers. A moment outside the hours of the day is passed over: the
+    wait is over, nothing fires, and the next wait starts.
+
+    When the next event is due is kept, so a restart does not fire early.
+    A new workflow fires at once, if the hour allows.
+    """
+
+    id = "core.random-schedule"
+    title = "At random times"
+    Manual = NoQuestion
+
+    async def events(
+        self, ctx: TriggerContext, params: RandomTimes
+    ) -> AsyncGenerator[Tick, bool | None]:
+        """Yield an event after each wait that ends in the hours."""
+        while True:
+            due = await self._next_at(ctx)
+            if due is not None:
+                wait = (due - _now()).total_seconds()
+                if wait > 0:
+                    await _sleep(wait)
+            fired = _now()
+            if params.allows(fired.astimezone(ctx.user.tzinfo)):
+                yield Schedule._tick(ctx, fired)
+            # Kept only now, when the run is over: a run that a restart cut
+            # short is due again when Spanreed comes back.
+            apart = (
+                _uniform(params.at_least, params.at_most) * _UNIT_SECONDS[params.unit]
+            )
+            await ctx.state.set(
+                _NEXT_AT, (_now() + datetime.timedelta(seconds=apart)).isoformat()
+            )
+
+    async def manual_events(
+        self, ctx: TriggerContext, params: RandomTimes, answer: NoQuestion
+    ) -> list[Tick]:
+        """Return one event for now, whatever the hour. The schedule keeps its pace."""
+        return [Schedule._tick(ctx, _now())]
+
+    @staticmethod
+    async def _next_at(ctx: TriggerContext) -> datetime.datetime | None:
+        stored = await ctx.state.get(_NEXT_AT)
+        if stored is None:
+            return None
+        try:
+            return datetime.datetime.fromisoformat(stored)
+        except ValueError:
+            return None
 
 
 @dataclass
@@ -213,4 +325,11 @@ class SendMessage(Action[SendMessageInput, NoOutput]):
 
 def builtin_blocks() -> list[Block]:
     """Return the blocks that Spanreed itself publishes."""
-    return [Schedule(), ContinueIf(), If(), ForEach(), SendMessage()]
+    return [
+        Schedule(),
+        RandomSchedule(),
+        ContinueIf(),
+        If(),
+        ForEach(),
+        SendMessage(),
+    ]

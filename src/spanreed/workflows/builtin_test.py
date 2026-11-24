@@ -24,6 +24,8 @@ from spanreed.workflows.builtin import (
     If,
     IfInput,
     IfOutput,
+    RandomSchedule,
+    RandomTimes,
     Schedule,
     SendMessage,
     SendMessageInput,
@@ -96,6 +98,7 @@ def test_the_builtin_blocks_are_well_formed() -> None:
         registry.register(block, fake_plugin())
     assert [block.id for block in registry.all()] == [
         "core.schedule",
+        "core.random-schedule",
         "core.continue-if",
         "core.if",
         "core.for-each",
@@ -222,3 +225,129 @@ def test_a_message_that_comes_out_empty_is_not_sent(mock_bot: AsyncMock) -> None
         asyncio.run(SendMessage().run(_step_context(), SendMessageInput(message)))
 
     mock_bot.send_message.assert_not_called()
+
+
+# -- at random times ---------------------------------------------------------
+
+
+class _Clock:
+    """A clock that the waits of the random schedule move forward."""
+
+    def __init__(self, now: datetime.datetime, apart: list[float]) -> None:
+        self.now = now
+        # What "at random" gives, in the unit of the schedule, in order.
+        self.apart = list(apart)
+        self.waits: list[float] = []
+
+    def time(self) -> datetime.datetime:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.waits.append(seconds)
+        self.now += datetime.timedelta(seconds=seconds)
+
+    def uniform(self, low: float, high: float) -> float:
+        assert low <= self.apart[0] <= high
+        return self.apart.pop(0)
+
+
+async def _random_events(
+    state: _State, params: RandomTimes, count: int, clock: _Clock
+) -> list[Tick]:
+    with patch("spanreed.workflows.builtin._now", clock.time), patch(
+        "spanreed.workflows.builtin._sleep", clock.sleep
+    ), patch("spanreed.workflows.builtin._uniform", clock.uniform):
+        source = RandomSchedule().events(_trigger_context(state), params)
+        events = []
+        try:
+            event = await anext(source)
+            events.append(event)
+            while len(events) < count:
+                events.append(await source.asend(True))
+        finally:
+            await source.aclose()
+    return events
+
+
+def test_random_times_are_a_different_wait_apart_each_time() -> None:
+    clock = _Clock(NOON, [1.5, 1.0, 2.0])
+
+    events = asyncio.run(_random_events(_State(), RandomTimes(1, 2), 3, clock))
+
+    # A new workflow fires at once.
+    assert [event.time for event in events] == ["12:00", "13:30", "14:30"]
+    assert clock.waits == [1.5 * 3600, 3600]
+
+
+def test_random_times_pass_over_the_hours_that_are_not_allowed() -> None:
+    evening = NOON.replace(hour=21, minute=30)
+    clock = _Clock(evening, [1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 1.0])
+    params = RandomTimes(1, 2, only_from="08:00", only_until="22:00")
+
+    events = asyncio.run(_random_events(_State(), params, 3, clock))
+
+    # 21:30 fires. 22:30, 00:30, 02:30, 04:30 and 06:30 are passed over.
+    assert [(event.date, event.time) for event in events] == [
+        ("2026-05-09", "21:30"),
+        ("2026-05-10", "08:30"),
+        ("2026-05-10", "09:30"),
+    ]
+
+
+def test_random_times_keep_when_the_next_one_is_due_over_a_restart() -> None:
+    state = _State()
+    clock = _Clock(NOON, [2.0, 1.0])
+    asyncio.run(_random_events(state, RandomTimes(1, 2), 2, clock))
+    # The first run is over: the second is due at 14:00, and is still
+    # running, so nothing later is kept.
+    assert state.values == {"next_at": "2026-05-09T14:00:00+00:00"}
+
+    # A restart at 12:20 waits for the rest, and does not fire early.
+    restarted = _Clock(NOON.replace(minute=20), [1.0])
+    (event,) = asyncio.run(_random_events(state, RandomTimes(1, 2), 1, restarted))
+    assert restarted.waits == [100 * 60]
+    assert event.time == "14:00"
+
+
+def test_random_times_by_hand_fire_now_whatever_the_hour() -> None:
+    night = NOON.replace(hour=3)
+    params = RandomTimes(only_from="08:00", only_until="22:00")
+
+    with patch("spanreed.workflows.builtin._now", return_value=night):
+        (event,) = asyncio.run(
+            RandomSchedule().manual_events(
+                _trigger_context(_State()), params, NoQuestion()
+            )
+        )
+
+    assert event == Tick(date="2026-05-09", time="03:00")
+    assert RandomSchedule.Manual is NoQuestion
+
+
+def test_the_hours_of_random_times() -> None:
+    day = RandomTimes(only_from="08:00", only_until="22:00")
+    assert [day.allows(NOON.replace(hour=hour)) for hour in (7, 8, 21, 22)] == [
+        False,
+        True,
+        True,
+        False,
+    ]
+    # Over midnight.
+    night = RandomTimes(only_from="22:00", only_until="06:00")
+    assert [night.allows(NOON.replace(hour=hour)) for hour in (21, 22, 3, 6)] == [
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert RandomTimes().allows(NOON.replace(hour=3)) is True
+
+    for wrong, why in (
+        ({"at_least": 0}, "1 or more"),
+        ({"at_least": 3, "at_most": 2}, "At most"),
+        ({"only_from": "08:00"}, "both times"),
+        ({"only_from": "8 am", "only_until": "22:00"}, "not a time of day"),
+    ):
+        with pytest.raises(ValueError, match=why):
+            RandomTimes(**wrong)
+    assert from_data(RandomTimes, {"only_from": "08:00", "only_until": "22:00"}) == day

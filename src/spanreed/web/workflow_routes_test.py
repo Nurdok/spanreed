@@ -709,6 +709,7 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
             blocks = {block["block"]: block for block in catalog["blocks"]}
             assert list(blocks) == [
                 "core.schedule",
+                "core.random-schedule",
                 "core.continue-if",
                 "core.if",
                 "core.for-each",
