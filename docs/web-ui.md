@@ -95,8 +95,8 @@ or while the app is on screen.
 ## Workflows
 
 **Workflows** in the header shows the workflows you own (see
-[workflows.md](workflows.md)). It reads and controls them. It does not edit
-them yet.
+[workflows.md](workflows.md)). It reads and controls them, and edits what
+their cards hold. It does not add, remove or move cards yet.
 
 ![A workflow's steps on desktop](images/web-ui-workflow-steps-desktop.png)
 
@@ -140,10 +140,37 @@ A workflow with a loop, and a run of it in which the third item failed:
 A workflow that cannot run says why above its steps, and a card whose block
 no plugin publishes any more is outlined in red.
 
+### Editing a workflow
+
+**Edit** turns the cards into forms. The name of the workflow and the text of
+its command can be changed there too.
+
+![A workflow being edited](images/web-ui-workflow-edit-desktop.png)
+
+- **A text box** holds text and the values of earlier cards, written as
+  `{{ trigger.date }}`. **+ value** lists what the cards before this one
+  give, and puts the one you pick where the cursor was. A box that wants a
+  number or yes/no says so under it.
+- **A choice** is a list to pick from.
+- **Rows**, such as the properties to set, have a name and a value each.
+  **Add a row** adds one, and × removes one.
+- **Save** stores the workflow, and it runs with the new values from then
+  on. If a value does not fit, or the workflow could not run, nothing is
+  stored and the page says what has to change.
+- **Cancel**, another workflow or another view asks before it drops changes.
+
+![The values a step inside a loop can use](images/web-ui-workflow-edit-values-desktop.png)
+
+![A value that does not fit](images/web-ui-workflow-edit-refused-desktop.png)
+
+![Editing on a phone](images/web-ui-workflow-edit-phone.png)
+![The list of values on a phone](images/web-ui-workflow-edit-values-phone.png)
+
 The API is `GET /app/api/workflows` (the list), `GET
-/app/api/workflows/<id>` (one workflow as cards) and `GET
-/app/api/workflows/<id>/runs` (the traces), and `POST` on
-`/app/api/workflows/<id>/enabled`, `/command` and `/run`. All of them answer
+/app/api/workflows/<id>` (one workflow as cards), `PUT` on the same path (the
+workflow as the editor changed it) and `GET /app/api/workflows/<id>/runs`
+(the traces), and `POST` on `/app/api/workflows/<id>/enabled`, `/command` and
+`/run`. All of them answer
 only for a workflow of the logged-in user. A trace holds what the steps
 received and returned, so it is sent only to its owner and only when the
 History tab asks for it: the list carries just the time and the outcome of

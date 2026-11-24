@@ -9,10 +9,19 @@ loop also has the cards of the steps inside it.
 from __future__ import annotations
 
 import dataclasses
+import typing
 from typing import Any
 
 from spanreed import config_form
-from spanreed.workflows.blocks import Action, Block, BlockKind, Loop, Trigger
+from spanreed.workflows import editing
+from spanreed.workflows.blocks import (
+    Action,
+    Block,
+    BlockKind,
+    Loop,
+    RunInfo,
+    Trigger,
+)
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.values import to_data
@@ -45,9 +54,11 @@ def _fields(cls: type[Any], stored: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the values of a block's inputs, in the order of its fields.
 
     A field that is not stored shows its default. A stored value that the
-    block has no field for is shown last, as it is.
+    block has no field for is shown last, as it is. Each field of the block
+    also says how the editor edits it (see ``spanreed.workflows.editing``).
     """
     labels = {f["name"]: f["label"] for f in config_form.form_schema(cls)["fields"]}
+    edits = editing.fields(cls, stored)
     shown = []
     for field in dataclasses.fields(cls):
         if field.name in stored:
@@ -59,6 +70,8 @@ def _fields(cls: type[Any], stored: dict[str, Any]) -> list[dict[str, Any]]:
         else:
             continue
         shown.append(_field(field.name, labels.get(field.name, field.name), value))
+        if field.name in edits:
+            shown[-1]["edit"] = edits[field.name]
     known = {field.name for field in dataclasses.fields(cls)}
     for name, value in stored.items():
         if name not in known:
@@ -99,8 +112,30 @@ def _card(
         "kind": block.kind.value,
         "fields": _fields(inputs, stored),
         "outputs": [field.name for field in dataclasses.fields(outputs)],
+        "item_outputs": _item_outputs(outputs),
         "missing": False,
     }
+
+
+def _item_outputs(outputs: type[Any]) -> dict[str, list[str]]:
+    """Return the fields of the items of each output that is a list of them.
+
+    The editor offers them inside a loop over such an output: a loop over
+    a workout's ``sets`` can use ``item.reps``.
+    """
+    described = {}
+    hints = typing.get_type_hints(outputs)
+    for field in dataclasses.fields(outputs):
+        tp = hints[field.name]
+        items = typing.get_args(tp)
+        if (
+            typing.get_origin(tp) is list
+            and len(items) == 1
+            and isinstance(items[0], type)
+            and dataclasses.is_dataclass(items[0])
+        ):
+            described[field.name] = [f.name for f in dataclasses.fields(items[0])]
+    return described
 
 
 def _step_cards(
@@ -174,7 +209,11 @@ def detail(
             if by_hand
             else None
         ),
+        # The text the command was given. ``None``: it is the name.
+        "command_name": workflow.command_name,
         "last_run": _last_run(last_run),
+        # What ``{{ run.… }}`` offers.
+        "run_outputs": [field.name for field in dataclasses.fields(RunInfo)],
         "trigger": trigger,
         "steps": steps,
     }

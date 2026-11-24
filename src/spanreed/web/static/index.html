@@ -191,6 +191,42 @@
   .tstep .kv { grid-column: 2; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
   .tstep .kv b { color: var(--fg); font-weight: 500; }
   .tstep .kv.err { color: var(--err); }
+  /* Editing: the inputs of the cards are form controls. */
+  .lane.editing .wcard { width: 300px; }
+  .lane.editing .wcard.holds { width: 340px; }
+  .lane.editing .inner .wcard { width: auto; }
+  .wf-name-edit { flex: 1 1 220px; min-width: 0; margin-right: auto; padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line);
+             background: var(--card); color: var(--fg); font: inherit; font-size: 17px; font-weight: 600; }
+  .wf-sub input { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--card);
+                  color: var(--fg); font: inherit; min-width: 0; width: 220px; max-width: 100%; }
+  .wc-ftop { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .wc-field .hint { font-size: 12px; color: var(--muted); }
+  .wcard textarea, .wcard select, .wcard input[type=text] {
+    width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+    font: inherit; font-size: 13px; line-height: 1.5; padding: 4px 7px; }
+  .wcard textarea { resize: none; overflow: hidden; display: block; min-height: 30px; }
+  .wcard textarea:focus, .wcard select:focus, .wcard input[type=text]:focus, .wf-name-edit:focus, .wf-sub input:focus {
+    outline: 2px solid var(--accent); outline-offset: -1px; }
+  .inner .wcard textarea, .inner .wcard select, .inner .wcard input[type=text] { background: var(--card); }
+  .ins { font-size: 12px; padding: 0 2px; }
+  .erows { display: flex; flex-direction: column; gap: 8px; }
+  .erow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 6px; align-items: center;
+          border-left: 2px solid var(--line); padding-left: 7px; }
+  .erow textarea { grid-column: 1; }
+  .erow .x { background: none; border: 0; color: var(--muted); padding: 2px 6px; font-size: 15px; line-height: 1; }
+  .erow .x:hover { color: var(--err); }
+  .sheet-back { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .35); display: flex;
+                align-items: center; justify-content: center; }
+  .sheet { background: var(--card); color: var(--fg); width: min(480px, 100%); max-height: 70vh; overflow-y: auto;
+           border-radius: 14px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px;
+           box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
+  .sheet h3 { margin: 0; font-size: 15px; }
+  .sheet .grp { display: flex; flex-direction: column; gap: 5px; }
+  .sheet .grp-h { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
+  .sheet .picks { display: flex; flex-wrap: wrap; gap: 5px; }
+  .sheet button.pill { border: 0; cursor: pointer; font-size: 13px; line-height: 26px; padding: 0 11px; margin: 0; }
+  .sheet button.pill:hover, .sheet button.pill:focus-visible { outline: 2px solid var(--k); }
+  .sheet .foot { font-size: 12px; color: var(--muted); }
   .rounds { grid-column: 2; display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
   details.round { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   details.round summary { display: flex; align-items: center; gap: 8px; padding: 5px 9px; cursor: pointer; font-size: 13px; list-style: none; }
@@ -200,7 +236,11 @@
   @media (max-width: 720px) {
     .lane { flex-direction: column; align-items: stretch; overflow-x: visible; padding-right: 2px;
             -webkit-mask-image: none; mask-image: none; }
-    .wcard, .wcard.holds { width: auto; }
+    .wcard, .wcard.holds, .lane.editing .wcard, .lane.editing .wcard.holds { width: auto; }
+    /* Smaller text in a box makes a phone zoom in on it. */
+    .wcard textarea, .wcard select, .wcard input[type=text], .wf-sub input { font-size: 16px; }
+    .sheet-back { align-items: flex-end; }
+    .sheet { border-radius: 14px 14px 0 0; }
     .lane .join { width: auto; height: 16px; }
     .lane .join::before { left: 50%; right: auto; top: 0; bottom: 0; border-top: 0; border-left: 2px solid var(--line); }
   }
@@ -901,6 +941,7 @@ async function loadWorkflows() {
 }
 
 async function openWorkflow(id) {
+  if (draft && draft.id !== id && !mayLeaveEditor()) return;
   setDrawer(false);
   currentWorkflow = id;
   for (const b of $("workflow-list").children) b.classList.remove("current");
@@ -969,7 +1010,7 @@ function richValue(value, sources, pairs) {
   return box;
 }
 
-function renderCard(card, badge, sources) {
+function renderCard(card, badge, sources, edit) {
   const inside = card.steps || [];
   const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : "") + (inside.length ? " holds" : ""));
   const head = el("div", "wc-head"), title = el("div", "wc-title");
@@ -979,6 +1020,7 @@ function renderCard(card, badge, sources) {
   if (card.fields.length) {
     const sec = el("div", "wc-sec");
     for (const field of card.fields) {
+      if (edit && field.edit) { sec.append(editField(card, field, edit)); continue; }
       const f = el("div", "wc-field");
       f.append(el("label", "", field.label), richValue(field.value, sources, field.pairs));
       sec.append(f);
@@ -994,9 +1036,13 @@ function renderCard(card, badge, sources) {
   if (inside.length) {
     // The steps of a loop, inside its card.
     const sec = el("div", "wc-sec"), inner = el("div", "inner");
+    // Inside, the loop offers the item of the round, and each step offers
+    // its outputs to the ones after it.
+    let offers = edit ? [...edit.offers, loopOffer(card, edit.cards)] : null;
     inside.forEach((step, i) => {
       if (i) inner.append(el("span", "vjoin"));
-      inner.append(renderCard(step, step.number, sources));
+      inner.append(renderCard(step, step.number, sources, edit && { ...edit, offers }));
+      if (edit) offers = [...offers, offerOf(step)];
     });
     sec.append(el("div", "outs-l", card.inside_title || "Steps inside"), inner);
     c.append(sec);
@@ -1008,13 +1054,228 @@ function renderCard(card, badge, sources) {
 const allSteps = (steps) => steps.flatMap((step) => [step, ...allSteps(step.steps || [])]);
 
 // The trigger and the steps, left to right. On a phone, top to bottom.
-function renderLane(d) {
+function renderLane(d, editing) {
   const sources = { trigger: { badge: "T", kind: "trigger" }, run: { badge: "run", kind: "logic" } };
   for (const step of allSteps(d.steps)) sources[step.id] = { badge: step.number, kind: step.kind };
-  const lane = el("div", "lane");
-  lane.append(renderCard(d.trigger, "T", sources));
-  for (const step of d.steps) lane.append(el("span", "join"), renderCard(step, step.number, sources));
+  const lane = el("div", "lane" + (editing ? " editing" : ""));
+  if (!editing) {
+    lane.append(renderCard(d.trigger, "T", sources));
+    for (const step of d.steps) lane.append(el("span", "join"), renderCard(step, step.number, sources));
+    return lane;
+  }
+  const cards = { trigger: d.trigger };
+  for (const step of allSteps(d.steps)) cards[step.id] = step;
+  // The trigger starts the run, so there is nothing before it to offer.
+  lane.append(renderCard(d.trigger, "T", sources, { cards, offers: [] }));
+  let offers = [{ id: "trigger", badge: "T", kind: "trigger", title: d.trigger.title, names: d.trigger.outputs },
+                { id: "run", badge: "run", kind: "logic", title: "This run", names: d.run_outputs }];
+  for (const step of d.steps) {
+    lane.append(el("span", "join"), renderCard(step, step.number, sources, { cards, offers }));
+    offers = [...offers, offerOf(step)];
+  }
   return lane;
+}
+
+// --- Editing a workflow: the cards' inputs as form controls. ---
+
+// What the form holds while a workflow is edited: its name, and each input
+// of each card as the text of its control. Null when nothing is edited.
+let draft = null;
+
+const draftInputs = (card) => Object.fromEntries(card.fields.filter((f) => f.edit).map((f) =>
+  [f.name, f.edit.control === "rows" ? f.edit.rows.map((row) => [...row]) : f.edit.text]));
+const draftSteps = (cards) => cards.map((card) =>
+  ({ id: card.id, block: card.block, inputs: draftInputs(card), steps: draftSteps(card.steps || []) }));
+
+function startEditing(d) {
+  draft = { id: d.id, shown: d, changed: false, problems: [], name: d.name, command_name: d.command_name || "",
+            trigger: { block: d.trigger.block, params: draftInputs(d.trigger) }, steps: draftSteps(d.steps) };
+  renderWorkflow(d);
+}
+
+// Leaving the editor drops what was changed, so ask first.
+function mayLeaveEditor() {
+  if (!draft) return true;
+  if (draft.changed && !confirm("Discard the changes to “" + draft.name + "”?")) return false;
+  draft = null;
+  return true;
+}
+
+window.addEventListener("beforeunload", (e) => { if (draft && draft.changed) e.preventDefault(); });
+
+// The inputs of a card in the draft.
+function inputsOf(card) {
+  if (card.id === "trigger") return draft.trigger.params;
+  const find = (steps) => { for (const s of steps) { if (s.id === card.id) return s; const f = find(s.steps); if (f) return f; } };
+  return find(draft.steps).inputs;
+}
+
+// What a card gives to the cards after it, for the list of values to insert.
+const offerOf = (card) => ({ id: card.id, badge: card.number, kind: card.kind, title: card.title, names: card.outputs });
+
+// Inside a loop, the loop gives its item. If it loops over a list whose
+// items are known, such as the sets of a workout, it gives their fields too.
+function loopOffer(card, cards) {
+  const names = [...card.outputs];
+  const over = /^\s*\{\{\s*([a-z][a-z0-9_]*)\.([A-Za-z_]\w*)\s*\}\}\s*$/.exec(inputsOf(card).items || "");
+  const fields = over && cards[over[1]] && (cards[over[1]].item_outputs || {})[over[2]];
+  for (const field of fields || []) names.push("item." + field);
+  return { ...offerOf(card), names };
+}
+
+function grow(box) { box.style.height = "auto"; box.style.height = box.scrollHeight + 2 + "px"; }
+
+// A box for text that can hold values of earlier cards, as {{ card.name }}.
+function templateBox(text, offers, onChange) {
+  const box = el("textarea");
+  box.rows = 1; box.value = text; box.spellcheck = false;
+  box.setAttribute("autocapitalize", "off"); box.setAttribute("autocomplete", "off");
+  box.oninput = () => { grow(box); onChange(box.value); };
+  const wrap = { box, insert: null };
+  if (offers.length) {
+    wrap.insert = el("button", "link ins", "+ value");
+    wrap.insert.type = "button";
+    wrap.insert.onclick = () => openValueSheet(box, offers);
+  }
+  return wrap;
+}
+
+function editField(card, field, edit) {
+  const inputs = inputsOf(card), e = field.edit;
+  const f = el("div", "wc-field"), top = el("div", "wc-ftop");
+  const changed = () => { draft.changed = true; };
+  top.append(el("label", "", field.label));
+  f.append(top);
+  if (e.control === "choice") {
+    const select = el("select");
+    // A stored value that is not a choice any more stays, so that it shows.
+    for (const choice of e.choices.includes(inputs[field.name]) ? e.choices : [inputs[field.name], ...e.choices]) {
+      select.append(new Option(choice, choice));
+    }
+    select.value = inputs[field.name];
+    select.onchange = () => { inputs[field.name] = select.value; changed(); };
+    f.append(select);
+  } else if (e.control === "rows") {
+    const rows = el("div", "erows");
+    const draw = () => {
+      rows.replaceChildren();
+      inputs[field.name].forEach((row, i) => {
+        const line = el("div", "erow"), name = el("input"), remove = el("button", "x", "×");
+        name.type = "text"; name.value = row[0]; name.placeholder = "Name"; name.spellcheck = false;
+        name.setAttribute("autocapitalize", "off"); name.setAttribute("aria-label", field.label + ", name " + (i + 1));
+        name.oninput = () => { row[0] = name.value; changed(); };
+        remove.type = "button"; remove.title = "Remove this row"; remove.setAttribute("aria-label", "Remove " + (row[0] || "row"));
+        remove.onclick = () => { inputs[field.name].splice(i, 1); changed(); draw(); };
+        const value = templateBox(row[1], edit.offers, (text) => { row[1] = text; changed(); });
+        value.box.placeholder = "Value"; value.box.setAttribute("aria-label", field.label + ", value of " + (row[0] || "row " + (i + 1)));
+        line.append(name, remove, value.box);
+        if (value.insert) line.append(value.insert);
+        rows.append(line);
+        requestAnimationFrame(() => grow(value.box));
+      });
+    };
+    draw();
+    const add = el("button", "small", "Add a row");
+    add.type = "button";
+    add.onclick = () => { inputs[field.name].push(["", ""]); changed(); draw(); rows.lastChild.querySelector("input").focus(); };
+    f.append(rows, add);
+  } else {
+    const value = templateBox(inputs[field.name], edit.offers, (text) => { inputs[field.name] = text; changed(); });
+    value.box.setAttribute("aria-label", field.label);
+    if (value.insert) top.append(value.insert);
+    f.append(value.box);
+    requestAnimationFrame(() => grow(value.box));
+  }
+  if (e.hint) f.append(el("div", "hint", e.hint));
+  return f;
+}
+
+// The list of values that the cards before a card give. Picking one puts
+// it into the box, where the cursor was.
+function openValueSheet(box, offers) {
+  const at = [box.selectionStart ?? box.value.length, box.selectionEnd ?? box.value.length];
+  const back = el("div", "sheet-back"), sheet = el("div", "sheet");
+  sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-label", "Insert a value");
+  const close = () => { back.remove(); document.removeEventListener("keydown", onKey, true); };
+  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); box.focus(); } };
+  const pick = (reference) => {
+    const before = box.value.slice(0, at[0]), after = box.value.slice(at[1]);
+    // Inside {{ … }} already, the name alone is what is needed.
+    const inside = before.lastIndexOf("{{") > before.lastIndexOf("}}");
+    const text = inside ? reference : "{{ " + reference + " }}";
+    box.value = before + text + after;
+    close();
+    box.focus();
+    box.setSelectionRange(before.length + text.length, before.length + text.length);
+    box.dispatchEvent(new Event("input"));
+  };
+  sheet.append(el("h3", "", "Insert a value"));
+  for (const offer of offers) {
+    if (!offer.names.length) continue;
+    const group = el("div", "grp k-" + offer.kind), head = el("div", "grp-h"), picks = el("div", "picks");
+    head.append(el("span", "num", offer.badge), offer.title);
+    for (const name of offer.names) {
+      const b = el("button", "pill plain", name);
+      b.type = "button";
+      b.onclick = () => pick(offer.id + "." + name);
+      picks.append(b);
+    }
+    group.append(head, picks);
+    sheet.append(group);
+  }
+  sheet.append(el("div", "foot", "The value goes where the cursor was. Text and values can be mixed."));
+  back.append(sheet);
+  back.onclick = (e) => { if (e.target === back) close(); };
+  document.addEventListener("keydown", onKey, true);
+  document.body.append(back);
+  sheet.querySelector("button.pill")?.focus();
+}
+
+async function saveDraft() {
+  const d = draft.shown;
+  const body = { name: draft.name, command_name: draft.command_name, trigger: draft.trigger, steps: draft.steps };
+  const res = await api("workflows/" + encodeURIComponent(d.id), { method: "PUT", headers: HEADERS, body: JSON.stringify(body) });
+  if (!draft || draft.id !== d.id) return;
+  if (!res.ok) {
+    const answer = await res.json().catch(() => ({}));
+    draft.problems = answer.problems || [answer.error || "Could not save the workflow."];
+    renderWorkflow(d);
+    $("workflow-main").scrollTo(0, 0);
+    return;
+  }
+  draft = null;
+  renderWorkflow(await res.json());
+  const list = await api("workflows");
+  if (list.ok && view === "workflows") renderWorkflowNav((await list.json()).workflows);
+}
+
+function renderEditor(d) {
+  const head = el("div", "wf-head"), name = el("input", "wf-name-edit");
+  name.type = "text"; name.value = draft.name; name.setAttribute("aria-label", "Name of the workflow");
+  name.oninput = () => { draft.name = name.value; draft.changed = true; };
+  head.append(name);
+  const parts = [head];
+  if (d.by_hand) {
+    const sub = el("div", "wf-sub"), label = el("label"), command = el("input");
+    command.type = "text"; command.value = draft.command_name; command.placeholder = d.name;
+    command.oninput = () => { draft.command_name = command.value; draft.changed = true; };
+    label.append("Its command is called ", command);
+    sub.append(label, el("span", "", "Empty: the name of the workflow."));
+    parts.push(sub);
+  }
+  if (draft.problems.length) {
+    const box = el("div", "wf-problems"), ul = el("ul");
+    box.setAttribute("role", "alert");
+    for (const problem of draft.problems) ul.append(el("li", "", problem));
+    box.append("Not saved. This has to change first:", ul);
+    parts.push(box);
+  }
+  const row = el("div", "save-row"), save = el("button", "primary", "Save"), cancel = el("button", "small", "Cancel");
+  save.onclick = async () => { save.disabled = true; try { await saveDraft(); } finally { save.disabled = false; } };
+  cancel.onclick = () => { if (mayLeaveEditor()) renderWorkflow(d); };
+  row.append(save, cancel);
+  parts.push(renderLane(d, true), row);
+  $("workflow-main").replaceChildren(...parts);
 }
 
 function traceLines(row, label, data) {
@@ -1106,6 +1367,7 @@ async function renderHistory(d, body) {
 }
 
 function renderWorkflow(d) {
+  if (draft && draft.id === d.id) { renderEditor(d); return; }
   const main = $("workflow-main");
   const head = el("div", "wf-head");
   const sw = el("label", "switch"), box = el("input");
@@ -1118,6 +1380,9 @@ function renderWorkflow(d) {
     run.onclick = () => runWorkflow(d);
     head.append(run);
   }
+  const edit = el("button", "small", "Edit");
+  edit.onclick = () => startEditing(d);
+  head.append(edit);
 
   const status = workflowStatus(d), sub = el("div", "wf-sub"), line = el("span");
   line.append(el("span", "dot " + status.dot), status.text);
@@ -1189,6 +1454,7 @@ const VIEWS = { commands: "commands-view", workflows: "workflows", settings: "se
 const DRAWER_LABELS = { commands: "Commands", workflows: "Workflows", settings: "Settings sections" };
 
 function showView(name) {
+  if (name !== "workflows" && !mayLeaveEditor()) return;
   view = name;
   for (const [key, id] of Object.entries(VIEWS)) $(id).hidden = key !== name;
   // Each button opens its view, and leads back to the conversation from it.
