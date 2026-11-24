@@ -86,8 +86,12 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         WorkflowsPlugin, "get_users", AsyncMock(return_value=[user])
     ), patch(
         "spanreed.plugins.workflows.migrations.retire_plugins", new=AsyncMock()
-    ) as retire:
+    ) as retire, patch(
+        "spanreed.plugins.workflows.migrations.convert_plugins", new=AsyncMock()
+    ) as convert:
         asyncio.run(scenario())
+
+    convert.assert_awaited_once()
 
     register.assert_awaited_once()
     mock_bot.register_command.assert_awaited_once()
@@ -326,17 +330,20 @@ def test_manage_deletes_a_workflow_after_asking(mock_bot: AsyncMock) -> None:
 @patch_user_interaction("spanreed.plugins.workflows")
 def test_manage_adds_a_workflow_from_a_recipe(mock_bot: AsyncMock) -> None:
     plugin = _plugin()
-    _choose(mock_bot, "Add from a recipe", NO_OVERDUE, "Add from a recipe", "Done")
+    asked = _choose(
+        mock_bot, "Add from a recipe", NO_OVERDUE, "Add from a recipe", "Cancel", "Done"
+    )
 
     with patch.object(Plugin, "is_registered", async_return_true):
         (workflow,) = _manage(plugin, installed=False)
 
     assert workflow.name == NO_OVERDUE
     assert workflow.enabled
-    messages = [call.args[0] for call in mock_bot.send_message.await_args_list]
-    assert messages[0].startswith(f"Added “{NO_OVERDUE}”, and it is on.")
-    # It is not offered a second time.
-    assert messages[1] == "There are no more recipes to add."
+    (message,) = [call.args[0] for call in mock_bot.send_message.await_args_list]
+    assert message.startswith(f"Added “{NO_OVERDUE}”, and it is on.")
+    # It was offered the first time, and is not offered a second time.
+    assert NO_OVERDUE in asked[1][1]
+    assert NO_OVERDUE not in asked[3][1]
 
 
 @patch_user_interaction("spanreed.plugins.workflows")

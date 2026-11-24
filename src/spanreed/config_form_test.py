@@ -246,23 +246,16 @@ def test_gmail_monitor_config_round_trips_through_the_form() -> None:
     assert gmail_monitor.UserConfig(**data) == config
 
 
-def test_health_connect_form_hides_the_token_and_keeps_it() -> None:
-    saved = {"token": "abc", "raw_data_folder": "Health/raw"}
+def test_health_connect_form_has_nothing_to_edit_and_keeps_the_token() -> None:
+    saved = {"token": "abc"}
     schema = form_schema(health_connect.UserConfig)
 
-    assert [f["name"] for f in schema["fields"]] == [
-        "raw_data_folder",
-        "daily_note_fields",
-    ]
-    assert "help" in schema["fields"][0]
-    data = config_data_from_form(
-        health_connect.UserConfig, {"raw_data_folder": "/Data/raw/"}, saved
-    )
-    assert (data["token"], data["raw_data_folder"]) == ("abc", "/Data/raw/")
-    # Building the config cleans the folder, and rejects a bad one.
-    assert health_connect.UserConfig(**data).raw_data_folder == "Data/raw"
-    with pytest.raises(ValueError):
-        health_connect.UserConfig(token="abc", raw_data_folder="../x")
+    # The token is the only setting, and only the setup may set it.
+    assert schema["fields"] == []
+    data = config_data_from_form(health_connect.UserConfig, {}, saved)
+    assert data == {"token": "abc"}
+    with pytest.raises(ConfigFormError):
+        config_data_from_form(health_connect.UserConfig, {"token": "stolen"}, saved)
 
 
 def test_withings_form_shows_only_the_daily_note_fields() -> None:

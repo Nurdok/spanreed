@@ -1,0 +1,23 @@
+{
+  "id": "health-connect-raw-files",
+  "name": "Health raw data → vault files",
+  "description": "Keeps one JSON Lines file in the vault for each Health Connect record type and day.",
+  "requires": ["health-connect", "obsidian"],
+  "command_name": "Export Health Connect raw data",
+  "trigger": {
+    "block": "health-connect.raw-records-changed",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "write",
+      "block": "obsidian.write-file",
+      "inputs": {
+        "path": "Health/raw/{{ trigger.type }}/{{ trigger.date }}.jsonl",
+        "content": "{{ trigger.records }}",
+        "if_exists": "overwrite",
+        "if_empty": "delete"
+      }
+    }
+  ]
+}

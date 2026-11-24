@@ -7,6 +7,8 @@ import pytest
 from spanreed.apis.todoist import Task
 from spanreed.interaction import commands
 from spanreed.plugin import Plugin
+from spanreed.apis.obsidian import ObsidianPlugin
+from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.test_utils import (
@@ -27,7 +29,9 @@ def setup_function() -> None:
 def _real_registry() -> BlockRegistry:
     """Return the blocks of the real plugins that publish any."""
     Plugin.reset_registry()
-    return BlockRegistry.from_plugins([WorkflowsPlugin(), TodoistPlugin()])
+    return BlockRegistry.from_plugins(
+        [WorkflowsPlugin(), TodoistPlugin(), ObsidianPlugin(), HealthConnectPlugin()]
+    )
 
 
 @pytest.mark.parametrize("recipe", all_recipes().values(), ids=lambda r: r.id)

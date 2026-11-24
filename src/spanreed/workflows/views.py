@@ -27,6 +27,19 @@ def _app(engine: WorkflowEngine, block: Block) -> str:
     return plugin.name()
 
 
+def _field(name: str, label: str, value: Any) -> dict[str, Any]:
+    """Return one input of a card.
+
+    A value that is a mapping, such as the properties to set, also comes as
+    ``pairs``: a list keeps its order on the way to the page, and a JSON
+    object does not.
+    """
+    field: dict[str, Any] = {"name": name, "label": label, "value": to_data(value)}
+    if isinstance(value, dict):
+        field["pairs"] = [[str(key), to_data(item)] for key, item in value.items()]
+    return field
+
+
 def _fields(cls: type[Any], stored: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the values of a block's inputs, in the order of its fields.
 
@@ -44,17 +57,11 @@ def _fields(cls: type[Any], stored: dict[str, Any]) -> list[dict[str, Any]]:
             value = field.default_factory()
         else:
             continue
-        shown.append(
-            {
-                "name": field.name,
-                "label": labels.get(field.name, field.name),
-                "value": to_data(value),
-            }
-        )
+        shown.append(_field(field.name, labels.get(field.name, field.name), value))
     known = {field.name for field in dataclasses.fields(cls)}
     for name, value in stored.items():
         if name not in known:
-            shown.append({"name": name, "label": name, "value": to_data(value)})
+            shown.append(_field(name, name, value))
     return shown
 
 
@@ -74,10 +81,7 @@ def _card(
             "title": block_id,
             "app": "",
             "kind": BlockKind.ACTION.value,
-            "fields": [
-                {"name": name, "label": name, "value": to_data(value)}
-                for name, value in stored.items()
-            ],
+            "fields": [_field(name, name, value) for name, value in stored.items()],
             "outputs": [],
             "missing": True,
         }

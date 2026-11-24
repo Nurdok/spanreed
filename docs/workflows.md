@@ -77,8 +77,13 @@ started, and **Manage workflows** says what the problem is.
 | `core.send-message` Send message | ask | Workflows |
 | `todoist.find-tasks` Find tasks | action | Todoist |
 | `todoist.set-due-date` Set due date | action | Todoist |
+| `obsidian.create-daily-note` Create today's daily note | action | Obsidian |
+| `obsidian.set-note-properties` Set note properties | action | Obsidian |
+| `obsidian.write-file` Write file | action | Obsidian |
+| `health-connect.day-changed` A day's data changed | trigger | Health Connect |
+| `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
 
-More arrive with each plugin that becomes a recipe.
+More arrive with each plugin whose behavior becomes a recipe.
 
 ### Writing a block
 
@@ -140,8 +145,41 @@ class Schedule(Trigger[ScheduleParams, Tick]):
 ```
 
 The engine runs the workflow for an event before it asks for the next one, so
-the code after a `yield` runs when that run is over. `ctx.state` keeps small
-values, such as a cursor, for each workflow across restarts.
+the code after a `yield` runs when that run is over. The `yield` gives back
+whether the run worked. `ctx.state` keeps small values, such as a cursor, for
+each workflow across restarts.
+
+#### Triggers that a plugin feeds
+
+A `PushTrigger` is for a plugin that learns of changes itself, as Health
+Connect does when the phone posts a payload. The plugin says what changed,
+with one key for each thing:
+
+```python
+await DayChanged.emit(user, ["2026-05-09"])
+```
+
+The key waits in a queue, in Redis, for every workflow of the user that is on
+and uses the trigger. The trigger turns a key into an event when the workflow
+is ready to run for it:
+
+```python
+class DayChanged(PushTrigger[NoParams, DayMetrics]):
+    id = "health-connect.day-changed"
+
+    async def event_for(self, ctx, params, key) -> DayMetrics | None:
+        return await day_metrics(ctx.user, datetime.date.fromisoformat(key))
+```
+
+- The event is built when the run starts, so it holds what is stored at that
+  moment, and a key that is put twice before its run gives one run.
+- A key leaves the queue when its run worked. A restart in the middle of a
+  run finds the key again.
+- If the run failed every time it was tried, the key goes behind the others
+  and is tried again after them. Nothing is dropped while Obsidian is closed.
+- A key that is put again during its own run stays, and gives another run.
+- A workflow that is off gets no keys. It does not collect what it missed;
+  a run by hand over a range fills that in.
 
 `Manual` says whether the user can start a run by hand:
 
@@ -181,8 +219,11 @@ surfaces check a command with `get_command_for_user` before they run it.
 - **One event, one run. One run at a time for each workflow.**
 - **A failed run is tried again** for the same event: five times in all, with
   a pause of 60 seconds that doubles. After the last try the user is told
-  once, and not again until a run works. The workflow stays on and runs at
-  its next event.
+  once, and not again until a run works. The workflow stays on.
+- **A workflow that keeps failing is tried twice an hour.** After those five
+  tries, each event gets one try, no sooner than 30 minutes after the last
+  failure, until a run works. A service that is down for a night is not asked
+  hundreds of times.
 - **A trigger that fails is started again** after a pause that doubles from 60
   seconds to 30 minutes, like a plugin that crashed.
 - **Telegram flood control pauses the step**, not the run: the step waits for
@@ -192,9 +233,9 @@ surfaces check a command with `get_command_for_user` before they run it.
   ended. A step's inputs and outputs are kept only in the run's trace.
 - **Turning a workflow on or off takes effect at once.**
 
-Not there yet: events that wait in Redis across a restart, branches and loops,
-blocks that ask the user a question, the editor. A question a run is waiting
-on would not survive a restart.
+Not there yet: triggers that poll a service, branches and loops, blocks that
+ask the user a question, the editor. A question a run is waiting on would not
+survive a restart.
 
 ## Redis
 
@@ -204,13 +245,20 @@ on would not survive a restart.
 | `workflows:workflow:{id}` | The workflow, as JSON |
 | `workflows:workflow:{id}:state` | Hash of what its trigger remembers |
 | `workflows:workflow:{id}:runs` | The traces of its last 100 runs, newest first. Dropped 30 days after the last run. |
+| `workflows:workflow:{id}:queue` | List of the keys it still has to run for, oldest first |
+| `workflows:workflow:{id}:queued` | Hash of those keys, each with a token that changes when the key is put again |
+| `workflows:converted:{plugin}` | Set of the users whose use of a plugin was converted to recipes |
 
 ## Plugins that became recipes
 
-`spanreed/workflows/migrations.py` lists them. At startup, each user who is
-still registered to such a plugin gets its recipe installed and is told so,
-and the registration is dropped. A user never has both, and doing it again
-changes nothing.
+`spanreed/workflows/migrations.py` moves the users, once each, at startup. A
+user never has the old behavior and the new one, and doing it again changes
+nothing.
+
+### Retired: the whole plugin is a recipe
+
+The plugin is deleted from the code. Each user who is still registered to it
+gets the recipe and is told so, and the registration is dropped.
 
 | Plugin | Recipe |
 | --- | --- |
@@ -219,3 +267,39 @@ changes nothing.
 The schedule differs from the plugin in one way: the plugin ran at every
 start of Spanreed and then every 4 hours, and the recipe runs every 4 hours
 whether or not Spanreed was restarted in between.
+
+### Converted: the plugin stays as the connection
+
+The plugin keeps talking to its service. What it did with the data is now a
+set of recipes, installed with the settings the user had.
+
+| Plugin | What it still does | Recipes |
+| --- | --- | --- |
+| Health Connect | Receives the phone's payloads, stores every record, and says which days changed | Health data → daily note · Health raw data → vault files |
+
+![The daily note workflow](images/web-ui-workflow-health-daily-desktop.png)
+
+![The raw files workflow](images/web-ui-workflow-health-raw-desktop.png)
+
+Where the settings of the Health Connect plugin went:
+
+| Was | Is now |
+| --- | --- |
+| The ten daily note property checkboxes | The rows of **Properties** in "Health data → daily note". A property that was off has no row. |
+| Raw data folder | The start of **Path** in "Health raw data → vault files" |
+| Sync steps, Sync heart rate, Sync VO2 max | One command, **Sync health data**: today, the last week, or every stored day |
+| Export Health Connect raw data | The command of "Health raw data → vault files", under the same name |
+| Show Health Connect setup, Delete Health Connect data | Still commands of the plugin |
+
+What differs from the plugin:
+
+- **A day that could not be written is not lost.** The plugin wrote the
+  metrics of a payload once and gave up if Obsidian did not answer. The
+  workflow keeps the day in its queue until it is written.
+- **One message for a day, not one for each kind of metric.** A sync by hand
+  says `Logged steps=6227, heart-rate-avg=71 for 2026-05-09.` It names the
+  properties it wrote, and says nothing about a day that was up to date.
+- **A sync by hand writes what changed.** The plugin's commands wrote every
+  value again without reading the note. The note ends up the same.
+- **The note of each day gets every metric compared**, not only the kind that
+  the payload carried. Only a value that differs is written.
