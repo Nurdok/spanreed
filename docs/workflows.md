@@ -143,6 +143,8 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `core.random-schedule` At random times | trigger | Workflows |
 | `core.called` When another workflow runs it | trigger | Workflows |
 | `core.command` When I run its command | trigger | Workflows |
+| `core.started` Spanreed started | trigger | Workflows |
+| `core.error` Spanreed had an error | trigger | Workflows |
 | `core.continue-if` Only continue if | logic | Workflows |
 | `core.if` If | logic | Workflows |
 | `core.for-each` For each | logic | Workflows |
@@ -157,6 +159,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `core.ask-text` Ask me for text | ask | Workflows |
 | `core.ask-list` Ask me for a list | ask | Workflows |
 | `core.send-message` Send message | ask | Workflows |
+| `core.notify` Notify me | ask | Workflows |
 | `core.send-file` Send file | ask | Workflows |
 | `core.download-file` Download a file | action | Workflows |
 | `todoist.find-tasks` Find tasks | action | Todoist |
@@ -171,6 +174,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `obsidian.write-file` Write file | action | Obsidian |
 | `obsidian.write-note` Write note | action | Obsidian |
 | `obsidian.append-to-note` Append to note | action | Obsidian |
+| `obsidian.stopped-answering` Vault stopped answering | trigger | Obsidian |
 | `health-connect.day-changed` A day's data changed | trigger | Health Connect |
 | `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
 | `withings.new-measurements` New measurements for a day | trigger | Withings |
@@ -186,6 +190,12 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `timekiller.process-scan` Process a scan | ask | Timekiller |
 
 More arrive with each plugin whose behavior becomes a recipe.
+
+"Send message" goes to where the user is now. "Notify me" leaves a
+notification on every surface the user has: one that cannot show it now
+keeps it until it can. It is for what must not be missed and need not be
+seen at once. With **Markdown** its text is read as Markdown, so that what
+is between two lines of ``` is shown as code.
 
 ### Asking
 
@@ -673,6 +683,22 @@ those hours fires nothing, and the next wait starts. It keeps when the next
 event is due, so a restart does not fire early. By hand it fires whatever
 the hour.
 
+`core.started` fires when Spanreed has started: once the engine runs and
+the plugins were moved. A workflow that was on at that moment gets the
+event, also if it cannot run until later. One that is turned on afterwards
+waits for the next start. `core.error` fires for an error that Spanreed
+kept (see [Spanreed Monitor](#spanreed-monitor)), with its `text`. The
+plugin that runs the engine feeds both, and neither can be started by hand.
+
+`obsidian.stopped-answering` fires when Obsidian's plugin for Spanreed gave
+no sign of life for **After** minutes, and again every **At most every**
+minutes for as long as it stays quiet. It does not fire more often than
+that when Obsidian comes and goes either, or after a restart of Spanreed.
+The plugin says that it runs for as long as Obsidian is open, so the
+trigger fires whenever Obsidian is closed: it is for a vault that is meant
+to be open all the time. The Obsidian connector reads what the plugin says
+(`spanreed/apis/obsidian_watch.py`), for each of its users.
+
 ## Commands
 
 A workflow whose trigger can be started by hand is a command, on every
@@ -841,6 +867,7 @@ gets the recipe and is told so, and the registration is dropped.
 | Habit Tracker | Habit check-in |
 | Audible Book Progress | Audible progress → book notes |
 | Recurring Payments | A workflow for each payment the user had. For a new one: Recurring payment |
+| Spanreed Monitor | Spanreed started, Spanreed had an error and, turned off, Obsidian stopped answering |
 
 A retired plugin can carry over the config it had saved for a user
 (`RetiredPlugin.keep_settings`), and what it remembered for the user
@@ -998,6 +1025,61 @@ Where the parts of a payment went:
 `spanreed/plugins/recurring_payments_test_data.py` holds 13 cases and what
 the plugin did in each, taken by running it before it was removed. The tests
 run the workflow on the same cases and compare.
+
+#### Spanreed Monitor
+
+The plugin told its users two things: that Spanreed started, and what error
+Spanreed had kept. It was meant to tell a third: that Obsidian's plugin for
+Spanreed had gone quiet. Each is a workflow now.
+
+![An error of Spanreed as a workflow](images/web-ui-workflow-error-desktop.png)
+
+![One error](images/web-ui-workflow-error-history-desktop.png)
+
+| Was | Is now |
+| --- | --- |
+| "Spanreed is starting up." | The workflow "Spanreed started": the trigger of that name, and "Notify me" |
+| "Exception retrieved from storage: …" and "Spanreed is still running." | The workflow "Spanreed had an error": the trigger of that name, and "Notify me" twice |
+| An error of Obsidian's plugin, told as one of Spanreed's | The same, but the Obsidian connector reads what the plugin says, for each of its users |
+| "Obsidian plugin watchdog timeout." | The workflow "Obsidian stopped answering", on the trigger "Vault stopped answering". It is installed turned off |
+| "Spanreed is shutting down." | Gone |
+
+The errors that Spanreed keeps are the ones that happen outside the run of a
+workflow: a command that crashes, a token that cannot be refreshed, an error
+of Obsidian's plugin, and what ended the process the last time. They are
+written to the log, and their text is put in a list in Redis
+(`spanreed/errors.py`). The plugin that runs the engine reads the list, and
+fires "Spanreed had an error" for every workflow with that trigger. An error
+rarely comes alone, so the ones that wait behind the newest are dropped, as
+the plugin dropped them.
+
+The failed run of a workflow is not one of these errors: the engine tells
+its user about that itself (see [What the engine does](#what-the-engine-does)).
+
+- **The plugin never said that Obsidian went quiet.** It was written to, a
+  minute after the last heartbeat and then every half hour, but the time
+  since the last heartbeat was never counted. The trigger counts it, so the
+  workflow would speak up every time Obsidian is closed. It starts turned
+  off, and the user is told that it is there.
+
+  ![The workflow for a quiet vault, while editing](images/web-ui-workflow-watchdog-edit-desktop.png)
+
+- **Nothing says that Spanreed is shutting down.** A workflow does not run
+  while the engine stops. The plugin tried to say it when its task was
+  cancelled.
+- **Which is told first after a start is open**, that Spanreed started or
+  the error that waited from before. They are two workflows. The plugin said
+  that it started first.
+- **Every workflow with the trigger gets every error.** The plugin's users
+  took them from one list, so each error reached one of them.
+- **An error of Obsidian's plugin is reported for every user of Obsidian**,
+  not only for the users of the monitor. As before, at most one in half an
+  hour, none in the first half hour after a start, and not the errors of a
+  connection that dropped.
+
+`spanreed/plugins/spanreed_monitor_test_data.py` holds 13 cases and what the
+plugin did in each, taken by running it before it was removed. The tests run
+the workflows on the same cases and compare.
 
 ### Converted: the plugin stays as the connection
 
