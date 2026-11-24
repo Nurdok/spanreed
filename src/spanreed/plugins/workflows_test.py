@@ -54,6 +54,8 @@ def test_name() -> None:
         "core.continue-if",
         "core.for-each",
         "core.send-message",
+        "core.download-file",
+        "core.send-file",
     ]
 
 

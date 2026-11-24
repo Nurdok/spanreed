@@ -712,6 +712,8 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
                 "core.continue-if",
                 "core.for-each",
                 "core.send-message",
+                "core.download-file",
+                "core.send-file",
                 "todoist.find-tasks",
                 "todoist.set-due-date",
             ]

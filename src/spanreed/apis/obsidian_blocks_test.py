@@ -385,3 +385,36 @@ def test_the_blocks_name_what_they_write() -> None:
     assert WriteNote().writes({"path": "Notes/a.md"}) == ["the file Notes/a.md"]
     assert WriteNote().writes({}) == []
     assert CreateDailyNote().writes({}) == []
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_file_writes_the_data_of_a_file_from_another_step(
+    mock_obsidian: AsyncMock,
+) -> None:
+    output = _write(mock_obsidian, path="Receipts/May.pdf", content=b"%PDF-1")
+
+    mock_obsidian.write_binary_file.assert_awaited_once_with(
+        "Receipts/May.pdf", b"%PDF-1", overwrite=True
+    )
+    assert (output.written, output.skipped) == (True, False)
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_file_can_leave_a_file_that_is_there(mock_obsidian: AsyncMock) -> None:
+    mock_obsidian.write_binary_file.side_effect = FileExistsError("exists")
+
+    output = _write(mock_obsidian, content=b"%PDF-1", if_exists="skip")
+
+    assert mock_obsidian.write_binary_file.await_args.kwargs == {"overwrite": False}
+    assert (output.written, output.skipped, output.deleted) == (False, True, False)
+
+    with pytest.raises(FileExistsError):
+        _write(mock_obsidian, content=b"%PDF-1", if_exists="fail")
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_file_deletes_for_empty_data_too(mock_obsidian: AsyncMock) -> None:
+    output = _write(mock_obsidian, content=b"", if_empty="delete")
+
+    mock_obsidian.write_binary_file.assert_not_called()
+    assert output.deleted
