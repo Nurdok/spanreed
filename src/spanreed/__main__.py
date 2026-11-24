@@ -8,7 +8,6 @@ from spanreed.plugin import Plugin
 from spanreed.interaction import UserInteractionApi
 from spanreed.apis.telegram_bot import TelegramBotPlugin
 from spanreed.plugins.todoist import TodoistPlugin
-from spanreed.apis.obsidian_webhook import ObsidianWebhookPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
 
 from spanreed.plugins.habit_tracker import HabitTrackerPlugin
@@ -24,7 +23,6 @@ from spanreed.plugins.timekiller import TimekillerPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
 from spanreed.plugins.hevy import HevyPlugin
-from spanreed.plugins.googlefit import GoogleFitPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.apis.audible import AudiblePlugin
 from spanreed.plugins.book_progress import BookProgressPlugin
@@ -57,7 +55,6 @@ def load_plugins() -> List[Plugin]:
         ObsidianSurfacePlugin(),
         ObsidianPlugin(),
         TodoistPlugin(),
-        ObsidianWebhookPlugin(),
         HabitTrackerPlugin(),
         RecurringPaymentsPlugin(),
         TodoistNoOverduePlugin(),
@@ -68,7 +65,6 @@ def load_plugins() -> List[Plugin]:
         WithingsPlugin(),
         GmailMonitorPlugin(),
         HevyPlugin(),
-        GoogleFitPlugin(),
         HealthConnectPlugin(),
         AudiblePlugin(),
         BookProgressPlugin(),

@@ -8,7 +8,6 @@ from quart import Quart, websocket, request
 from spanreed.storage import redis_api
 from spanreed.apis.withings import WithingsApi
 from spanreed.apis.gmail import GmailApi
-from spanreed.apis.googlefit import GoogleFitApi
 from spanreed.apis.health_connect import HealthConnectApi
 from spanreed.web.routes import blueprint as app_blueprint
 
@@ -111,21 +110,6 @@ class WebUiPlugin(Plugin[None]):
             # Pass the code to the Gmail API without blocking the Quart app.
             await asyncio.create_task(GmailApi.handle_oauth_redirect(code, state))
             return "Gmail authenticated successfully. You can close this tab."
-
-        @app.get("/googlefit-oauth")
-        async def googlefit_oauth_redirect() -> str:
-            # Extract the code from the query string.
-            code: str | None = request.args.get("code")
-            if code is None:
-                return "No code provided."
-
-            state: str | None = request.args.get("state")
-            if state is None:
-                return "No state provided."
-
-            # Pass the code to the Google Fit API without blocking the Quart app.
-            await asyncio.create_task(GoogleFitApi.handle_oauth_redirect(code, state))
-            return "Google Fit authenticated successfully. You can close this tab."
 
         @app.post("/health-connect")
         async def health_connect_webhook() -> tuple[str, int]:

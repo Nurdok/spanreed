@@ -194,8 +194,8 @@ Google account can be linked to only one Spanreed user.
 
 - OAuth client: the server uses the client JSON under the Redis key
   `web_ui_google_credentials`. If that key isn't set, it uses the client
-  that Gmail or Google Fit already use (`gmail_credentials`, then
-  `googlefit_credentials`).
+  that Gmail already uses (`gmail_credentials`), and then the one the
+  removed Google Fit integration left in Redis (`googlefit_credentials`).
 - In Google Cloud Console → APIs & Services → Credentials → that OAuth
   client, add the authorized redirect URI
   `https://spanreed.ink/app/google/callback`. Until you do, Google rejects

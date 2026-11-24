@@ -14,10 +14,7 @@ import jinja2
 from spanreed.apis.todoist import Todoist, Task, Project, Comment
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.interaction import UserInteractionApi, UserInteractionPriority
-from spanreed.apis.obsidian_webhook import (
-    ObsidianWebhookApi,
-    ObsidianWebhookPlugin,
-)
+from spanreed.apis.obsidian import ObsidianApi, ObsidianApiTimeoutError
 from spanreed.user import User
 from spanreed.plugin import Plugin
 
@@ -261,15 +258,12 @@ class RecurringPayment:
             await bot.request_user_choice(
                 "Would you like to setup automatic logging of each event"
                 " to an Obsidian note?\n"
-                "Note: This requires you to have the Obsidian Webhook plugin."
-                " I'll help you configure it if you haven't already.",
+                "Note: This requires the Spanreed plugin to be installed in"
+                " Obsidian.",
                 ["Yes", "No"],
             )
             == 0
         ):
-            if not (await ObsidianWebhookPlugin.is_registered(user)):
-                await ObsidianWebhookPlugin.ask_for_user_config(user)
-
             obsidian_log = ObsidianLog(
                 note_title=await ObsidianLog.ask_for_note_title(bot),
                 file_location=await ObsidianLog.ask_for_file_location(bot),
@@ -494,24 +488,43 @@ class RecurringPaymentsPlugin(Plugin[UserConfig]):
     async def add_to_obsidian_log(
         self, user: User, recurring_payment: RecurringPayment, date_str: str
     ) -> None:
+        """Append the event to the Obsidian note of a recurring payment.
+
+        Do nothing if the payment has no note. A failure here is not
+        raised: the Todoist task is already updated, and one entry that
+        could not be written must not stop the schedule of every recurring
+        payment. If Obsidian does not answer, tell the user, so that the
+        entry can be added by hand.
+        """
         if recurring_payment.obsidian_log is None:
             return
         obsidian_log: ObsidianLog = recurring_payment.obsidian_log
 
-        webhook_api: ObsidianWebhookApi = await ObsidianWebhookApi.for_user(user)
+        obsidian: ObsidianApi = await ObsidianApi.for_user(user)
         note_content: str = jinja2.Template(obsidian_log.note_content_template).render(
             date=date_str
         )
-        self._logger.info(f'Added event log to note: "{obsidian_log.note_title}"')
-        await webhook_api.append_to_note(
-            note_path=str(
-                (
-                    pathlib.PurePosixPath(obsidian_log.file_location)
-                    / obsidian_log.note_title
-                ).with_suffix(".md")
-            ),
-            content=note_content,
+        note_path = str(
+            (
+                pathlib.PurePosixPath(obsidian_log.file_location)
+                / obsidian_log.note_title
+            ).with_suffix(".md")
         )
+        try:
+            await obsidian.append_to_note(note_path, note_content)
+        except ObsidianApiTimeoutError:
+            self._logger.exception(f"Obsidian did not answer; {note_path} not updated")
+            bot: UserInteractionApi = await UserInteractionApi.for_user(user)
+            await bot.notify(
+                f"Obsidian didn't answer, so {date_str} was not added to "
+                f"“{obsidian_log.note_title}”. Add it by hand."
+            )
+            return
+        except Exception:
+            # The Obsidian API has already told the user what failed.
+            self._logger.exception(f"Failed to add the event to {note_path}")
+            return
+        self._logger.info(f'Added event log to note: "{obsidian_log.note_title}"')
 
     async def run_for_user(self, user: User) -> None:
         user_config: UserConfig = await self.get_config(user)

@@ -9,7 +9,8 @@ user they are.
 
 Client credentials: the OAuth client JSON (the ``{"web": {...}}`` file from
 Google Cloud) under the Redis key ``web_ui_google_credentials``, falling back
-to the client the Gmail / Google Fit integrations already use. The client
+to the client the Gmail integration already uses, and then to the one the
+removed Google Fit integration left in Redis. The client
 must list ``https://spanreed.ink/app/google/callback`` as an authorized
 redirect URI.
 
@@ -41,6 +42,8 @@ _logger = logging.getLogger(__name__)
 CREDENTIALS_KEYS = (
     "web_ui_google_credentials",
     "gmail_credentials",
+    # The Google Fit integration is gone, but a server that was set up with
+    # only this client still signs in with it.
     "googlefit_credentials",
 )
 AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
