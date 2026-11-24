@@ -1,0 +1,104 @@
+{
+  "id": "recurring-payment",
+  "name": "Recurring payment",
+  "description": "Each week, adds the date to a Todoist task that keeps count of what you owe, after asking you, and logs it to a note.",
+  "requires": [
+    "obsidian",
+    "todoist"
+  ],
+  "command_hidden": true,
+  "trigger": {
+    "block": "core.at-time",
+    "params": {
+      "time": "18:00",
+      "on": "Tuesday",
+      "timezone": ""
+    }
+  },
+  "steps": [
+    {
+      "id": "tally",
+      "block": "todoist.read-tally",
+      "inputs": {
+        "label": "recurring-payment",
+        "date": "{{ trigger.date }}",
+        "cost": 100
+      }
+    },
+    {
+      "id": "new",
+      "block": "core.if",
+      "inputs": {
+        "condition": "{{ not tally.has_date }}"
+      },
+      "steps": [
+        {
+          "id": "sure",
+          "block": "core.ask-choice",
+          "inputs": {
+            "question": "You have a recurring payment due now.\nWould you like to add it to the list of dates?",
+            "options": [
+              "Yes (add)",
+              "No (skip)"
+            ],
+            "cancel": "",
+            "priority": "high"
+          }
+        },
+        {
+          "id": "yes",
+          "block": "core.continue-if",
+          "inputs": {
+            "condition": "{{ sure.answer == 'Yes (add)' }}"
+          }
+        },
+        {
+          "id": "write",
+          "block": "todoist.write-tally",
+          "inputs": {
+            "label": "recurring-payment",
+            "dates": "{{ tally.new_dates }}",
+            "name": "Pay {{ tally.total_cost }} (for {{ tally.dates_text }})",
+            "project": null
+          }
+        },
+        {
+          "id": "owe",
+          "block": "core.remember",
+          "inputs": {
+            "name": "to-log:{{ trigger.date }}"
+          }
+        }
+      ]
+    },
+    {
+      "id": "owed",
+      "block": "core.recall",
+      "inputs": {
+        "name": "to-log:{{ trigger.date }}"
+      }
+    },
+    {
+      "id": "due",
+      "block": "core.continue-if",
+      "inputs": {
+        "condition": "{{ owed.found }}"
+      }
+    },
+    {
+      "id": "log",
+      "block": "obsidian.append-to-note",
+      "inputs": {
+        "path": "Payments.md",
+        "text": "- {{ trigger.date }}\n"
+      }
+    },
+    {
+      "id": "logged",
+      "block": "core.forget",
+      "inputs": {
+        "name": "to-log:{{ trigger.date }}"
+      }
+    }
+  ]
+}

@@ -14,7 +14,6 @@ from spanreed.config_form import (
 from spanreed.plugins import (
     gmail_monitor,
     health_connect,
-    recurring_payments,
 )
 from spanreed.apis import withings
 
@@ -204,7 +203,6 @@ def test_config_data_rejects_a_form_that_is_not_an_object() -> None:
     [
         gmail_monitor.UserConfig,
         health_connect.UserConfig,
-        recurring_payments.UserConfig,
         withings.UserConfig,
     ],
 )

@@ -41,7 +41,13 @@ class RetiredPlugin:
 
     canonical_name: str
     name: str
-    recipe_id: str
+    # The recipe that does what the plugin did. Empty for a plugin whose
+    # users get something else: see ``move``.
+    recipe_id: str = ""
+    # In place of the recipe: makes the workflows of a user, tells the user,
+    # and returns what it made. For a plugin that held several things, each
+    # of which is a workflow now. It must be safe to call again.
+    move: Callable[[WorkflowEngine, User], Awaitable[list[Workflow]]] | None = None
     # Given the config the plugin had saved for a user, or ``None`` if it
     # had none, returns what changes the new workflow to match it.
     keep_settings: (
@@ -63,7 +69,7 @@ CARRIED_OVER = MOVED_MARKER
 
 def _retired_plugins() -> list[RetiredPlugin]:
     # Imported here: what is left of a plugin imports the engine, as this does.
-    from spanreed.plugins import book_progress, habit_check_in
+    from spanreed.plugins import book_progress, habit_check_in, recurring_payments
 
     return [
         RetiredPlugin(
@@ -92,6 +98,11 @@ def _retired_plugins() -> list[RetiredPlugin]:
                 "books you said are not on Audible, and which you were "
                 "asked about."
             ),
+        ),
+        RetiredPlugin(
+            canonical_name=recurring_payments.CANONICAL_NAME,
+            name="Recurring Payments",
+            move=recurring_payments.move,
         ),
     ]
 
@@ -122,6 +133,9 @@ async def retire_plugins(engine: WorkflowEngine) -> None:
 
 
 async def _move_user(engine: WorkflowEngine, plugin: RetiredPlugin, user: User) -> None:
+    if plugin.move is not None:
+        await plugin.move(engine, user)
+        return
     workflows = await engine.store.list_for_user(user.id)
     workflow = next((w for w in workflows if w.recipe == plugin.recipe_id), None)
     is_new = workflow is None
