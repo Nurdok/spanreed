@@ -139,6 +139,21 @@ A workflow with a loop, and a run of it in which the third item failed:
 ![A loop on a phone](images/web-ui-workflow-loop-phone.png)
 ![A run of a loop on a phone](images/web-ui-workflow-loop-history-phone.png)
 
+A workflow that asks you something, and the conversation after **Run now**:
+
+![A workflow that asks on desktop](images/web-ui-workflow-ask-desktop.png)
+![Its conversation on desktop](images/web-ui-workflow-ask-run-desktop.png)
+![The end of its conversation on desktop](images/web-ui-workflow-ask-run-done-desktop.png)
+
+![A workflow that asks on a phone](images/web-ui-workflow-ask-phone.png)
+![Its conversation on a phone](images/web-ui-workflow-ask-run-phone.png)
+
+History shows, under each step that asked, what it asked and what you
+answered:
+
+![The conversation in the history on desktop](images/web-ui-workflow-ask-history-desktop.png)
+![The conversation in the history on a phone](images/web-ui-workflow-ask-history-phone.png)
+
 A workflow that cannot run says why above its steps, and a card whose block
 no plugin publishes any more is outlined in red.
 
@@ -173,7 +188,8 @@ its command can be changed there too.
   what the steps write is written, and what they send is sent. It runs for
   the event of the workflow's last run, or, for a trigger that needs no
   question, for an event made at that moment. A workflow that has neither
-  says so. A test is listed in History as "Test".
+  says so. A test is listed in History as "Test". A workflow that asks you
+  something is not tested: save it and use **Run now**.
 - **Cancel**, another workflow or another view asks before it drops changes.
 - **Delete this workflow** deletes it with its history, after asking.
 
