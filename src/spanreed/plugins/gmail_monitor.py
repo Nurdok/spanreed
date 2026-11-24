@@ -16,6 +16,8 @@ from spanreed.interaction import (
     UserInteractionPreempted,
 )
 from spanreed.apis.gmail import GmailApi, EmailMessage, GmailAuthenticationFlow
+from spanreed.apis.gmail_blocks import gmail_blocks
+from spanreed.workflows.blocks import Block
 from spanreed.plugins.gmail_monitor_actions import (
     EmailActionHandler,
     TelegramNotificationAction,
@@ -122,6 +124,10 @@ class GmailMonitorPlugin(Plugin[UserConfig]):
     @classmethod
     def get_config_class(cls) -> type[UserConfig]:
         return UserConfig
+
+    def blocks(self) -> list[Block]:
+        """Return the Gmail blocks for workflows."""
+        return gmail_blocks()
 
     async def run(self) -> None:
         await UserInteractionApi.register_command(

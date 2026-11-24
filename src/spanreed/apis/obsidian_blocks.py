@@ -17,6 +17,7 @@ import yaml
 from spanreed.apis.obsidian import ObsidianApi
 from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, NoInput, NoOutput, StepContext
+from spanreed.workflows.files import as_bytes
 
 
 class CreateDailyNote(Action[NoInput, NoOutput]):
@@ -124,8 +125,10 @@ class WriteFileInput:
 
     # The path of the file in the vault. Missing folders are created.
     path: str
-    content: str
-    if_exists: Literal["overwrite", "fail"] = "overwrite"
+    # A text, or the data of a file from another step.
+    content: Any
+    # ``skip``: leave a file that is there as it is, and go on.
+    if_exists: Literal["overwrite", "skip", "fail"] = "overwrite"
     # ``delete``: with no content, delete the file instead of emptying it.
     if_empty: Literal["write", "delete"] = "write"
 
@@ -137,10 +140,12 @@ class WriteFileOutput:
     path: str
     written: bool
     deleted: bool
+    # Whether the file was there already and was left as it is.
+    skipped: bool = False
 
 
 class WriteFile(Action[WriteFileInput, WriteFileOutput]):
-    """Write a text file into the vault."""
+    """Write a file into the vault: a text, or a file from another step."""
 
     id = "obsidian.write-file"
     title = "Write file"
@@ -152,18 +157,24 @@ class WriteFile(Action[WriteFileInput, WriteFileOutput]):
     async def run(self, ctx: StepContext, inputs: WriteFileInput) -> WriteFileOutput:
         """Write the file, or delete it if it would be empty."""
         obsidian = await ObsidianApi.for_user(ctx.user)
-        if inputs.content == "" and inputs.if_empty == "delete":
+        data = as_bytes(inputs.content)
+        if not data and inputs.if_empty == "delete":
             try:
                 await obsidian.delete_file(inputs.path)
             except FileNotFoundError:
                 # It was never written, or it is gone already.
                 return WriteFileOutput(path=inputs.path, written=False, deleted=False)
             return WriteFileOutput(path=inputs.path, written=False, deleted=True)
-        await obsidian.write_binary_file(
-            inputs.path,
-            inputs.content.encode("utf-8"),
-            overwrite=inputs.if_exists == "overwrite",
-        )
+        try:
+            await obsidian.write_binary_file(
+                inputs.path, data, overwrite=inputs.if_exists == "overwrite"
+            )
+        except FileExistsError:
+            if inputs.if_exists != "skip":
+                raise
+            return WriteFileOutput(
+                path=inputs.path, written=False, deleted=False, skipped=True
+            )
         return WriteFileOutput(path=inputs.path, written=True, deleted=False)
 
 

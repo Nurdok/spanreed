@@ -110,6 +110,8 @@ for each set of a Hevy workout:
 | `core.continue-if` Only continue if | logic | Workflows |
 | `core.for-each` For each | logic | Workflows |
 | `core.send-message` Send message | ask | Workflows |
+| `core.send-file` Send file | ask | Workflows |
+| `core.download-file` Download a file | action | Workflows |
 | `todoist.find-tasks` Find tasks | action | Todoist |
 | `todoist.set-due-date` Set due date | action | Todoist |
 | `obsidian.create-daily-note` Create today's daily note | action | Obsidian |
@@ -120,8 +122,76 @@ for each set of a Hevy workout:
 | `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
 | `withings.new-measurements` New measurements for a day | trigger | Withings |
 | `hevy.new-workout` New workout | trigger | Hevy |
+| `gmail.new-email` New email | trigger | Gmail Monitor |
+| `gmail.get-attachments` Get attachments | action | Gmail Monitor |
+| `gmail.find-links` Find links | action | Gmail Monitor |
 
 More arrive with each plugin whose behavior becomes a recipe.
+
+### Files
+
+A file is a value like any other: a step that gets files gives them as a
+list, and a step that takes a file reads its `data`. A file has a `name`
+that is safe to write it under, its `stem` and `extension`, its `type` and
+its `size`. A trace shows the size of the data, not the data.
+
+- `gmail.get-attachments` gives the attachments of an email as `files`.
+- `core.download-file` gives the file that a link leads to. It follows HTTP
+  redirects and pages that only send the browser on, and it fetches from
+  public addresses only: each address on the way is checked. A link that
+  does not lead to a file does not fail the step: `ok` is no and `problem`
+  says why (a web page, a picture, too large, HTTP 404). The step fails, and
+  the run is tried again, if the server does not answer or has an error.
+- `obsidian.write-file` takes a text or the data of a file as its content.
+  **If exists**: `skip` leaves a file that is there and sets `skipped`.
+- `core.send-file` sends a file to the user.
+
+This saves the PDF attachments of an email into the vault, and says for each
+whether it was saved or was there already:
+
+![A workflow made of the Gmail blocks](images/web-ui-workflow-gmail-desktop.png)
+
+```json
+{"id": "files", "block": "gmail.get-attachments", "inputs": {"email": "{{ trigger.id }}"}},
+{"id": "each", "block": "core.for-each", "inputs": {"items": "{{ files.files }}"},
+ "steps": [
+   {"id": "save", "block": "obsidian.write-file",
+    "inputs": {"path": "Receipts/{{ trigger.date }} {{ each.item.name }}",
+               "content": "{{ each.item.data }}", "if_exists": "skip"}},
+   {"id": "told", "block": "core.send-message",
+    "inputs": {"message": "{% if save.written %}💾 Saved {{ save.path }}{% else %}⚠️ {{ save.path }} already exists; skipped.{% endif %}"}}
+ ]}
+```
+
+The same workflow on a phone, and the blocks for files in the editor's list:
+
+![A workflow made of the Gmail blocks, on a phone](images/web-ui-workflow-gmail-phone.png)
+![The blocks for files in the list of blocks](images/web-ui-workflow-gmail-blocks-desktop.png)
+
+A message that comes out empty is not sent. So a message that is all inside
+`{% if … %}` is sent only when the condition holds, which stands in for a
+branch until there are branches.
+
+### Gmail
+
+`gmail.new-email` asks Gmail at its interval (15 minutes unless changed) for
+the emails that came since its last poll, and fires for each one that matches
+its filter: patterns for the sender, the subject and the body, and whether
+the email has attachments. A pattern is a regular expression, searched
+without regard to case.
+
+- An email fires once for a workflow.
+- The first poll of a workflow looks back an hour.
+- A poll asks Gmail by the second (`after:1778320800`). Gmail takes a date
+  (`after:2026/05/09`) as midnight in Pacific time, whatever the timezone of
+  the user.
+- If the Gmail login is no longer accepted, the poll sends the user a link to
+  log in again, once, and keeps its place.
+- By hand, the workflow runs for the new emails, or for every email in the
+  inbox (or the starred ones) that matches, up to 200, after asking.
+
+The Gmail Monitor plugin still runs its own rules. A rule and a workflow that
+match the same email both act on it.
 
 ### Writing a block
 

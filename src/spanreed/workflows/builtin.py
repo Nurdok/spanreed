@@ -164,7 +164,8 @@ class SendMessage(Action[SendMessageInput, NoOutput]):
     """Send the user a message, on the surfaces that reach them now.
 
     The message is plain text: it is shown as it is written, whatever
-    values were filled into it.
+    values were filled into it. A message that comes out empty is not
+    sent, so a message that is all inside ``{% if … %}`` is sent only then.
     """
 
     id = "core.send-message"
@@ -172,9 +173,10 @@ class SendMessage(Action[SendMessageInput, NoOutput]):
     kind = BlockKind.ASK
 
     async def run(self, ctx: StepContext, inputs: SendMessageInput) -> NoOutput:
-        """Send the message."""
-        bot = await UserInteractionApi.for_user(ctx.user)
-        await bot.send_message(inputs.message, parse_html=False)
+        """Send the message, unless there is nothing in it."""
+        if inputs.message.strip():
+            bot = await UserInteractionApi.for_user(ctx.user)
+            await bot.send_message(inputs.message, parse_html=False)
         return NoOutput()
 
 
