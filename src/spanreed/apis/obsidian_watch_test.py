@@ -142,6 +142,23 @@ def test_what_is_not_understood_is_passed_over(clock: _Clock, raw: Any) -> None:
     assert obsidian_watch.vault_of(4).last_seen is None
 
 
+def test_what_an_error_says_stays_out_of_the_log(
+    clock: _Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret = {"kind": "error", "message": "Cannot read Journal/Therapy.md"}
+    dropped = {"kind": "error", "message": "read ECONNRESET"}
+
+    with caplog.at_level("INFO", logger="spanreed.apis.obsidian_watch"):
+        reported = _take(clock, (31, json.dumps(secret)), (1, json.dumps(dropped)))
+
+    # The user is told what it said. The log only says that there was one.
+    assert "Therapy" in reported[0][1]
+    assert "Therapy" not in caplog.text
+    assert "The Obsidian plugin of user 4 had an error." in caplog.text
+    # A dropped connection says nothing about the vault.
+    assert "lost its connection: read ECONNRESET" in caplog.text
+
+
 def test_an_error_is_read_from_bytes_too(clock: _Clock) -> None:
     reported = _take(clock, (31, json.dumps(ERROR).encode("utf-8")))
 
