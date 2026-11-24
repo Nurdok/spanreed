@@ -144,6 +144,9 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `core.if` If | logic | Workflows |
 | `core.for-each` For each | logic | Workflows |
 | `core.stop` End the run | logic | Workflows |
+| `core.remember` Remember | logic | Workflows |
+| `core.recall` Recall | logic | Workflows |
+| `core.forget` Forget | logic | Workflows |
 | `core.ask-choice` Ask me to choose | ask | Workflows |
 | `core.ask-each` Ask me to pick, one at a time | ask | Workflows |
 | `core.ask-text` Ask me for text | ask | Workflows |
@@ -154,6 +157,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `todoist.find-tasks` Find tasks | action | Todoist |
 | `todoist.set-due-date` Set due date | action | Todoist |
 | `obsidian.create-daily-note` Create today's daily note | action | Obsidian |
+| `obsidian.query-dataview` Query Dataview | action | Obsidian |
 | `obsidian.get-note-property` Get note property | action | Obsidian |
 | `obsidian.set-note-properties` Set note properties | action | Obsidian |
 | `obsidian.add-to-list-property` Add to list property | action | Obsidian |
@@ -168,6 +172,8 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `gmail.get-attachments` Get attachments | action | Gmail Monitor |
 | `gmail.find-links` Find links | action | Gmail Monitor |
 | `lit-notes.search-books` Search books | action | Lit Notes |
+| `audible.get-library` Get library | action | Audible |
+| `audible.link-note` Link a note to a book | action | Audible |
 
 More arrive with each plugin whose behavior becomes a recipe.
 
@@ -244,9 +250,11 @@ Spanreed talks to a user about one thing at a time: a plugin takes the
 user's turn to talk around a conversation, and others wait for it
 (`UserInteractionApi.user_interaction`). A run does the same.
 
-- **A run takes the turn at its first step that asks**, and keeps it until
-  the run ends. Its questions are one conversation, and nothing else asks in
-  between. The steps before the first question run without the turn.
+- **A run takes the turn at its first question**, and keeps it until the run
+  ends. Its questions are one conversation, and nothing else asks in
+  between. The steps before the first question run without the turn, and a
+  run that asks nothing never takes it: a step that may ask and this time
+  does not, such as a search with no results, costs nothing.
 - **A run started by hand has the turn already.** The flow of its command
   took it, so the questions come up where the command was started.
 - **Priority** says how a run in the background waits for the turn. `normal`
@@ -257,9 +265,10 @@ user's turn to talk around a conversation, and others wait for it
 - **A run that gives way ends there**, without failing: `stopped at step 3,
   Ask me to choose. Another conversation took over.` It is not tried again.
   Its trigger goes on with the next event.
-- **Give up after** is how many minutes a step waits for the user. After
-  that the run ends, without failing. 0 waits for as long as it takes, and
-  the workflow runs for nothing else in that time.
+- **Give up after** is how many minutes a question waits for the user. After
+  that the run ends, without failing. The wait for the turn is not part of
+  it. 0 waits for as long as it takes, and the workflow runs for nothing
+  else in that time.
 - **A run that waits for the turn lets a run by hand of the same workflow go
   first.** The run by hand has the turn, and would wait for the workflow in
   return.
@@ -276,8 +285,7 @@ A block that asks sets `converses` and talks through `ctx.interaction`. That
 has the methods of `UserInteractionApi` that a conversation is made of
 (`request_user_choice`, `request_user_input`, `send_message`,
 `send_document`), so the body of a plugin's conversation moves into a block
-as it is. The engine takes the turn before it calls the block. The block does
-not take it:
+as it is. A question takes the turn by itself. The block does not take it:
 
 ```python
 class ProcessScan(Action[ProcessScanInput, ProcessScanOutput]):
@@ -298,8 +306,41 @@ two inputs that the built-in blocks have.
 An `AskLoop` is a loop whose rounds are answers. The engine calls `ask`
 before each round with the rounds so far, and runs the steps inside for what
 it returns, until it returns `None`. `after` gives what the steps after the
-loop see. `anything_to_ask` lets the engine skip the turn to talk when
-`ask` would not ask.
+loop see.
+
+"Link a note to a book" of Audible is such a block: the conversation of a
+plugin, moved into one card (`spanreed/apis/audible_blocks.py`).
+
+### Memory
+
+A workflow has a memory of its own: JSON values under names, kept from one
+run to the next. It survives a restart and is deleted with the workflow.
+
+| Block | Does | Gives |
+| --- | --- | --- |
+| Remember | Keeps a value under a name. Without a value: only that it is remembered | |
+| Recall | Reads what is kept under a name | `found`, `value`, `at` (when it was kept, in UTC) |
+| Forget | Drops what is kept under a name | `found` |
+
+The usual use is to do something once for each thing, however often it comes
+up:
+
+```json
+[
+  {"id": "asked", "block": "core.recall", "inputs": {"name": "finish-prompted:{{ book.asin }}"}},
+  {"id": "once", "block": "core.continue-if", "inputs": {"condition": "{{ not asked.found }}"}},
+  {"id": "mark", "block": "core.ask-choice", "inputs": {"question": "Mark it as read?", "options": ["Yes", "No"]}},
+  {"id": "keep", "block": "core.remember", "inputs": {"name": "finish-prompted:{{ book.asin }}"}}
+]
+```
+
+"Remember" comes after the question, so a question that got no answer is
+asked again at the next run.
+
+A block reaches the same memory as `ctx.memory`, with `get`, `set` and
+`forget`. It is what a plugin used `get_user_data` and `set_user_data` for.
+In a test of a block, `StepContext` has a memory that lasts as long as the
+context does.
 
 ### Files
 
@@ -688,6 +729,7 @@ problem: both run.
 | `workflows:user_id={id}` | Set of the user's workflow ids |
 | `workflows:workflow:{id}` | The workflow, as JSON |
 | `workflows:workflow:{id}:state` | Hash of what its trigger remembers: when it last fired or polled, a cursor, the keys it ran for |
+| `workflows:workflow:{id}:memory` | Hash of what its steps remember, each value as JSON with the time it was kept |
 | `workflows:workflow:{id}:runs` | The traces of its last 100 runs, newest first. Dropped 30 days after the last run. |
 | `workflows:workflow:{id}:last_event` | The event it last ran for, whole, with the time of the run. Dropped 30 days after the last run. |
 | `workflows:workflow:{id}:queue` | List of the keys it still has to run for, oldest first |
@@ -710,10 +752,13 @@ gets the recipe and is told so, and the registration is dropped.
 | --- | --- |
 | Todoist No Overdue | Daily chores never overdue |
 | Habit Tracker | Habit check-in |
+| Audible Book Progress | Audible progress → book notes |
 
 A retired plugin can carry over the config it had saved for a user
-(`RetiredPlugin.keep_settings`). The config stays in Redis after the plugin
-is gone.
+(`RetiredPlugin.keep_settings`), and what it remembered for the user
+(`RetiredPlugin.carry_over`). Both stay in Redis after the plugin is gone.
+A workflow that waits for what a plugin remembered is off until it has it,
+and a move that stopped halfway is finished at the next start.
 
 The schedule of "Daily chores never overdue" differs from the plugin in one
 way: the plugin ran at every start of Spanreed and then every 4 hours, and
@@ -987,3 +1032,50 @@ Where the parts of the plugin went:
 `spanreed/plugins/litnotes_test_data.py` holds six conversations and what the
 plugin asked, said and wrote in each, taken by running it before it was
 removed. The tests run the workflow on the same answers and compare.
+
+#### Audible Book Progress
+
+The plugin wrote how far each book the user is reading was listened to on
+Audible to the book's note, and offered once to mark a finished book as read.
+It is the recipe "Audible progress → book notes" now, and the plugin is gone.
+Audible, which holds the login, publishes the two blocks.
+
+![Audible progress as a workflow](images/web-ui-workflow-audible-desktop.png)
+
+![A sync that asked twice](images/web-ui-workflow-audible-history-desktop.png)
+
+Where the parts of the plugin went:
+
+| Was | Is now |
+| --- | --- |
+| The query for the notes of the books being read | **Query** on "Query Dataview" |
+| Matching a note to a book, and asking which one it is | "Link a note to a book", one block with the conversation inside |
+| Writing the progress if it changed | "Set note properties", **Write when** `changed` |
+| Asking once whether a finished book is read | Recall, "Ask me to choose", Remember |
+| The names of the properties: `asin`, `progress`, `status`, `finish-date` | Inputs of those steps |
+| Sync book progress | The command of the workflow, with the same name |
+| Every hour | The schedule |
+| Not on Audible, Ask me later, and the books that were offered | The memory of the workflow, under the names the plugin used: `not-audible:<note>`, `link-snooze:<note>`, `finish-prompted:<asin>` |
+
+`spanreed/plugins/book_progress.py` is what is left of the plugin: it hands
+what the plugin remembered for a user to the user's workflow, so that nothing
+is asked a second time.
+
+- **The library is one value.** "Get library" gives `library`, which a trace
+  shows as `<315 Audible books>`. Each note's step gets all of it, and a
+  trace that listed the books each time would be mostly books.
+- **A sync that asks nothing does not take the turn to talk.** It runs every
+  hour, and asks about a book once in a long while.
+- **The date a book was finished** is the date of the run in the user's
+  timezone. The plugin used the server's date.
+- **Run by hand**, the workflow says "Audible progress → book notes:
+  finished." if it asked nothing, and nothing after a question. The plugin's
+  command said "Syncing Audible book progress…" and, if no note changed, "No
+  book progress changes found."
+- **A run that fails is tried again**, as any workflow's. The plugin waited
+  for the next hour.
+
+`spanreed/plugins/book_progress_test_data.py` holds fourteen cases and what
+the plugin did in each, taken by running it before it was removed. The tests
+run the workflow on the same cases and compare.
+

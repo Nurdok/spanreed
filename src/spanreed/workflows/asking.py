@@ -1,18 +1,18 @@
 """The blocks that ask the user something, and what goes with them.
 
 A block that asks sets ``converses`` and talks through ``ctx.interaction``.
-The engine takes the user's turn to talk before it calls the block, and
-the run keeps the turn until it ends, so the questions of a run are one
-conversation. A workflow's command runs it in the conversation that the
-command was started in.
+The run takes the user's turn to talk at its first question, and keeps it
+until it ends, so the questions of a run are one conversation. A
+workflow's command runs it in the conversation that the command was
+started in.
 
 Every block here has the two inputs that say how a run waits:
 
 - ``priority``: ``normal`` waits for its turn behind a conversation that is
   open, and gives way to a command the user starts. ``low`` also gives way
   to any other conversation that starts.
-- ``give_up_after``: the minutes the step waits for the user before the run
-  ends. 0 waits for as long as it takes.
+- ``give_up_after``: the minutes a question waits for the user before the
+  run ends. 0 waits for as long as it takes.
 
 A run that gives way ends there, without failing.
 """
@@ -430,12 +430,6 @@ class AskEach(AskLoop[AskEachInput, AskEachOutput]):
         return [
             (text, value) for text, value in inputs.options.items() if value not in gone
         ]
-
-    def anything_to_ask(
-        self, inputs: AskEachInput, earlier: list[AskEachOutput]
-    ) -> bool:
-        """Return whether an option is still on offer."""
-        return bool(self._on_offer(inputs, earlier))
 
     async def ask(
         self, ctx: StepContext, inputs: AskEachInput, earlier: list[AskEachOutput]

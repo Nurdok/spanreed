@@ -20,6 +20,7 @@ from spanreed.workflows.blocks import Block, BlockRegistry
 from spanreed.workflows.asking import asking_blocks
 from spanreed.workflows.builtin import builtin_blocks
 from spanreed.workflows.files import file_blocks
+from spanreed.workflows.memory import memory_blocks
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Workflow
 from spanreed.workflows.recipes import Recipe, all_recipes
@@ -41,7 +42,7 @@ class WorkflowsPlugin(Plugin):
 
     def blocks(self) -> list[Block]:
         """Return the blocks that Spanreed itself publishes."""
-        return [*builtin_blocks(), *asking_blocks(), *file_blocks()]
+        return [*builtin_blocks(), *asking_blocks(), *memory_blocks(), *file_blocks()]
 
     @property
     def engine(self) -> WorkflowEngine:

@@ -386,10 +386,51 @@ class AddToListProperty(Action[AddToListPropertyInput, AddToListPropertyOutput])
         return AddToListPropertyOutput(note=inputs.note)
 
 
+@dataclass
+class QueryDataviewInput:
+    """What to ask Dataview."""
+
+    # A ``table`` or a ``list`` query, as in a note.
+    query: str
+
+
+@dataclass
+class QueryDataviewOutput:
+    """What Dataview found."""
+
+    # For a table: one thing for each row, with a value for each column
+    # under the column's name in small letters. The first column of a
+    # table is the note: ``{{ each.item.file.path }}`` is its path. For a
+    # list: the values.
+    rows: list[Any]
+    count: int
+
+
+class QueryDataview(Action[QueryDataviewInput, QueryDataviewOutput]):
+    """Run a Dataview query in the vault, and give its rows.
+
+    The vault needs the Dataview plugin.
+    """
+
+    id = "obsidian.query-dataview"
+    title = "Query Dataview"
+
+    async def run(
+        self, ctx: StepContext, inputs: QueryDataviewInput
+    ) -> QueryDataviewOutput:
+        """Return the rows of the query."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        rows = await obsidian.query_dataview(inputs.query)
+        if not isinstance(rows, list):
+            raise ValueError("The query gave neither a table nor a list.")
+        return QueryDataviewOutput(rows=rows, count=len(rows))
+
+
 def obsidian_blocks() -> list[Block]:
     """Return the blocks that the Obsidian plugin publishes."""
     return [
         CreateDailyNote(),
+        QueryDataview(),
         GetNoteProperty(),
         SetNoteProperties(),
         AddToListProperty(),

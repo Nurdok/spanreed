@@ -61,6 +61,9 @@ def test_name() -> None:
         "core.ask-text",
         "core.ask-list",
         "core.stop",
+        "core.remember",
+        "core.recall",
+        "core.forget",
         "core.download-file",
         "core.send-file",
     ]

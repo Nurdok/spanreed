@@ -34,7 +34,7 @@ import hashlib
 import json
 import re
 import typing
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 
 InT = TypeVar("InT")
 OutT = TypeVar("OutT")
+_AnswerT = TypeVar("_AnswerT")
 ParamsT = TypeVar("ParamsT")
 EventT = TypeVar("EventT")
 RepeatT = TypeVar("RepeatT", bound="Repeat")
@@ -181,10 +182,11 @@ class Interaction:
     conversation moves into a block as it is. What is asked, answered and
     said is kept as well, for the trace of the step.
 
-    The engine has taken the user's turn to talk before it calls a block
-    that ``converses``. A block must not take it again. A block that only
-    sends something, and asks nothing, needs no turn: it sends through
-    this without setting ``converses``.
+    A question takes the user's turn to talk for the run, if the run does
+    not have it yet, and waits for the user no longer than the step
+    allows: the engine says how with ``asks_with``. So a block that may
+    ask, and this time does not, takes no turn. A block must not take the
+    turn itself. Sending needs no turn.
     """
 
     def __init__(self, user: User) -> None:
@@ -192,6 +194,9 @@ class Interaction:
         self._user = user
         self._lines: list[dict[str, str]] = []
         self._talked = False
+        self._before_asking: Callable[[], Awaitable[None]] | None = None
+        self._give_up_s: float | None = None
+        self._gave_up = ""
 
     @property
     def talked(self) -> bool:
@@ -201,6 +206,37 @@ class Interaction:
     def keep_in(self, lines: list[dict[str, str]]) -> None:
         """Keep what is asked and said from now on in ``lines``."""
         self._lines = lines
+
+    def asks_with(
+        self,
+        before_asking: Callable[[], Awaitable[None]] | None,
+        give_up_s: float | None = None,
+        gave_up: str = "",
+    ) -> None:
+        """Say how the questions of the step that runs now are asked.
+
+        ``before_asking`` is awaited before each question: the engine takes
+        the user's turn to talk in it. A question that has no answer after
+        ``give_up_s`` seconds ends the run, with ``gave_up`` as the reason.
+        """
+        self._before_asking = before_asking
+        self._give_up_s = give_up_s
+        self._gave_up = gave_up
+
+    async def _answer(self, ask: Callable[[], Awaitable[_AnswerT]]) -> _AnswerT:
+        """Ask one question, as ``asks_with`` set it up, and return the answer."""
+        if self._before_asking is not None:
+            await self._before_asking()
+        if self._give_up_s is None:
+            return await ask()
+        try:
+            async with asyncio.timeout(self._give_up_s) as limit:
+                return await ask()
+        except TimeoutError:
+            if not limit.expired():
+                # Not the wait for the user: something else timed out.
+                raise
+            raise StopRun(self._gave_up, whole_run=True) from None
 
     def _keep(self, **line: str) -> None:
         self._talked = True
@@ -220,7 +256,9 @@ class Interaction:
         as choices in the order they are read.
         """
         bot = await UserInteractionApi.for_user(self._user)
-        choice = await bot.request_user_choice(prompt, choices, columns=columns)
+        choice = await self._answer(
+            lambda: bot.request_user_choice(prompt, choices, columns=columns)
+        )
         texts: list[str] = []
         for item in choices:
             texts.extend(item if isinstance(item, list) else [item])
@@ -231,7 +269,7 @@ class Interaction:
     async def request_user_input(self, prompt: str) -> str:
         """Ask the user for a text, and return it."""
         bot = await UserInteractionApi.for_user(self._user)
-        answer = await bot.request_user_input(prompt)
+        answer = await self._answer(lambda: bot.request_user_input(prompt))
         self._keep(asked=prompt, answer=answer)
         return answer
 
@@ -255,6 +293,56 @@ class Interaction:
 
 
 @dataclass(frozen=True)
+class Remembered:
+    """Something a workflow remembers: the value, and when it was kept."""
+
+    value: Any
+    # ISO 8601, in UTC.
+    at: str
+
+
+class Memory(Protocol):
+    """What the steps of a workflow remember from one run to the next.
+
+    A step keeps a JSON value under a name, and a step of a later run reads
+    it: that a question was asked already, which files were skipped. The
+    memory is the workflow's own, survives a restart, and is deleted with
+    the workflow.
+    """
+
+    async def get(self, name: str) -> Remembered | None:
+        """Return what is kept under a name, or ``None`` if nothing is."""
+
+    async def set(self, name: str, value: Any = True) -> None:
+        """Keep a JSON value under a name, in place of what was there."""
+
+    async def forget(self, name: str) -> bool:
+        """Drop what is kept under a name. Return whether there was anything."""
+
+
+class LocalMemory:
+    """A memory that lasts as long as the object: for tests of a block."""
+
+    def __init__(self) -> None:
+        """Create a memory with nothing in it."""
+        self.kept: dict[str, Remembered] = {}
+
+    async def get(self, name: str) -> Remembered | None:
+        """Return what is kept under a name, or ``None`` if nothing is."""
+        return self.kept.get(name)
+
+    async def set(self, name: str, value: Any = True) -> None:
+        """Keep a value under a name."""
+        self.kept[name] = Remembered(
+            value=value, at=_now().isoformat(timespec="seconds")
+        )
+
+    async def forget(self, name: str) -> bool:
+        """Drop what is kept under a name. Return whether there was anything."""
+        return self.kept.pop(name, None) is not None
+
+
+@dataclass(frozen=True)
 class StepContext:
     """What the engine hands to an action besides its inputs."""
 
@@ -263,11 +351,15 @@ class StepContext:
     run: RunInfo
     # For a block that ``converses``. One for the whole run.
     interaction: Interaction = dataclasses.field(default=cast(Interaction, None))
+    # What the workflow remembers between runs.
+    memory: Memory = dataclasses.field(default=cast(Memory, None))
 
     def __post_init__(self) -> None:
-        """Make the way to talk to the user, if none was given."""
+        """Make the way to talk to the user and a memory, if none was given."""
         if self.interaction is None:
             object.__setattr__(self, "interaction", Interaction(self.user))
+        if self.memory is None:
+            object.__setattr__(self, "memory", LocalMemory())
 
 
 class TriggerState(Protocol):
@@ -353,13 +445,12 @@ class Action(Block, Generic[InT, OutT]):
     Raise ``StopRun`` to end the run here without failing it. Any other
     exception fails the run.
 
-    A block that asks the user something sets ``converses``, and talks
-    through ``ctx.interaction``. Before the engine calls such a block, the
-    run takes the user's turn to talk, and it keeps the turn until it
-    ends. Two inputs say how, if the block has them (see
-    ``spanreed.workflows.asking`` for their types): ``priority``, how the
-    run waits for the turn, and ``give_up_after``, for how many minutes
-    the step waits for the user.
+    A block that may ask the user something sets ``converses``, and talks
+    through ``ctx.interaction``. At its first question the run takes the
+    user's turn to talk, and it keeps the turn until it ends. Two inputs
+    say how, if the block has them (see ``spanreed.workflows.asking`` for
+    their types): ``priority``, how the run waits for the turn, and
+    ``give_up_after``, for how many minutes a question waits for the user.
     """
 
     kind = BlockKind.ACTION
@@ -448,15 +539,6 @@ class AskLoop(Loop[InT, OutT]):
     def rounds(self, inputs: InT) -> list[OutT]:
         """Return nothing: the rounds are not known before they are asked for."""
         return []
-
-    def anything_to_ask(self, inputs: InT, earlier: list[OutT]) -> bool:
-        """Return whether ``ask`` would ask the user anything now.
-
-        The engine ends the loop without calling ``ask`` if not, so that a
-        run does not wait for the user's turn to talk and then say nothing.
-        Yes by default.
-        """
-        return True
 
     @abc.abstractmethod
     async def ask(

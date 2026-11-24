@@ -46,13 +46,23 @@ class RetiredPlugin:
     keep_settings: (
         Callable[[dict[str, Any] | None], Callable[[Workflow], None]] | None
     ) = None
+    # Hands what the plugin remembered for a user to the new workflow. The
+    # workflow is off until this is done, so that it does not run without
+    # what the plugin knew. It must be safe to call again.
+    carry_over: Callable[[WorkflowEngine, User, Workflow], Awaitable[None]] | None = (
+        None
+    )
     # Added to what the user is told, for what changed besides.
     note: str = ""
 
 
+# The name under which a workflow remembers that ``carry_over`` is done.
+CARRIED_OVER = "moved-from-plugin"
+
+
 def _retired_plugins() -> list[RetiredPlugin]:
-    # Imported here: what is left of a plugin imports the model, as this does.
-    from spanreed.plugins import habit_check_in
+    # Imported here: what is left of a plugin imports the engine, as this does.
+    from spanreed.plugins import book_progress, habit_check_in
 
     return [
         RetiredPlugin(
@@ -69,6 +79,17 @@ def _retired_plugins() -> list[RetiredPlugin]:
                 "The command is still “Track Habits”. Add Habit and Remove "
                 "Habit are gone: the habits are the options of the "
                 "workflow’s question, under Workflows in the web UI."
+            ),
+        ),
+        RetiredPlugin(
+            canonical_name=book_progress.CANONICAL_NAME,
+            name="Audible Book Progress",
+            recipe_id=book_progress.RECIPE,
+            carry_over=book_progress.carry_over,
+            note=(
+                "The command is still “Sync book progress”. It knows which "
+                "books you said are not on Audible, and which you were "
+                "asked about."
             ),
         ),
     ]
@@ -101,12 +122,21 @@ async def retire_plugins(engine: WorkflowEngine) -> None:
 
 async def _move_user(engine: WorkflowEngine, plugin: RetiredPlugin, user: User) -> None:
     workflows = await engine.store.list_for_user(user.id)
-    if any(workflow.recipe == plugin.recipe_id for workflow in workflows):
+    workflow = next((w for w in workflows if w.recipe == plugin.recipe_id), None)
+    is_new = workflow is None
+    if workflow is None:
+        workflow = await _install(engine, plugin, user)
+    if plugin.carry_over is not None:
+        # Also for a workflow that an earlier start installed and then
+        # stopped at: it is still off, and still knows nothing.
+        memory = engine.store.memory(workflow.id)
+        if await memory.get(CARRIED_OVER) is None:
+            await plugin.carry_over(engine, user, workflow)
+            await memory.set(CARRIED_OVER)
+            workflow.enabled = True
+            await engine.save(workflow)
+    if not is_new:
         return
-    customize = None
-    if plugin.keep_settings is not None:
-        customize = plugin.keep_settings(await _saved_config(plugin, user))
-    workflow = await engine.install(user, all_recipes()[plugin.recipe_id], customize)
     _logger.info(
         f"Moved user {user.id} from plugin {plugin.canonical_name}"
         f" to workflow {workflow.id}."
@@ -126,6 +156,23 @@ async def _move_user(engine: WorkflowEngine, plugin: RetiredPlugin, user: User) 
         text += f" {plugin.note}"
     bot = await UserInteractionApi.for_user(user)
     await bot.notify(text, parse_html=False)
+
+
+async def _install(
+    engine: WorkflowEngine, plugin: RetiredPlugin, user: User
+) -> Workflow:
+    """Give a user the recipe of a retired plugin, with the settings they had."""
+    keep = None
+    if plugin.keep_settings is not None:
+        keep = plugin.keep_settings(await _saved_config(plugin, user))
+
+    def customize(workflow: Workflow) -> None:
+        if keep is not None:
+            keep(workflow)
+        if plugin.carry_over is not None:
+            workflow.enabled = False
+
+    return await engine.install(user, all_recipes()[plugin.recipe_id], customize)
 
 
 async def _saved_config(plugin: RetiredPlugin, user: User) -> dict[str, Any] | None:
