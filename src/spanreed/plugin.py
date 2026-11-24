@@ -6,7 +6,7 @@ import logging
 import json
 import random
 import time
-from typing import Generic, TypeVar, Optional, cast
+from typing import TYPE_CHECKING, Generic, TypeVar, Optional, cast
 from spanreed.user import User
 import abc
 from dataclasses import asdict
@@ -14,6 +14,9 @@ from dataclasses import asdict
 from telegram.error import RetryAfter
 
 from spanreed.interaction.errors import SurfaceBusyError
+
+if TYPE_CHECKING:
+    from spanreed.workflows.blocks import Block
 
 # Indirection so tests can fake the supervisor's uptime clock without
 # patching time.monotonic globally (asyncio uses it internally too).
@@ -41,6 +44,14 @@ class Plugin(abc.ABC, Generic[UC]):
 
     @classmethod
     def get_prerequisites(cls) -> list[type[Plugin]]:
+        return []
+
+    def blocks(self) -> list[Block]:
+        """Return the blocks that this plugin gives to workflows.
+
+        A user's workflows can use them while the user is registered to
+        the plugin. See ``spanreed.workflows.blocks``.
+        """
         return []
 
     @classmethod

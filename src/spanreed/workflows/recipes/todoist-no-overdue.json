@@ -1,0 +1,33 @@
+{
+  "id": "todoist-no-overdue",
+  "name": "Daily chores never overdue",
+  "description": "Moves overdue tasks that have the label spanreed/no-overdue to today.",
+  "requires": ["todoist"],
+  "command_hidden": true,
+  "trigger": {
+    "block": "core.schedule",
+    "params": {"every": 4, "unit": "hours"}
+  },
+  "steps": [
+    {
+      "id": "find",
+      "block": "todoist.find-tasks",
+      "inputs": {"label": "spanreed/no-overdue", "due": "overdue"}
+    },
+    {
+      "id": "any",
+      "block": "core.continue-if",
+      "inputs": {"condition": "{{ find.count > 0 }}"}
+    },
+    {
+      "id": "move",
+      "block": "todoist.set-due-date",
+      "inputs": {"tasks": "{{ find.tasks }}", "due": "today"}
+    },
+    {
+      "id": "tell",
+      "block": "core.send-message",
+      "inputs": {"message": "Updated {{ find.count }} overdue tasks to today."}
+    }
+  ]
+}

@@ -259,11 +259,13 @@ class TelegramBotPlugin(Plugin[UserConfig]):
             # Importing here to avoid circular imports.
             from spanreed.plugins.plugin_manager import PluginManagerPlugin
             from spanreed.plugins.user_profile import UserProfilePlugin
+            from spanreed.plugins.workflows import WorkflowsPlugin
 
             required_plugins = [
                 self,
                 await Plugin.get_plugin_by_class(PluginManagerPlugin),
                 await Plugin.get_plugin_by_class(UserProfilePlugin),
+                await Plugin.get_plugin_by_class(WorkflowsPlugin),
             ]
 
             for plugin in required_plugins:
