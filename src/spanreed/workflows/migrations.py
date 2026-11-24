@@ -69,7 +69,12 @@ CARRIED_OVER = MOVED_MARKER
 
 def _retired_plugins() -> list[RetiredPlugin]:
     # Imported here: what is left of a plugin imports the engine, as this does.
-    from spanreed.plugins import book_progress, habit_check_in, recurring_payments
+    from spanreed.plugins import (
+        book_progress,
+        habit_check_in,
+        recurring_payments,
+        spanreed_monitor,
+    )
 
     return [
         RetiredPlugin(
@@ -103,6 +108,11 @@ def _retired_plugins() -> list[RetiredPlugin]:
             canonical_name=recurring_payments.CANONICAL_NAME,
             name="Recurring Payments",
             move=recurring_payments.move,
+        ),
+        RetiredPlugin(
+            canonical_name=spanreed_monitor.CANONICAL_NAME,
+            name="Spanreed Monitor",
+            move=spanreed_monitor.move,
         ),
     ]
 

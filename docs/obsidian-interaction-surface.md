@@ -267,8 +267,9 @@ Delivery scope depends on how an interaction starts:
     a design decision.
   - **Reachability via presence keys, not the monitor queue.** The existing
     watchdog queue (`obsidian-plugin-monitor:{user_id}`) is exclusively
-    consumed by the spanreed-monitor plugin and cannot serve a second
-    consumer. Instance reachability is signaled by a per-instance presence
+    consumed by the Obsidian connector (`spanreed/apis/obsidian_watch.py`;
+    the spanreed-monitor plugin, when this was written) and cannot serve a
+    second consumer. Instance reachability is signaled by a per-instance presence
     key with a TTL (`SET ... EX`, refreshed on each poll cycle), which the
     server checks when deciding whether to deliver live prompts (R5).
   - **Prompt expiry and durable dismissal.** Prompt messages carry expiry/

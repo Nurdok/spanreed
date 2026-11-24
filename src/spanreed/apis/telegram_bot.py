@@ -337,9 +337,7 @@ class TelegramBotPlugin(Plugin[UserConfig]):
         # We need to do user interaction is a separate task because we can't
         # block the main Telegram bot coroutine.
         async def show_command_menu_task() -> None:
-            from spanreed.plugins.spanreed_monitor import (
-                suppress_and_log_exception,
-            )
+            from spanreed.errors import suppress_and_log_exception
 
             self._logger.info(f"Inside internal task for /do for {user}")
             async with suppress_and_log_exception(BaseException):

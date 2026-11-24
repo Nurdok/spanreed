@@ -304,6 +304,18 @@ class Interaction:
         self._keep(said=text)
         return handle
 
+    async def notify(
+        self, text: str, *, parse_html: bool = True, parse_markdown: bool = False
+    ) -> None:
+        """Leave the user a notification, on every surface they have.
+
+        Unlike a message it does not need the user to be there: a surface
+        that cannot show it now keeps it until it can.
+        """
+        bot = await UserInteractionApi.for_user(self._user)
+        await bot.notify(text, parse_html=parse_html, parse_markdown=parse_markdown)
+        self._keep(said=text)
+
     async def send_document(self, file_name: str, data: bytes) -> MessageHandle:
         """Send the user a file, on the surfaces of the conversation."""
         bot = await UserInteractionApi.for_user(self._user)

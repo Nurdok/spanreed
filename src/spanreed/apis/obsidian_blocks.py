@@ -15,6 +15,7 @@ from typing import Any, Literal
 import yaml
 
 from spanreed.apis.obsidian import ObsidianApi
+from spanreed.apis.obsidian_watch import StoppedAnswering
 from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, NoInput, NoOutput, StepContext
 from spanreed.workflows.files import as_bytes
@@ -437,4 +438,5 @@ def obsidian_blocks() -> list[Block]:
         WriteFile(),
         WriteNote(),
         AppendToNote(),
+        StoppedAnswering(),
     ]

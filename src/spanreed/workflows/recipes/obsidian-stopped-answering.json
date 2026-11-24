@@ -1,0 +1,24 @@
+{
+  "id": "obsidian-stopped-answering",
+  "name": "Obsidian stopped answering",
+  "description": "Tells you when Obsidian gave no sign of life for a minute, and again every half hour while it stays quiet. For a vault that is meant to be open all the time.",
+  "requires": [
+    "obsidian"
+  ],
+  "trigger": {
+    "block": "obsidian.stopped-answering",
+    "params": {
+      "after": 1,
+      "at_most_every": 30
+    }
+  },
+  "steps": [
+    {
+      "id": "tell",
+      "block": "core.send-message",
+      "inputs": {
+        "message": "Obsidian plugin watchdog timeout."
+      }
+    }
+  ]
+}

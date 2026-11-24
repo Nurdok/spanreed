@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import IntEnum
 
-from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
+from spanreed.errors import suppress_and_log_exception
 
 
 @dataclass

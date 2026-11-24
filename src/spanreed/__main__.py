@@ -3,6 +3,7 @@ import traceback
 import logging
 from typing import List
 
+from spanreed import errors
 from spanreed.plugin import Plugin
 
 from spanreed.interaction import UserInteractionApi
@@ -16,7 +17,6 @@ from spanreed.plugins.plugin_manager import PluginManagerPlugin
 from spanreed.plugins.user_profile import UserProfilePlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.plugins.web_ui import WebUiPlugin
-from spanreed.plugins.spanreed_monitor import SpanreedMonitorPlugin
 from spanreed.plugins.timekiller import TimekillerPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
@@ -55,7 +55,6 @@ def load_plugins() -> List[Plugin]:
         TodoistPlugin(),
         LitNotesPlugin(),
         WebUiPlugin(),
-        SpanreedMonitorPlugin(),
         TimekillerPlugin(),
         WithingsPlugin(),
         GmailMonitorPlugin(),
@@ -115,7 +114,7 @@ def main() -> None:
 
         asyncio.run(
             make_redis().lpush(
-                SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME,
+                errors.QUEUE,
                 "".join(traceback.format_exception(type(e), e, None)),
             )
         )

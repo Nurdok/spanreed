@@ -460,6 +460,45 @@ class SendMessage(Action[SendMessageInput, NoOutput]):
         return NoOutput()
 
 
+@dataclass
+class NotifyInput:
+    """The input of ``Notify``."""
+
+    message: str
+    markdown: bool = field(
+        default=False,
+        metadata={
+            HELP_KEY: "Yes: the message is read as Markdown, so that what is "
+            "between two lines of ``` is shown as code. No: it is shown as "
+            "it is written"
+        },
+    )
+
+
+class Notify(Action[NotifyInput, NoOutput]):
+    """Leave the user a notification, on every surface they have.
+
+    A message goes to where the user is now, and is lost if that is
+    nowhere. A notification waits: a surface that cannot show it now keeps
+    it until it can. It is for what the user must not miss and need not
+    see at once.
+
+    As for a message, one that comes out empty is not left.
+    """
+
+    id = "core.notify"
+    title = "Notify me"
+    kind = BlockKind.ASK
+
+    async def run(self, ctx: StepContext, inputs: NotifyInput) -> NoOutput:
+        """Leave the notification, unless there is nothing in it."""
+        if inputs.message.strip():
+            await ctx.interaction.notify(
+                inputs.message, parse_html=False, parse_markdown=inputs.markdown
+            )
+        return NoOutput()
+
+
 def builtin_blocks() -> list[Block]:
     """Return the blocks that Spanreed itself publishes."""
     return [
@@ -470,4 +509,5 @@ def builtin_blocks() -> list[Block]:
         If(),
         ForEach(),
         SendMessage(),
+        Notify(),
     ]

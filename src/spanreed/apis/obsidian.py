@@ -9,6 +9,7 @@ import base64
 
 from spanreed.interaction import MessageHandle
 
+from spanreed.apis import obsidian_watch
 from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.storage import redis_api
@@ -33,6 +34,13 @@ class ObsidianPlugin(Plugin):
         from spanreed.apis.obsidian_blocks import obsidian_blocks
 
         return obsidian_blocks()
+
+    async def run_for_user(self, user: User) -> None:
+        """Read what the user's plugin for Obsidian says about itself.
+
+        The reading is a task of its own: this returns at once.
+        """
+        obsidian_watch.start_reading(user)
 
 
 class ObsidianApi:
