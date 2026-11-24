@@ -1,0 +1,49 @@
+{
+  "id": "habit-check-in",
+  "name": "Habit check-in",
+  "description": "Asks every hour which of your habits you did today, and marks each one in the daily note.",
+  "requires": ["obsidian"],
+  "command_name": "Track Habits",
+  "trigger": {
+    "block": "core.schedule",
+    "params": {"every": 1, "unit": "hours"}
+  },
+  "steps": [
+    {
+      "id": "today",
+      "block": "obsidian.create-daily-note",
+      "inputs": {}
+    },
+    {
+      "id": "done",
+      "block": "obsidian.get-note-property",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "property": "habits"
+      }
+    },
+    {
+      "id": "pick",
+      "block": "core.ask-each",
+      "inputs": {
+        "question": "Did you do any of these habits today?",
+        "options": {"Meditate": "meditate", "Exercise": "exercise", "Read": "read"},
+        "leave_out": "{{ done.items }}",
+        "columns": 4,
+        "priority": "low",
+        "give_up_after": 60
+      },
+      "steps": [
+        {
+          "id": "mark",
+          "block": "obsidian.add-to-list-property",
+          "inputs": {
+            "note": "Daily/{{ trigger.date }}.md",
+            "property": "habits",
+            "value": "{{ pick.value }}"
+          }
+        }
+      ]
+    }
+  ]
+}
