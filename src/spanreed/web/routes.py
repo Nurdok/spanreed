@@ -34,6 +34,7 @@ from spanreed.plugin import Plugin
 from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.user import User
 from spanreed.web import auth, google_auth, push
+from spanreed.workflows import editing as workflow_editing
 from spanreed.workflows import views as workflow_views
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Workflow
@@ -697,6 +698,37 @@ async def workflow_detail(workflow_id: str) -> Any:
     if not isinstance(found[1], Workflow):
         return found
     return _no_store(jsonify(await _workflow_detail(*found)))
+
+
+@blueprint.put("/api/workflows/<workflow_id>")
+@api_auth
+async def save_workflow(workflow_id: str) -> Any:
+    """Store a workflow as the editor changed it.
+
+    The body holds the name, the trigger and the steps, each input as the
+    text of its form control. Nothing is stored unless the engine can run
+    the result: the answer then lists what has to be changed.
+    """
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    body = await request.get_json(silent=True)
+    try:
+        edited = workflow_editing.workflow_from_form(wf_engine.registry, workflow, body)
+    except workflow_editing.FormError as e:
+        return jsonify({"error": "This cannot be saved.", "problems": e.problems}), 400
+    problems = wf_engine.problems(edited)
+    if problems:
+        return jsonify({"error": "This cannot be saved.", "problems": problems}), 400
+    await wf_engine.save(edited)
+    # Which steps there are, not what they hold: the values stay out of
+    # the log.
+    _logger.info(
+        f"User {edited.user_id} edited workflow {edited.id}:"
+        f" {len(edited.steps)} steps."
+    )
+    return jsonify(await _workflow_detail(wf_engine, edited))
 
 
 @blueprint.get("/api/workflows/<workflow_id>/runs")

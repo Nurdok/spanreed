@@ -70,6 +70,42 @@ async def _json(response: Any) -> Any:
     return await response.get_json()
 
 
+def _shown(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return what the cards show of some inputs, without how they are edited."""
+    return [{k: v for k, v in field.items() if k != "edit"} for field in fields]
+
+
+def _form_of(shown: dict[str, Any]) -> dict[str, Any]:
+    """Return what the editor sends for a workflow that nothing was changed in."""
+
+    def inputs(card: dict[str, Any]) -> dict[str, Any]:
+        return {
+            field["name"]: field["edit"].get("rows", field["edit"].get("text"))
+            for field in card["fields"]
+        }
+
+    def steps(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": card["id"],
+                "block": card["block"],
+                "inputs": inputs(card),
+                "steps": steps(card["steps"]),
+            }
+            for card in cards
+        ]
+
+    return {
+        "name": shown["name"],
+        "command_name": shown["command_name"] or "",
+        "trigger": {
+            "block": shown["trigger"]["block"],
+            "params": inputs(shown["trigger"]),
+        },
+        "steps": steps(shown["steps"]),
+    }
+
+
 def test_the_list_has_only_the_workflows_of_the_user() -> None:
     async def run() -> None:
         async with _workflows_app() as (client, engine, _):
@@ -116,11 +152,28 @@ def test_a_workflow_is_shown_as_its_trigger_and_its_steps() -> None:
                 "Spanreed",
                 "trigger",
             )
-            assert trigger["fields"] == [
+            assert _shown(trigger["fields"]) == [
                 {"name": "every", "label": "Every", "value": 4},
                 {"name": "unit", "label": "Unit", "value": "hours"},
             ]
             assert trigger["outputs"] == ["date", "time"]
+            # Each input also says how the editor edits it.
+            assert [field["edit"] for field in trigger["fields"]] == [
+                {
+                    "control": "text",
+                    "required": False,
+                    "hint": "A whole number",
+                    "text": "4",
+                },
+                {
+                    "control": "choice",
+                    "required": False,
+                    "hint": "",
+                    "text": "hours",
+                    "choices": ["minutes", "hours", "days"],
+                },
+            ]
+            assert shown["run_outputs"] == ["id", "manual"]
 
             find, check, move, tell = shown["steps"]
             assert [step["number"] for step in shown["steps"]] == ["1", "2", "3", "4"]
@@ -131,7 +184,7 @@ def test_a_workflow_is_shown_as_its_trigger_and_its_steps() -> None:
             )
             assert find["outputs"] == ["tasks", "count"]
             # Inputs are shown as they are stored, templates and all.
-            assert check["fields"] == [
+            assert _shown(check["fields"]) == [
                 {
                     "name": "condition",
                     "label": "Condition",
@@ -154,7 +207,7 @@ def test_an_input_that_is_not_stored_shows_its_default() -> None:
 
             shown = await _json(await client.get(f"/app/api/workflows/{workflow.id}"))
 
-            assert shown["steps"][0]["fields"] == [
+            assert _shown(shown["steps"][0]["fields"]) == [
                 {"name": "label", "label": "Label", "value": "spanreed/no-overdue"},
                 {"name": "due", "label": "Due", "value": "any"},
             ]
@@ -309,6 +362,142 @@ def test_run_now_runs_the_workflow_as_a_conversation_on_the_page() -> None:
             assert run_["steps"][0]["outputs"] == {"tasks": [], "count": 0}
             listed = (await _json(await client.get("/app/api/workflows")))["workflows"]
             assert listed[0]["last_run"]["id"] == run_["id"]
+
+    asyncio.run(run())
+
+
+# -- editing -------------------------------------------------------------------
+
+
+def test_saving_what_is_shown_changes_nothing() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            before = workflow.to_data()
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            shown = await _json(await client.get(url))
+
+            response = await client.put(url, json=_form_of(shown), headers=H)
+
+            assert response.status_code == 200
+            stored = await engine.store.get(workflow.id)
+            assert stored is not None
+            assert stored.to_data() == before
+
+    asyncio.run(run())
+
+
+def test_the_editor_changes_the_values_of_a_workflow() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+            form["name"] = "Chores stay due"
+            form["trigger"]["params"]["every"] = "6"
+            form["steps"][0]["inputs"]["label"] = "chores"
+            form["steps"][3]["inputs"]["message"] = "Moved {{ find.count }} tasks."
+
+            response = await client.put(url, json=form, headers=H)
+
+            assert response.status_code == 200
+            shown = await _json(response)
+            assert shown["name"] == "Chores stay due"
+            assert shown["trigger"]["fields"][0]["value"] == 6
+            stored = await engine.store.get(workflow.id)
+            assert stored is not None
+            assert stored.trigger.params == {"every": 6, "unit": "hours"}
+            assert stored.steps[0].inputs == {"label": "chores", "due": "overdue"}
+            assert stored.steps[3].inputs == {
+                "message": "Moved {{ find.count }} tasks."
+            }
+            # It still came from the recipe, and it is still on.
+            assert (stored.recipe, stored.enabled) == ("todoist-no-overdue", True)
+
+    asyncio.run(run())
+
+
+def test_a_value_that_does_not_fit_is_refused_and_nothing_is_stored() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            before = workflow.to_data()
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+            form["trigger"]["params"]["every"] = "often"
+            form["steps"][0]["inputs"]["label"] = "chores"
+
+            response = await client.put(url, json=form, headers=H)
+
+            assert response.status_code == 400
+            assert (await _json(response))["problems"] == [
+                "On a schedule: Every: “often” is not a whole number."
+            ]
+            stored = await engine.store.get(workflow.id)
+            assert stored is not None and stored.to_data() == before
+
+    asyncio.run(run())
+
+
+def test_a_workflow_that_could_not_run_is_refused_with_what_is_wrong() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+            form["trigger"]["params"]["every"] = "0"
+            form["steps"][1]["inputs"]["condition"] = "{{ later.count > 0 }}"
+
+            response = await client.put(url, json=form, headers=H)
+
+            assert response.status_code == 400
+            assert (await _json(response))["problems"] == [
+                "On a schedule: A trigger repeats every 1 or more.",
+                "Step 2, Only continue if: “later” is not the trigger, the run "
+                "or an earlier step.",
+            ]
+
+    asyncio.run(run())
+
+
+def test_a_user_cannot_edit_the_workflow_of_another_user() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            theirs = await _install(engine, OTHER_USER_ID)
+            url = f"/app/api/workflows/{theirs.id}"
+            assert (await client.put(url, json={}, headers=H)).status_code == 401
+            await _login(client)
+
+            response = await client.put(url, json={"name": "Mine now"}, headers=H)
+
+            assert response.status_code == 404
+            stored = await engine.store.get(theirs.id)
+            assert stored is not None and stored.name == NO_OVERDUE
+
+    asyncio.run(run())
+
+
+def test_an_edit_takes_effect_at_once() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            workflow = await _install(engine)
+            workflow.command_hidden = False
+            await engine.save(workflow)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            form = _form_of(await _json(await client.get(url)))
+            form["command_name"] = "Move my chores"
+
+            await client.put(url, json=form, headers=H)
+
+            user = _user(USER_ID)
+            user.plugins = ["workflows"]
+            texts = [command.text for command in commands.commands_for_user(user)]
+            assert texts == ["Move my chores"]
 
     asyncio.run(run())
 
