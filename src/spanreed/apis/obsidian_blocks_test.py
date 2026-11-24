@@ -11,6 +11,8 @@ from spanreed.apis.obsidian_blocks import (
     AppendToNoteInput,
     GetNoteProperty,
     GetNotePropertyInput,
+    QueryDataview,
+    QueryDataviewInput,
     CreateDailyNote,
     SetNoteProperties,
     SetNotePropertiesInput,
@@ -60,6 +62,7 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         registry.register(block, fake_plugin())
     assert [block.id for block in registry.all()] == [
         "obsidian.create-daily-note",
+        "obsidian.query-dataview",
         "obsidian.get-note-property",
         "obsidian.set-note-properties",
         "obsidian.add-to-list-property",
@@ -536,3 +539,27 @@ def test_add_to_list_property_adds_the_value(mock_obsidian: AsyncMock) -> None:
         "the property “habits” of Daily/{{ trigger.date }}.md"
     ]
     assert block.writes({"note": "", "property": "habits"}) == []
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_query_dataview_gives_the_rows(mock_obsidian: AsyncMock) -> None:
+    rows = [{"file": {"path": "Books/Dune.md"}, "title": "Dune"}]
+    mock_obsidian.query_dataview = AsyncMock(return_value=rows)
+
+    output = asyncio.run(
+        QueryDataview().run(_context(), QueryDataviewInput(query="table title"))
+    )
+
+    assert (output.rows, output.count) == (rows, 1)
+    mock_obsidian.query_dataview.assert_awaited_once_with("table title")
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_query_dataview_fails_for_what_is_no_table_or_list(
+    mock_obsidian: AsyncMock,
+) -> None:
+    # What the vault gives for a query of another type, or for an error.
+    mock_obsidian.query_dataview = AsyncMock(return_value={"type": "task"})
+
+    with pytest.raises(ValueError, match="neither a table nor a list"):
+        asyncio.run(QueryDataview().run(_context(), QueryDataviewInput(query="task")))
