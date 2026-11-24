@@ -166,6 +166,15 @@ removed as a row. History shows each pick with the steps that ran for it:
 ![Editing its options on a phone](images/web-ui-workflow-ask-each-edit-phone.png)
 ![Its history on a phone](images/web-ui-workflow-ask-each-history-phone.png)
 
+A block can hold a whole conversation, as "Link a note to a book" does in
+this loop. History shows what it asked in each round:
+
+![A loop with a conversation in a block on desktop](images/web-ui-workflow-audible-desktop.png)
+![Its history on desktop](images/web-ui-workflow-audible-history-desktop.png)
+
+![A loop with a conversation in a block on a phone](images/web-ui-workflow-audible-phone.png)
+![Its history on a phone](images/web-ui-workflow-audible-history-phone.png)
+
 A workflow that cannot run says why above its steps, and a card whose block
 no plugin publishes any more is outlined in red.
 
