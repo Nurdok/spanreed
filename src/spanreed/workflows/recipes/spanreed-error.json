@@ -1,0 +1,26 @@
+{
+  "id": "spanreed-error",
+  "name": "Spanreed had an error",
+  "description": "Tells you about an error that Spanreed kept: a command that crashed, an error of the Obsidian plugin, or what ended Spanreed the last time.",
+  "trigger": {
+    "block": "core.error",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "tell",
+      "block": "core.notify",
+      "inputs": {
+        "message": "Exception retrieved from storage:\n\n```python\n{{ trigger.text }}\n```",
+        "markdown": true
+      }
+    },
+    {
+      "id": "running",
+      "block": "core.notify",
+      "inputs": {
+        "message": "Spanreed is still running."
+      }
+    }
+  ]
+}

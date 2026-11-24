@@ -1,0 +1,18 @@
+{
+  "id": "spanreed-started",
+  "name": "Spanreed started",
+  "description": "Tells you each time Spanreed has started, for example after an update.",
+  "trigger": {
+    "block": "core.started",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "tell",
+      "block": "core.notify",
+      "inputs": {
+        "message": "Spanreed is starting up."
+      }
+    }
+  ]
+}

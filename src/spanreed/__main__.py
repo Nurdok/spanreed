@@ -17,7 +17,6 @@ from spanreed.plugins.plugin_manager import PluginManagerPlugin
 from spanreed.plugins.user_profile import UserProfilePlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.plugins.web_ui import WebUiPlugin
-from spanreed.plugins.spanreed_monitor import SpanreedMonitorPlugin
 from spanreed.plugins.timekiller import TimekillerPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
@@ -56,7 +55,6 @@ def load_plugins() -> List[Plugin]:
         TodoistPlugin(),
         LitNotesPlugin(),
         WebUiPlugin(),
-        SpanreedMonitorPlugin(),
         TimekillerPlugin(),
         WithingsPlugin(),
         GmailMonitorPlugin(),
