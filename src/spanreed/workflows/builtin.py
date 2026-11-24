@@ -468,8 +468,9 @@ class NotifyInput:
     markdown: bool = field(
         default=False,
         metadata={
-            HELP_KEY: "Read the message as Markdown, for a part in ``` that "
-            "is shown as code. Off: it is shown as it is written"
+            HELP_KEY: "Yes: the message is read as Markdown, so that what is "
+            "between two lines of ``` is shown as code. No: it is shown as "
+            "it is written"
         },
     )
 
