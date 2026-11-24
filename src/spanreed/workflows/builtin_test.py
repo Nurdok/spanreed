@@ -23,6 +23,7 @@ from spanreed.workflows.builtin import (
     ForEachOutput,
     If,
     IfInput,
+    AtTime,
     IfOutput,
     RandomSchedule,
     RandomTimes,
@@ -30,6 +31,7 @@ from spanreed.workflows.builtin import (
     SendMessage,
     SendMessageInput,
     Tick,
+    TimeOfDay,
     builtin_blocks,
 )
 from spanreed.workflows.testing import fake_plugin
@@ -98,6 +100,7 @@ def test_the_builtin_blocks_are_well_formed() -> None:
         registry.register(block, fake_plugin())
     assert [block.id for block in registry.all()] == [
         "core.schedule",
+        "core.at-time",
         "core.random-schedule",
         "core.continue-if",
         "core.if",
@@ -351,3 +354,111 @@ def test_the_hours_of_random_times() -> None:
         with pytest.raises(ValueError, match=why):
             RandomTimes(**wrong)
     assert from_data(RandomTimes, {"only_from": "08:00", "only_until": "22:00"}) == day
+
+
+# -- at a time of day --------------------------------------------------------
+
+
+async def _timed_events(
+    state: _State, params: TimeOfDay, count: int, clock: _Clock
+) -> list[Tick]:
+    with patch("spanreed.workflows.builtin._now", clock.time), patch(
+        "spanreed.workflows.builtin._sleep", clock.sleep
+    ):
+        source = AtTime().events(_trigger_context(state), params)
+        events = []
+        try:
+            event = await anext(source)
+            events.append(event)
+            while len(events) < count:
+                events.append(await source.asend(True))
+        finally:
+            await source.aclose()
+    return events
+
+
+def test_a_time_of_day_comes_up_every_day() -> None:
+    # NOON is a Saturday.
+    clock = _Clock(NOON, [])
+
+    events = asyncio.run(_timed_events(_State(), TimeOfDay("18:30"), 3, clock))
+
+    # A new workflow waits for its first time.
+    assert events == [
+        Tick(date="2026-05-09", time="18:30"),
+        Tick(date="2026-05-10", time="18:30"),
+        Tick(date="2026-05-11", time="18:30"),
+    ]
+    assert clock.waits == [6.5 * 3600, 24 * 3600, 24 * 3600]
+
+
+def test_a_time_of_day_on_one_day_of_the_week() -> None:
+    clock = _Clock(NOON, [])
+    tuesdays = TimeOfDay("09:00", on="Tuesday")
+
+    events = asyncio.run(_timed_events(_State(), tuesdays, 2, clock))
+
+    assert [event.date for event in events] == ["2026-05-12", "2026-05-19"]
+    # On the day itself, the time is still to come or it is next week.
+    saturdays = TimeOfDay("12:00", on="Saturday")
+    assert saturdays.next_after(
+        NOON, datetime.timezone.utc
+    ) == NOON + datetime.timedelta(days=7)
+    early = NOON - datetime.timedelta(minutes=1)
+    assert saturdays.next_after(early, datetime.timezone.utc) == NOON
+
+
+def test_a_time_of_day_is_in_its_own_timezone() -> None:
+    clock = _Clock(NOON, [])
+    params = TimeOfDay("18:00", timezone="Asia/Tokyo")
+
+    (event,) = asyncio.run(_timed_events(_State(), params, 1, clock))
+
+    # 18:00 in Tokyo is 09:00 UTC: that has passed today, so tomorrow.
+    assert clock.waits == [21 * 3600]
+    assert event == Tick(date="2026-05-10", time="18:00")
+    with pytest.raises(ValueError, match="not a timezone"):
+        TimeOfDay("18:00", timezone="Mars/Olympus")
+    with pytest.raises(ValueError, match="not a time of day"):
+        TimeOfDay("6 pm")
+
+
+def test_a_time_that_came_up_during_a_restart_still_fires() -> None:
+    state = _State()
+    asyncio.run(_timed_events(state, TimeOfDay("18:30"), 1, _Clock(NOON, [])))
+    # Taken, but its run is not over: nothing later is kept.
+    assert state.values["next_at"] == "2026-05-09T18:30:00+00:00"
+
+    # Back at 19:00: half an hour late, it fires at once, for 18:30.
+    late = _Clock(NOON.replace(hour=19), [])
+    first, second = asyncio.run(_timed_events(state, TimeOfDay("18:30"), 2, late))
+    assert (first.time, late.waits[:1]) == ("18:30", [23.5 * 3600])
+    assert second.date == "2026-05-10"
+
+    # Back a day later: that one is passed over.
+    state.values["next_at"] = "2026-05-09T18:30:00+00:00"
+    much_later = _Clock(NOON + datetime.timedelta(days=1, hours=7), [])
+    (event,) = asyncio.run(_timed_events(state, TimeOfDay("18:30"), 1, much_later))
+    assert event.date == "2026-05-11"
+
+
+def test_a_changed_time_of_day_does_not_fire_at_the_old_one() -> None:
+    state = _State()
+    asyncio.run(_timed_events(state, TimeOfDay("18:30"), 1, _Clock(NOON, [])))
+
+    clock = _Clock(NOON, [])
+    (event,) = asyncio.run(_timed_events(state, TimeOfDay("14:00"), 1, clock))
+
+    assert event.time == "14:00"
+    assert clock.waits == [2 * 3600]
+
+
+def test_a_time_of_day_by_hand_is_now() -> None:
+    with patch("spanreed.workflows.builtin._now", return_value=NOON):
+        (event,) = asyncio.run(
+            AtTime().manual_events(
+                _trigger_context(_State()), TimeOfDay("18:30"), NoQuestion()
+            )
+        )
+
+    assert event == Tick(date="2026-05-09", time="12:00")

@@ -9,6 +9,8 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import dateutil.tz
+
 from spanreed.config_form import HELP_KEY
 
 from spanreed.workflows.blocks import (
@@ -204,6 +206,141 @@ class RandomSchedule(Trigger[RandomTimes, Tick]):
             return None
 
 
+WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+# An event that Spanreed was not running for still fires if it is found
+# within this time. After that it is passed over.
+LATE = datetime.timedelta(hours=12)
+_NEXT_FOR = "next_for"
+
+
+@dataclass
+class TimeOfDay:
+    """A time of day, on every day or on one day of the week."""
+
+    time: str = field(
+        default="09:00", metadata={HELP_KEY: "A time of day, such as 18:30"}
+    )
+    on: Literal[
+        "every day",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ] = "every day"
+    timezone: str = field(
+        default="",
+        metadata={
+            HELP_KEY: "Such as Europe/Paris. Empty: the timezone of your profile"
+        },
+    )
+
+    def __post_init__(self) -> None:
+        """Raise ``ValueError`` for a time or a timezone that is not one."""
+        _time_of_day(self.time)
+        if self.timezone.strip() and dateutil.tz.gettz(self.timezone.strip()) is None:
+            raise ValueError(f"“{self.timezone}” is not a timezone.")
+
+    def tzinfo(self, default: datetime.tzinfo | None) -> datetime.tzinfo:
+        """Return the timezone the time is in: its own, or ``default``."""
+        named = (
+            dateutil.tz.gettz(self.timezone.strip()) if self.timezone.strip() else None
+        )
+        return named or default or datetime.timezone.utc
+
+    def next_after(
+        self, moment: datetime.datetime, tz: datetime.tzinfo
+    ) -> datetime.datetime:
+        """Return the first time this comes up after a moment."""
+        at = _time_of_day(self.time)
+        local = moment.astimezone(tz)
+        for days in range(9):
+            day = local.date() + datetime.timedelta(days=days)
+            candidate = datetime.datetime.combine(day, at, tzinfo=tz)
+            on_day = self.on == "every day" or WEEKDAYS[day.weekday()] == self.on
+            if on_day and candidate > local:
+                return candidate
+        raise RuntimeError("No next time was found.")  # pragma: no cover
+
+    @property
+    def signature(self) -> str:
+        """Return a text that changes when the time, the day or the zone does."""
+        return f"{self.time}|{self.on}|{self.timezone}"
+
+
+class AtTime(Trigger[TimeOfDay, Tick]):
+    """Fire at a time of day, on every day or on one day of the week.
+
+    When the next event is due is kept, so that a restart does not lose
+    it: an event that came up while Spanreed was not running fires when it
+    is back, if that is within half a day. A new workflow waits for its
+    first time.
+
+    The date and the time of an event are those it was due at, in the
+    timezone of the trigger.
+    """
+
+    id = "core.at-time"
+    title = "At a time of day"
+    Manual = NoQuestion
+
+    async def events(
+        self, ctx: TriggerContext, params: TimeOfDay
+    ) -> AsyncGenerator[Tick, bool | None]:
+        """Yield an event each time the time of day comes up."""
+        tz = params.tzinfo(ctx.user.tzinfo)
+        while True:
+            due = await self._due(ctx, params)
+            if due is None or due < _now() - LATE:
+                due = params.next_after(_now(), tz)
+                await self._keep(ctx, params, due)
+            wait = (due - _now()).total_seconds()
+            if wait > 0:
+                await _sleep(wait)
+            yield self._tick_at(due.astimezone(tz))
+            # Kept only now, when the run is over: a run that a restart cut
+            # short is due again when Spanreed comes back.
+            await self._keep(ctx, params, params.next_after(due, tz))
+
+    async def manual_events(
+        self, ctx: TriggerContext, params: TimeOfDay, answer: NoQuestion
+    ) -> list[Tick]:
+        """Return one event for now. The trigger keeps its own times."""
+        return [self._tick_at(_now().astimezone(params.tzinfo(ctx.user.tzinfo)))]
+
+    @staticmethod
+    def _tick_at(local: datetime.datetime) -> Tick:
+        return Tick(date=local.date().isoformat(), time=local.strftime("%H:%M"))
+
+    @staticmethod
+    async def _due(ctx: TriggerContext, params: TimeOfDay) -> datetime.datetime | None:
+        """Return when the next event is due, if that was kept for these times."""
+        if await ctx.state.get(_NEXT_FOR) != params.signature:
+            return None
+        stored = await ctx.state.get(_NEXT_AT)
+        try:
+            return datetime.datetime.fromisoformat(stored) if stored else None
+        except ValueError:
+            return None
+
+    @staticmethod
+    async def _keep(
+        ctx: TriggerContext, params: TimeOfDay, due: datetime.datetime
+    ) -> None:
+        await ctx.state.set(_NEXT_AT, due.isoformat())
+        await ctx.state.set(_NEXT_FOR, params.signature)
+
+
 @dataclass
 class ContinueIfInput:
     """The input of ``ContinueIf``."""
@@ -327,6 +464,7 @@ def builtin_blocks() -> list[Block]:
     """Return the blocks that Spanreed itself publishes."""
     return [
         Schedule(),
+        AtTime(),
         RandomSchedule(),
         ContinueIf(),
         If(),
