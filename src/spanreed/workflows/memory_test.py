@@ -1,8 +1,9 @@
 """Tests of a workflow's memory: the blocks, the store, and a run."""
 
 import asyncio
+import datetime
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from spanreed.interaction import commands
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
@@ -81,6 +82,25 @@ def test_remember_recall_and_forget() -> None:
         assert (await Forget().run(ctx, ForgetInput(name="asked:B1"))).found is True
         assert (await Forget().run(ctx, ForgetInput(name="asked:B1"))).found is False
         assert (await Recall().run(ctx, RecallInput(name="asked:B1"))).found is False
+
+    asyncio.run(scenario())
+
+
+def test_recall_says_how_long_ago_something_was_kept() -> None:
+    """For doing something at most every so often."""
+
+    async def scenario() -> None:
+        ctx = _ctx()
+        await Remember().run(ctx, RememberInput(name="asked"))
+        kept = await ctx.memory.get("asked")
+        assert kept is not None
+        then = datetime.datetime.fromisoformat(kept.at)
+
+        with patch("spanreed.workflows.memory._now") as now:
+            now.return_value = then + datetime.timedelta(hours=73, minutes=30)
+            later = await Recall().run(ctx, RecallInput(name="asked"))
+        assert later.age_hours == 73.5
+        assert (await Recall().run(ctx, RecallInput(name="never"))).age_hours == 0
 
     asyncio.run(scenario())
 
