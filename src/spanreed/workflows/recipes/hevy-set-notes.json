@@ -1,0 +1,58 @@
+{
+  "id": "hevy-set-notes",
+  "name": "Hevy workouts → set notes",
+  "description": "Writes a note for each set of each new Hevy workout.",
+  "requires": ["hevy", "obsidian"],
+  "command_name": "Sync Hevy workouts",
+  "trigger": {
+    "block": "hevy.new-workout",
+    "params": {"every": 1, "unit": "hours"}
+  },
+  "steps": [
+    {
+      "id": "each",
+      "block": "core.for-each",
+      "inputs": {"items": "{{ trigger.sets }}"},
+      "steps": [
+        {
+          "id": "note",
+          "block": "obsidian.write-note",
+          "inputs": {
+            "path": "Fitness/Sets/{{ trigger.folder }}/{{ each.item.note_name }}.md",
+            "properties": {
+              "type": "workout-set",
+              "date": "{{ trigger.date }}",
+              "exercise": "{{ each.item.exercise }}",
+              "workout": "{{ trigger.title }}",
+              "workout_id": "{{ trigger.id }}",
+              "exercise_index": "{{ each.item.exercise_index }}",
+              "set_number": "{{ each.item.set_number }}",
+              "set_ordinal": "{{ each.item.set_ordinal }}",
+              "set_type": "{{ each.item.set_type }}",
+              "weight_kg": "{{ each.item.weight_kg }}",
+              "reps": "{{ each.item.reps }}",
+              "rpe": "{{ each.item.rpe }}",
+              "volume_kg": "{{ each.item.volume_kg }}",
+              "est_1rm_kg": "{{ each.item.est_1rm_kg }}",
+              "tags": ["workout-set"]
+            },
+            "body": "{{ each.item.summary }}",
+            "if_exists": "overwrite"
+          }
+        }
+      ]
+    },
+    {
+      "id": "is_new",
+      "block": "core.continue-if",
+      "inputs": {"condition": "{{ trigger.new }}"}
+    },
+    {
+      "id": "tell",
+      "block": "core.send-message",
+      "inputs": {
+        "message": "Logged Hevy workout: {{ trigger.title }} ({{ trigger.set_count }} sets across {{ trigger.exercise_count }} exercises)."
+      }
+    }
+  ]
+}

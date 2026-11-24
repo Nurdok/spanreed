@@ -29,6 +29,7 @@ from spanreed.workflows import store as workflow_store
 from spanreed.workflows.blocks import BlockRegistry
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Workflow
+from spanreed.workflows.testing import Polls
 
 TODAY = datetime.date(2026, 5, 9)
 YESTERDAY = datetime.date(2026, 5, 8)
@@ -47,34 +48,6 @@ MORNING = {
     MeasurementType.FAT_PERCENTAGE: 20.1,
     MeasurementType.FAT_MASS: 16.2,
 }
-
-
-class Polls:
-    """Lets a test say when the trigger asks Withings again.
-
-    It stands in for the wait between two polls.
-    """
-
-    def __init__(self) -> None:
-        self._go = asyncio.Event()
-        self._waiting = asyncio.Event()
-
-    async def sleep(self, seconds: float) -> None:
-        self._waiting.set()
-        await self._go.wait()
-        self._go.clear()
-
-    async def over(self) -> None:
-        """Wait until a poll and the runs for what it found are over."""
-        async with asyncio.timeout(3):
-            await self._waiting.wait()
-
-    async def again(self) -> None:
-        """Let the trigger poll once more, and wait until that is over."""
-        await self.over()
-        self._waiting.clear()
-        self._go.set()
-        await self.over()
 
 
 @dataclass

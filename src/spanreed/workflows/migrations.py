@@ -110,7 +110,7 @@ class Conversion:
 
 def _conversions() -> list[Conversion]:
     # Imported here: the plugins import this module.
-    from spanreed.plugins import health_connect, withings
+    from spanreed.plugins import health_connect, hevy, withings
 
     return [
         Conversion(
@@ -126,6 +126,15 @@ def _conversions() -> list[Conversion]:
             canonical_name="withings",
             name="Withings",
             convert=withings.convert_to_workflows,
+        ),
+        Conversion(
+            canonical_name="hevy",
+            name="Hevy",
+            convert=hevy.convert_to_workflows,
+            note=(
+                "The commands Sync Hevy workouts and Re-create Hevy data are "
+                "now one, “Sync Hevy workouts”, which asks what to write."
+            ),
         ),
     ]
 

@@ -109,8 +109,12 @@ them yet.
   names of its outputs. A value that comes from an earlier card is drawn as
   a chip with that card's mark. The cards go left to right, and top to
   bottom on a phone.
+- **A loop**, such as "For each", holds the cards of the steps inside it, top
+  to bottom, numbered 1.1, 1.2.
 - **History** lists the last 30 runs. Opening a run shows what the trigger
   gave and what each step got and gave, and where the run stopped or failed.
+  A loop shows each time it went through its steps, as "Item 3 of 5". The one
+  that failed is open.
 - **The switch** turns the workflow on and off at once.
 - **Run now** is there if the trigger can be started by hand. It runs the
   workflow as its command does and goes to the conversation, where what the
@@ -124,6 +128,14 @@ them yet.
 
 ![A workflow on a phone](images/web-ui-workflow-steps-phone.png)
 ![A run on a phone](images/web-ui-workflow-history-phone.png)
+
+A workflow with a loop, and a run of it in which the third item failed:
+
+![A loop on desktop](images/web-ui-workflow-loop-desktop.png)
+![A run of a loop on desktop](images/web-ui-workflow-loop-history-desktop.png)
+
+![A loop on a phone](images/web-ui-workflow-loop-phone.png)
+![A run of a loop on a phone](images/web-ui-workflow-loop-history-phone.png)
 
 A workflow that cannot run says why above its steps, and a card whose block
 no plugin publishes any more is outlined in red.

@@ -297,3 +297,32 @@ def fake_storage() -> Iterator[FakeRedis]:
 async def drain(engine: WorkflowEngine, workflow: Workflow) -> None:
     """Wait until the trigger of a started workflow has no more events."""
     await engine._sources[workflow.id]
+
+
+class Polls:
+    """Lets a test say when a trigger that polls asks its service again.
+
+    Its sleep stands in for the wait between two polls: patch
+    spanreed.workflows.blocks._sleep with it.
+    """
+
+    def __init__(self) -> None:
+        self._go = asyncio.Event()
+        self._waiting = asyncio.Event()
+
+    async def sleep(self, seconds: float) -> None:
+        self._waiting.set()
+        await self._go.wait()
+        self._go.clear()
+
+    async def over(self) -> None:
+        """Wait until a poll and the runs for what it found are over."""
+        async with asyncio.timeout(3):
+            await self._waiting.wait()
+
+    async def again(self) -> None:
+        """Let the trigger poll once more, and wait until that is over."""
+        await self.over()
+        self._waiting.clear()
+        self._go.set()
+        await self.over()

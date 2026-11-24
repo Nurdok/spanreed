@@ -68,21 +68,57 @@ block must exist, the inputs must fit the block, and a template can only refer
 to the trigger, the run or an earlier step. A workflow with a problem is not
 started, and **Manage workflows** says what the problem is.
 
+### Steps inside a step
+
+A step whose block is a loop holds steps of its own. `core.for-each` runs
+them once for each item of a list. This is from the recipe that writes a note
+for each set of a Hevy workout:
+
+```json
+{"id": "each", "block": "core.for-each",
+ "inputs": {"items": "{{ trigger.sets }}"},
+ "steps": [
+   {"id": "note", "block": "obsidian.write-note",
+    "inputs": {
+      "path": "Fitness/Sets/{{ trigger.folder }}/{{ each.item.note_name }}.md",
+      "properties": {"exercise": "{{ each.item.exercise }}", "reps": "{{ each.item.reps }}"},
+      "body": "{{ each.item.summary }}"}}
+ ]}
+```
+
+- Inside the loop, the id of the loop's step gives the item the steps run
+  for, and its place: `{{ each.item }}`, `{{ each.index }}` (from 1) and
+  `{{ each.count }}`. After the loop it gives `{{ each.count }}`.
+- The steps inside can also refer to the trigger, the run, the steps before
+  the loop and each other. A step after the loop cannot refer to a step
+  inside it.
+- Ids are unique in the whole workflow. The engine and the page number the
+  steps inside step 2 as 2.1, 2.2.
+- "Only continue if" inside a loop ends the steps for that item, and the loop
+  goes on with the next one.
+- A step inside that fails makes the loop fail, and with it the run: `failed
+  at step 1, For each: Item 3 of 5, Write note: …`. The run is tried again
+  from its first step, so the items before are done again.
+- The trace keeps the first 50 rounds of a loop, and the one that failed.
+
 ## Blocks
 
 | Block | Kind | Published by |
 | --- | --- | --- |
 | `core.schedule` On a schedule | trigger | Workflows |
 | `core.continue-if` Only continue if | logic | Workflows |
+| `core.for-each` For each | logic | Workflows |
 | `core.send-message` Send message | ask | Workflows |
 | `todoist.find-tasks` Find tasks | action | Todoist |
 | `todoist.set-due-date` Set due date | action | Todoist |
 | `obsidian.create-daily-note` Create today's daily note | action | Obsidian |
 | `obsidian.set-note-properties` Set note properties | action | Obsidian |
 | `obsidian.write-file` Write file | action | Obsidian |
+| `obsidian.write-note` Write note | action | Obsidian |
 | `health-connect.day-changed` A day's data changed | trigger | Health Connect |
 | `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
 | `withings.new-measurements` New measurements for a day | trigger | Withings |
+| `hevy.new-workout` New workout | trigger | Hevy |
 
 More arrive with each plugin whose behavior becomes a recipe.
 
@@ -126,6 +162,10 @@ class TodoistPlugin(Plugin[UserConfig]):
   exception fails the run.
 - A failed run is tried again from its first step, so a block must be safe to
   repeat.
+
+A block that holds steps is a `Loop`: an action with a `rounds` method, which
+returns what the steps inside see as the loop's outputs, once for each time
+they run. `run` returns the outputs for the steps after the loop.
 
 ### Triggers
 
@@ -220,14 +260,40 @@ what the workflow ran for, and leaves those events out:
 - The first poll of a new workflow is at once. After a restart the next poll
   waits for the rest of the interval, as a schedule does.
 - The trigger remembers its last 1000 keys (`remembers`).
+- `new_events` polls now and returns what the workflow has not run for, for a
+  trigger whose manual run checks at once. A run by hand that worked is
+  remembered, so the next poll does not run for the same thing.
+- `PollTrigger.start_from` hands a trigger that never polled a cursor and the
+  keys that were handled before it existed. The Hevy conversion uses it.
 
 `Manual` says whether the user can start a run by hand:
 
 - `None`: no.
 - `NoQuestion`: yes, and nothing is asked.
-- A dataclass whose fields are `Literal`s: yes, after the user picks one choice
-  for each field. `manual_events` gets the answers and returns the events to
-  run.
+- A dataclass: yes, after the user answers a question for each field. A field
+  that is a `Literal` is a choice, and a field that is a `str` is a text.
+  `manual_events` gets the answers and returns the events to run.
+
+A question can depend on an earlier answer, and a trigger can refuse an
+answer:
+
+```python
+@dataclass
+class WorkoutChoice:
+    which: Literal["New workouts", "A specific date", "A workout ID", "All workouts"] = field(
+        metadata={"prompt": "Write Hevy workouts for…"}
+    )
+    date: str = field(default="", metadata={
+        "prompt": "Enter the date (YYYY-MM-DD):",
+        "ask_if": {"which": "A specific date"},
+    })
+```
+
+- `ask_if` names the answers that a question waits for. A question that is not
+  asked leaves its field at its default.
+- `manual_events` raises `ManualError` to tell the user why there is nothing
+  to run: `No workout found on 2026-05-09.`
+- `manual_run_done` tells the trigger how each run by hand went.
 
 `core.schedule` keeps the time of its last event. After a restart it fires at
 once if it is due and waits for the rest of its interval if it is not. A new
@@ -248,8 +314,10 @@ surface, for the user who owns it. The command:
 
 A run started by hand happens inside the command's flow, so its messages stay
 on the surface it was started from. It is not tried again if it fails, and it
-ends with one line that says how it went: `Daily chores never overdue: stopped
-at step 2, Only continue if.`
+ends with one line that says how it went: `Daily chores never overdue: done.
+The run ended at step 2, Only continue if.` Several runs are counted: `3 runs.
+1 finished, 2 ended early, 0 failed.` A run that a block ended on purpose did
+what it was asked to, so the line does not call it stopped.
 
 `spanreed.interaction.commands` can now register a command for one user, and
 surfaces check a command with `get_command_for_user` before they run it.
@@ -273,8 +341,7 @@ surfaces check a command with `get_command_for_user` before they run it.
   ended. A step's inputs and outputs are kept only in the run's trace.
 - **Turning a workflow on or off takes effect at once.**
 
-Not there yet: branches and loops, blocks that ask the user a question, the
-editor. A question a run is waiting on would not survive a restart.
+Not there yet: branches, blocks that ask the user a question, the editor. A question a run is waiting on would not survive a restart.
 
 ## Redis
 
@@ -321,6 +388,7 @@ behavior: the setup tells them which recipes to add.
 | --- | --- | --- |
 | Health Connect | Receives the phone's payloads, stores every record, and says which days changed | Health data → daily note · Health raw data → vault files |
 | Withings | Holds the login, and publishes the trigger that asks Withings | Withings → daily note |
+| Hevy | Holds the API key, and publishes the trigger that asks Hevy | Hevy workouts → set notes |
 
 #### Health Connect
 
@@ -385,3 +453,36 @@ What differs from the plugin:
   time it ran for the day. So a value that was deleted from the note by hand
   comes back with the next new measurement or a sync by hand, not within the
   hour.
+
+#### Hevy
+
+![The Hevy workflow](images/web-ui-workflow-loop-desktop.png)
+
+Where the settings and the state of the Hevy plugin went:
+
+| Was | Is now |
+| --- | --- |
+| Vault folder | The start of **Path** in "Write note" |
+| The layout of a set note, in Python | The **Path**, **Properties** and **Body** of "Write note" |
+| Sync Hevy workouts, Re-create Hevy data | One command, **Sync Hevy workouts**: new workouts, a date, a workout id, or all workouts |
+| Once an hour | **Every** and **Unit** of the trigger |
+| How far the polls had got, and which workouts were written | The trigger's cursor and memory, carried over, so no workout is written or announced twice |
+
+The notes are the ones the plugin wrote: the same paths, the same properties
+in the same order, the same line of text. `spanreed/apis/hevy_test_data.py`
+holds a workout and what the plugin wrote for it, and the tests compare.
+
+What differs from the plugin:
+
+- **A property with no value is left out.** The plugin wrote `weight_kg` and
+  `reps` as empty properties for a set that has none, such as a plank. A note
+  that is there already is not changed.
+- **A workout that could not be written is tried again sooner.** The plugin
+  waited an hour. The workflow tries five times within about 15 minutes, tells
+  the user once, and then tries with each poll.
+- **Writing a date or a workout again says less.** The plugin ended with the
+  number of notes it wrote. The workflow ends with `done. The run ended at
+  step 2, Only continue if.`, because a workout that was written before is not
+  announced again. History shows each note.
+- **Writing all workouts again is one run for each workout**, and History
+  keeps the last 100.

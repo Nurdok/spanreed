@@ -473,9 +473,7 @@ async def _settings_app() -> AsyncIterator[tuple[Any, FakeRedis, Any]]:
                     f"user:{USER_ID}:plugins", "vault-files", "hevy", "health-connect"
                 )
                 await VaultFilesPlugin.set_config(user, VaultFilesConfig(token="tok"))
-                await HevyPlugin.set_config(
-                    user, HevyConfig(api_key="hevy-secret", vault_dir="Workouts")
-                )
+                await HevyPlugin.set_config(user, HevyConfig(api_key="hevy-secret"))
                 await _login(client)
                 yield client, fake, VaultFilesPlugin
     finally:
@@ -518,7 +516,7 @@ def test_settings_form_never_shows_secrets() -> None:
             text = await response.get_data(as_text=True)
             form = await response.get_json()
             assert "hevy-secret" not in text
-            assert form["value"] == {"api_key": "", "vault_dir": "Workouts"}
+            assert form["value"] == {"api_key": ""}
 
             response = await client.get("/app/api/settings/vault-files")
             text = await response.get_data(as_text=True)
@@ -550,12 +548,13 @@ def test_saving_settings_updates_the_config_and_keeps_secrets() -> None:
 
             response = await client.put(
                 "/app/api/settings/hevy",
-                json={"value": {"api_key": "", "vault_dir": "Gym"}},
+                json={"value": {"api_key": ""}},
                 headers=H,
             )
             assert response.status_code == 200
+            # A secret that is left empty in the form is kept.
             hevy = await HevyPlugin.get_config(user)
-            assert (hevy.api_key, hevy.vault_dir) == ("hevy-secret", "Gym")
+            assert hevy.api_key == "hevy-secret"
 
     asyncio.run(run())
 
