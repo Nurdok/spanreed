@@ -12,6 +12,9 @@ from spanreed.apis.obsidian_blocks import (
     WriteFile,
     WriteFileInput,
     WriteFileOutput,
+    WriteNote,
+    WriteNoteInput,
+    WriteNoteOutput,
     obsidian_blocks,
 )
 from spanreed.test_utils import (
@@ -53,6 +56,7 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         "obsidian.create-daily-note",
         "obsidian.set-note-properties",
         "obsidian.write-file",
+        "obsidian.write-note",
     ]
 
 
@@ -270,3 +274,95 @@ def test_deleting_a_file_that_is_not_there_is_fine(mock_obsidian: AsyncMock) -> 
     output = _write(mock_obsidian, content="", if_empty="delete")
 
     assert (output.written, output.deleted) == (False, False)
+
+
+def _note(mock_obsidian: AsyncMock, **inputs: Any) -> str:
+    """Write a note with the block, and return the text that was written."""
+    values: dict[str, Any] = {"path": "Fitness/Sets/2026-05-09/Squat set 1.md"}
+    values.update(inputs)
+    output = asyncio.run(WriteNote().run(_context(), WriteNoteInput(**values)))
+    assert output == WriteNoteOutput(path=values["path"])
+    (call,) = mock_obsidian.write_binary_file.await_args_list
+    assert call.args[0] == values["path"]
+    text: str = call.args[1].decode("utf-8")
+    return text
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_note_writes_the_properties_in_order_and_then_the_body(
+    mock_obsidian: AsyncMock,
+) -> None:
+    text = _note(
+        mock_obsidian,
+        properties={
+            "type": "workout-set",
+            "exercise": "Squat",
+            "weight_kg": 100.0,
+            "reps": 5,
+            "tags": ["workout-set"],
+        },
+        body="Squat — set 1: 100 kg × 5",
+    )
+
+    assert text == (
+        "---\n"
+        "type: workout-set\n"
+        "exercise: Squat\n"
+        "weight_kg: 100.0\n"
+        "reps: 5\n"
+        "tags:\n"
+        "- workout-set\n"
+        "---\n"
+        "\n"
+        "Squat — set 1: 100 kg × 5\n"
+    )
+    assert mock_obsidian.write_binary_file.await_args.kwargs == {"overwrite": True}
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_note_leaves_out_a_property_with_no_value(
+    mock_obsidian: AsyncMock,
+) -> None:
+    text = _note(mock_obsidian, properties={"reps": 5, "rpe": None, "weight_kg": 0})
+
+    # Nothing is not the same as zero.
+    assert text == "---\nreps: 5\nweight_kg: 0\n---\n\n"
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_note_writes_a_date_as_a_date(mock_obsidian: AsyncMock) -> None:
+    text = _note(
+        mock_obsidian,
+        properties={
+            "date": "2026-05-09",
+            "title": "2026-05-09 legs",
+            "bad": "2026-13-40",
+        },
+    )
+
+    # Without quotes, so that Obsidian shows the property as a date. A text
+    # that only looks like a date stays a text.
+    assert text == (
+        "---\ndate: 2026-05-09\ntitle: 2026-05-09 legs\nbad: '2026-13-40'\n---\n\n"
+    )
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_note_keeps_letters_of_every_script(mock_obsidian: AsyncMock) -> None:
+    text = _note(mock_obsidian, properties={"exercise": "סקוואט"}, body="—")
+
+    assert text == "---\nexercise: סקוואט\n---\n\n—\n"
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_note_without_properties_writes_only_the_body(
+    mock_obsidian: AsyncMock,
+) -> None:
+    assert _note(mock_obsidian, body="Just text") == "Just text\n"
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_note_can_refuse_to_replace_a_note(mock_obsidian: AsyncMock) -> None:
+    _note(mock_obsidian, body="x", if_exists="fail")
+
+    assert mock_obsidian.write_binary_file.await_args.kwargs == {"overwrite": False}

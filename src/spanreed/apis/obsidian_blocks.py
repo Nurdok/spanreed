@@ -7,8 +7,12 @@ tries the run again.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import datetime
+import re
+from dataclasses import dataclass, field
 from typing import Any, Literal
+
+import yaml
 
 from spanreed.apis.obsidian import ObsidianApi
 from spanreed.interaction import UserInteractionApi
@@ -152,6 +156,79 @@ class WriteFile(Action[WriteFileInput, WriteFileOutput]):
         return WriteFileOutput(path=inputs.path, written=True, deleted=False)
 
 
+@dataclass
+class WriteNoteInput:
+    """Which note to write, with which properties and text."""
+
+    # The path of the note in the vault. Missing folders are created.
+    path: str
+    # The value of each property, by its name, in the order they are
+    # written. A property whose value is empty (``None``) is left out.
+    properties: dict[str, Any] = field(default_factory=dict)
+    # The text under the properties.
+    body: str = ""
+    if_exists: Literal["overwrite", "fail"] = "overwrite"
+
+
+@dataclass
+class WriteNoteOutput:
+    """What was written."""
+
+    path: str
+
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _property_value(value: Any) -> Any:
+    """Return a value as it goes into the frontmatter.
+
+    A text that is a date, ``2026-05-09``, becomes a date, so that it is
+    written without quotes and Obsidian shows the property as a date.
+    """
+    if isinstance(value, str) and _ISO_DATE_RE.match(value):
+        try:
+            return datetime.date.fromisoformat(value)
+        except ValueError:
+            return value
+    return value
+
+
+def note_text(properties: dict[str, Any], body: str) -> str:
+    """Return the text of a note: its properties as frontmatter, then the body."""
+    frontmatter = {
+        name: _property_value(value)
+        for name, value in properties.items()
+        if value is not None
+    }
+    text = f"{body}\n" if body else ""
+    if not frontmatter:
+        return text
+    block = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True).strip()
+    return f"---\n{block}\n---\n\n{text}"
+
+
+class WriteNote(Action[WriteNoteInput, WriteNoteOutput]):
+    """Write a whole note: properties and text.
+
+    The note replaces one that is already at the path, so writing it again
+    after a failure leaves one copy.
+    """
+
+    id = "obsidian.write-note"
+    title = "Write note"
+
+    async def run(self, ctx: StepContext, inputs: WriteNoteInput) -> WriteNoteOutput:
+        """Write the note."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        await obsidian.write_binary_file(
+            inputs.path,
+            note_text(inputs.properties, inputs.body).encode("utf-8"),
+            overwrite=inputs.if_exists == "overwrite",
+        )
+        return WriteNoteOutput(path=inputs.path)
+
+
 def obsidian_blocks() -> list[Block]:
     """Return the blocks that the Obsidian plugin publishes."""
-    return [CreateDailyNote(), SetNoteProperties(), WriteFile()]
+    return [CreateDailyNote(), SetNoteProperties(), WriteFile(), WriteNote()]
