@@ -293,11 +293,106 @@ class AppendToNote(Action[AppendToNoteInput, AppendToNoteOutput]):
         return AppendToNoteOutput(path=inputs.path)
 
 
+@dataclass
+class GetNotePropertyInput:
+    """Which property of which note to read."""
+
+    # The path of the note in the vault, such as ``Daily/2026-05-09.md``.
+    note: str
+    property: str
+    # ``empty``: go on as if the note had no such property.
+    if_note_missing: Literal["empty", "fail"] = "empty"
+
+
+@dataclass
+class GetNotePropertyOutput:
+    """What the note holds."""
+
+    # ``None`` if the note has no such property.
+    value: Any
+    # The value if it is a list, and an empty list if it is anything else.
+    # So a step that needs a list has one, whatever the note holds.
+    items: list[Any]
+    # Whether the note has the property.
+    found: bool
+    note_missing: bool
+
+
+class GetNoteProperty(Action[GetNotePropertyInput, GetNotePropertyOutput]):
+    """Read a property from the frontmatter of a note."""
+
+    id = "obsidian.get-note-property"
+    title = "Get note property"
+
+    async def run(
+        self, ctx: StepContext, inputs: GetNotePropertyInput
+    ) -> GetNotePropertyOutput:
+        """Return the value of the property."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        note_missing = False
+        try:
+            value = await obsidian.get_property(inputs.note, inputs.property)
+        except FileNotFoundError:
+            if inputs.if_note_missing == "fail":
+                raise
+            value, note_missing = None, True
+        return GetNotePropertyOutput(
+            value=value,
+            items=list(value) if isinstance(value, list) else [],
+            found=value is not None,
+            note_missing=note_missing,
+        )
+
+
+@dataclass
+class AddToListPropertyInput:
+    """What to add to which list of which note."""
+
+    note: str
+    property: str
+    value: Any
+
+
+@dataclass
+class AddToListPropertyOutput:
+    """Where the value went."""
+
+    note: str
+
+
+class AddToListProperty(Action[AddToListPropertyInput, AddToListPropertyOutput]):
+    """Add a value to a property of a note that holds a list.
+
+    The property is made if the note does not have it.
+    """
+
+    id = "obsidian.add-to-list-property"
+    title = "Add to list property"
+
+    def writes(self, inputs: dict[str, Any]) -> list[str]:
+        """Name the property, as "Set note properties" names the ones it sets."""
+        if not inputs.get("note") or not inputs.get("property"):
+            return []
+        return [f"the property “{inputs['property']}” of {inputs['note']}"]
+
+    async def run(
+        self, ctx: StepContext, inputs: AddToListPropertyInput
+    ) -> AddToListPropertyOutput:
+        """Add the value."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        await obsidian.add_value_to_list_property(
+            inputs.note, inputs.property, inputs.value
+        )
+        return AddToListPropertyOutput(note=inputs.note)
+
+
 def obsidian_blocks() -> list[Block]:
     """Return the blocks that the Obsidian plugin publishes."""
     return [
         CreateDailyNote(),
+        GetNoteProperty(),
         SetNoteProperties(),
+        AddToListProperty(),
         WriteFile(),
         WriteNote(),
         AppendToNote(),
