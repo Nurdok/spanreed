@@ -94,6 +94,12 @@ or while the app is on screen.
 
 ## Plugin settings
 
+**Settings → Account** holds what is about you and not a plugin: who is
+logged in, the Google link, and **Log out**. They are there, and not in the
+header, so the header fits a phone screen.
+
+![Settings → Account on a phone](images/web-ui-account-phone.png)
+
 **Settings** in the header switches from the command list to a form for each
 plugin's configuration, so a setting can be changed without going through
 the plugin's chat setup again.
@@ -169,11 +175,12 @@ location /app/ {
 
 A permanent way in, so you don't need a new login link for each device.
 
-1. Log in once with a login link, then choose **Link Google account** in
-   the header. That links your Google account to your Spanreed user.
+1. Log in once with a login link, then go to **Settings → Account** and
+   choose **Link Google account**. That links your Google account to your
+   Spanreed user.
 2. From then on, **Sign in with Google** on the login page logs you in.
    A Google account that isn't linked can't sign in. **Unlink Google**
-   in the header removes the link.
+   on the same page removes the link.
 
 How it works: OpenID Connect authorization-code flow
 (`spanreed.web.google_auth`), scopes `openid email`. The `state` is

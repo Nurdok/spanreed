@@ -99,8 +99,12 @@
               background: var(--bg); padding: 10px 0; }
   .save-row .ok { color: var(--muted); }
   .save-row .err { color: var(--err); }
-  #google form { display: inline; }
-  @media (max-width: 720px) { #google .email { display: none; } }
+  /* The header must never be wider than the screen: the title gives way. */
+  header h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .account { max-width: 720px; display: flex; flex-direction: column; gap: 14px; }
+  .account h2 { font-size: 17px; margin: 0; }
+  .account .row-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .account .row-line span { overflow-wrap: anywhere; }
   /* On a phone the header holds the title and the buttons, on one line. */
   @media (max-width: 720px) { #who { display: none; } header { gap: 8px; padding: 10px 12px; } }
   /* On a phone the messages fill the screen, and the list on the left
@@ -130,10 +134,8 @@
     <h1>Spanreed</h1>
     <span id="conn" class="conn" hidden>Reconnecting…</span>
     <span id="who" class="who"></span>
-    <span id="google" class="who"></span>
     <button id="push-toggle" class="link" hidden></button>
     <button id="settings-toggle" class="link">Settings</button>
-    <button id="logout" class="link">Log out</button>
   </header>
   <div class="layout" id="commands-view">
     <aside>
@@ -148,7 +150,7 @@
   </div>
   <div class="layout" id="settings" hidden>
     <aside>
-      <h2>Plugin settings</h2>
+      <h2>Settings</h2>
       <nav id="settings-plugins"></nav>
     </aside>
     <div id="settings-main"></div>
@@ -288,26 +290,47 @@ async function run(c) {
   }
 }
 
-function renderGoogle(google) {
-  const box = $("google");
-  box.replaceChildren();
-  if (!google || !google.available) return;
-  if (google.email) {
-    const email = el("span", "email", "Google: " + google.email + " ");
-    const unlink = el("button", "link", "Unlink Google");
-    unlink.onclick = async () => {
-      if (!confirm("Unlink " + google.email + "? You'll need a login link to log in on new devices.")) return;
-      await post("google/unlink");
-      loadState();
-    };
-    box.append(email, unlink);
-  } else {
-    // A real form POST: the server answers with a redirect to Google.
-    const form = el("form");
-    form.method = "post"; form.action = "/app/google/link";
-    form.append(el("button", "link", "Link Google account"));
-    box.append(form);
+// Who is logged in and their Google link, shown under Settings → Account.
+let account = { name: "", google: null };
+
+function renderAccount() {
+  const box = el("div", "account");
+  box.append(el("h2", "", "Account"));
+  box.append(el("div", "", "Logged in as " + account.name + "."));
+
+  const google = account.google;
+  if (google && google.available) {
+    const field = el("div", "field");
+    field.append(el("div", "name", "Google sign-in"));
+    const line = el("div", "row-line");
+    if (google.email) {
+      line.append(el("span", "", "Linked to " + google.email + "."));
+      const unlink = el("button", "small", "Unlink Google");
+      unlink.onclick = async () => {
+        if (!confirm("Unlink " + google.email + "? You'll need a login link to log in on new devices.")) return;
+        await post("google/unlink");
+        await loadState();
+        if (currentSettings === ACCOUNT) renderAccount();
+      };
+      line.append(unlink);
+    } else {
+      line.append(el("span", "", "Not linked."));
+      // A real form POST: the server answers with a redirect to Google.
+      const form = el("form");
+      form.method = "post"; form.action = "/app/google/link";
+      form.append(el("button", "small", "Link Google account"));
+      line.append(form);
+    }
+    field.append(line);
+    field.append(el("div", "help",
+      "A linked Google account lets you sign in on a new device without a login link."));
+    box.append(field);
   }
+
+  const logout = el("button", "small", "Log out");
+  logout.onclick = async () => { await post("logout"); location.reload(); };
+  box.append(logout);
+  $("settings-main").replaceChildren(box);
 }
 
 // --- Push notifications: this device's subscription. ---
@@ -385,7 +408,7 @@ async function loadState() {
   const s = await res.json();
   if (pushKey === null && s.push) setupPush(s.push.public_key);
   $("who").textContent = s.user.name;
-  renderGoogle(s.google);
+  account = { name: s.user.name, google: s.google };
   commands = s.commands; renderCommands();
   $("log").replaceChildren(); bubbles.clear();
   openPrompt = null;
@@ -618,15 +641,19 @@ function buildList(schema, value, label) {
 
 let settingsPlugins = [], currentSettings = null;
 
+const ACCOUNT = "__account";
+
 function renderSettingsNav() {
   const nav = $("settings-plugins");
   nav.replaceChildren();
+  const accountItem = el("button", "cmd" + (currentSettings === ACCOUNT ? " current" : ""), "Account");
+  accountItem.onclick = () => openSettings(ACCOUNT);
+  nav.append(accountItem);
   for (const p of settingsPlugins) {
     const b = el("button", "cmd" + (p.id === currentSettings ? " current" : ""), p.name);
     b.onclick = () => openSettings(p.id);
     nav.append(b);
   }
-  if (!settingsPlugins.length) nav.append(el("p", "sys", "No plugin has settings."));
 }
 
 function renderSettingsForm(data) {
@@ -669,6 +696,7 @@ async function openSettings(id) {
   setDrawer(false);
   currentSettings = id;
   renderSettingsNav();
+  if (id === ACCOUNT) { renderAccount(); return; }
   const main = $("settings-main");
   main.replaceChildren(el("p", "sys", "Loading…"));
   const res = await api("settings/" + encodeURIComponent(id));
@@ -681,15 +709,16 @@ async function showSettings(show) {
   $("settings").hidden = !show;
   $("commands-view").hidden = show;
   $("settings-toggle").textContent = show ? "Commands" : "Settings";
-  $("drawer-toggle").setAttribute("aria-label", show ? "Plugins" : "Commands");
+  $("drawer-toggle").setAttribute("aria-label", show ? "Settings sections" : "Commands");
   if (!show) { scrollDown(); return; }
   const res = await api("settings");
   settingsPlugins = res.ok ? (await res.json()).plugins : [];
-  if (!settingsPlugins.some((p) => p.id === currentSettings)) currentSettings = null;
+  if (currentSettings !== ACCOUNT && !settingsPlugins.some((p) => p.id === currentSettings)) {
+    currentSettings = null;
+  }
   renderSettingsNav();
   if (currentSettings) return;
-  if (settingsPlugins.length) openSettings(settingsPlugins[0].id);
-  else $("settings-main").replaceChildren(el("p", "empty", "None of your plugins has settings."));
+  openSettings(settingsPlugins.length ? settingsPlugins[0].id : ACCOUNT);
 }
 
 // --- The drawer: on a phone, the list on the left slides in over the messages. ---
@@ -724,7 +753,6 @@ document.addEventListener("touchend", (e) => {
 
 $("settings-toggle").onclick = () => { setDrawer(false); showSettings($("settings").hidden); };
 $("filter").oninput = renderCommands;
-$("logout").onclick = async () => { await post("logout"); location.reload(); };
 loadState().then(poll, () => { $("conn").hidden = false; setTimeout(() => location.reload(), 5000); });
 </script>
 </body>
