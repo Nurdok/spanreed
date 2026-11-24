@@ -31,8 +31,12 @@ from spanreed.interaction.engine import PromptKind, UserInteractionPriority
 from spanreed.interaction.surface import SurfaceScope
 from spanreed.interaction.web_surface import SURFACE_NAME, WebSurface, read_inbox
 from spanreed.plugin import Plugin
+from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.user import User
 from spanreed.web import auth, google_auth, push
+from spanreed.workflows import views as workflow_views
+from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.model import Workflow
 
 _logger = logging.getLogger(__name__)
 
@@ -629,6 +633,148 @@ async def save_plugin_settings(plugin_id: str) -> Any:
     await plugin.set_config(user, config)
     _logger.info(f"User {user.id} saved the settings of plugin {plugin_id}")
     return jsonify({"ok": True, **await _settings_form(plugin, user)})
+
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+
+RUNS_SHOWN = 30
+
+
+async def _workflow_engine() -> WorkflowEngine | None:
+    """Return the running workflow engine, or ``None`` if it is not up."""
+    try:
+        plugin = await Plugin.get_plugin_by_class(WorkflowsPlugin)
+        return cast(WorkflowsPlugin, plugin).engine
+    except (ValueError, RuntimeError):
+        return None
+
+
+async def _own_workflow(
+    workflow_id: str,
+) -> tuple[WorkflowEngine, Workflow] | tuple[Response, int]:
+    """Return the engine and a workflow of the logged-in user.
+
+    Return an error response if the engine is not running, or if the user
+    has no workflow with this id.
+    """
+    user: User = g.user
+    wf_engine = await _workflow_engine()
+    if wf_engine is None:
+        return jsonify({"error": "Workflows are not running yet."}), 503
+    workflow = await wf_engine.store.get(workflow_id)
+    if workflow is None or workflow.user_id != user.id:
+        return jsonify({"error": "There is no such workflow."}), 404
+    return wf_engine, workflow
+
+
+async def _workflow_detail(wf_engine: WorkflowEngine, workflow: Workflow) -> Any:
+    runs = await wf_engine.store.recent_runs(workflow.id, 1)
+    return workflow_views.detail(wf_engine, workflow, runs[0] if runs else None)
+
+
+@blueprint.get("/api/workflows")
+@api_auth
+async def workflows() -> Any:
+    user: User = g.user
+    wf_engine = await _workflow_engine()
+    if wf_engine is None:
+        return jsonify({"error": "Workflows are not running yet."}), 503
+    shown = []
+    for workflow in await wf_engine.store.list_for_user(user.id):
+        runs = await wf_engine.store.recent_runs(workflow.id, 1)
+        shown.append(
+            workflow_views.summary(wf_engine, workflow, runs[0] if runs else None)
+        )
+    return _no_store(jsonify({"workflows": shown}))
+
+
+@blueprint.get("/api/workflows/<workflow_id>")
+@api_auth
+async def workflow_detail(workflow_id: str) -> Any:
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    return _no_store(jsonify(await _workflow_detail(*found)))
+
+
+@blueprint.get("/api/workflows/<workflow_id>/runs")
+@api_auth
+async def workflow_runs(workflow_id: str) -> Any:
+    """Return the traces of a workflow's last runs, newest first.
+
+    A trace holds what each step received and returned, so it goes only to
+    the user who owns the workflow.
+    """
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    runs = await wf_engine.store.recent_runs(workflow.id, RUNS_SHOWN)
+    return _no_store(jsonify({"runs": [workflow_views.run_view(run) for run in runs]}))
+
+
+@blueprint.post("/api/workflows/<workflow_id>/enabled")
+@api_auth
+async def set_workflow_enabled(workflow_id: str) -> Any:
+    """Turn a workflow on or off."""
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    body = await request.get_json(silent=True) or {}
+    if not isinstance(body.get("enabled"), bool):
+        return jsonify({"error": "Say whether the workflow is on."}), 400
+    workflow.enabled = body["enabled"]
+    await wf_engine.save(workflow)
+    _logger.info(
+        f"User {workflow.user_id} turned workflow {workflow.id}"
+        f" {'on' if workflow.enabled else 'off'}"
+    )
+    return jsonify(await _workflow_detail(wf_engine, workflow))
+
+
+@blueprint.post("/api/workflows/<workflow_id>/command")
+@api_auth
+async def set_workflow_command(workflow_id: str) -> Any:
+    """Show a workflow's command in the command menu, or hide it."""
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    body = await request.get_json(silent=True) or {}
+    if not isinstance(body.get("hidden"), bool):
+        return jsonify({"error": "Say whether the command is hidden."}), 400
+    workflow.command_hidden = body["hidden"]
+    await wf_engine.save(workflow)
+    return jsonify(await _workflow_detail(wf_engine, workflow))
+
+
+@blueprint.post("/api/workflows/<workflow_id>/run")
+@api_auth
+async def run_workflow(workflow_id: str) -> Any:
+    """Run a workflow by hand, as its command does.
+
+    The run is a flow on the web surface, like a command started from the
+    page: what it asks and says shows up in the conversation.
+    """
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    if wf_engine.problems(workflow) or not wf_engine.can_run_by_hand(workflow):
+        return jsonify({"error": "This workflow cannot be started by hand."}), 400
+    user: User = g.user
+    surface = get_web_surface()
+    surface.mark_seen(user.id)
+    flow_id = start_web_command_flow(
+        user,
+        functools.partial(wf_engine.run_by_hand, workflow.id),
+        surface,
+        workflow.command_text,
+    )
+    return jsonify({"ok": True, "flow_id": flow_id})
 
 
 @blueprint.get("/api/documents/<document_id>")

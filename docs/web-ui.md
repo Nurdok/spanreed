@@ -92,6 +92,51 @@ or while the app is on screen.
   every kind of send, edit and delete still reaches the other surfaces; the
   ban is only reported to the plugin when no other surface delivered.
 
+## Workflows
+
+**Workflows** in the header shows the workflows you own (see
+[workflows.md](workflows.md)). It reads and controls them. It does not edit
+them yet.
+
+![A workflow's steps on desktop](images/web-ui-workflow-steps-desktop.png)
+
+- **The list** has one row for each workflow: its name, a mark for each
+  block it uses, and how its last run went. On a phone the list is the
+  drawer, as the commands are.
+- **Steps** draws the workflow as cards: the trigger, marked T, then the
+  steps, numbered as the engine numbers them in its messages. A card shows
+  the block, the plugin it comes from, its inputs as they are stored and the
+  names of its outputs. A value that comes from an earlier card is drawn as
+  a chip with that card's mark. The cards go left to right, and top to
+  bottom on a phone.
+- **History** lists the last 30 runs. Opening a run shows what the trigger
+  gave and what each step got and gave, and where the run stopped or failed.
+- **The switch** turns the workflow on and off at once.
+- **Run now** is there if the trigger can be started by hand. It runs the
+  workflow as its command does and goes to the conversation, where what the
+  run asks and says shows up.
+- **Show it / Hide it** puts the workflow's command in the command menu or
+  takes it out.
+
+![A workflow's history on desktop](images/web-ui-workflow-history-desktop.png)
+
+![The conversation after Run now](images/web-ui-workflow-run-desktop.png)
+
+![A workflow on a phone](images/web-ui-workflow-steps-phone.png)
+![A run on a phone](images/web-ui-workflow-history-phone.png)
+
+A workflow that cannot run says why above its steps, and a card whose block
+no plugin publishes any more is outlined in red.
+
+The API is `GET /app/api/workflows` (the list), `GET
+/app/api/workflows/<id>` (one workflow as cards) and `GET
+/app/api/workflows/<id>/runs` (the traces), and `POST` on
+`/app/api/workflows/<id>/enabled`, `/command` and `/run`. All of them answer
+only for a workflow of the logged-in user. A trace holds what the steps
+received and returned, so it is sent only to its owner and only when the
+History tab asks for it: the list carries just the time and the outcome of
+the last run.
+
 ## Plugin settings
 
 **Settings → Account** holds what is about you and not a plugin: who is

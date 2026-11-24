@@ -7,6 +7,7 @@ that used to be a plugin arrives as a workflow.
 
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import pathlib
@@ -33,13 +34,17 @@ class Recipe:
     command_hidden: bool = False
 
     def workflow_for(self, user_id: int) -> Workflow:
-        """Return a new workflow of a user, made from this recipe."""
+        """Return a new workflow of a user, made from this recipe.
+
+        The workflow shares nothing with the recipe, so changing it does
+        not change what the next user gets.
+        """
         return Workflow(
             id=new_workflow_id(),
             user_id=user_id,
             name=self.name,
-            trigger=TriggerSpec(**self.trigger),
-            steps=[Step(**step) for step in self.steps],
+            trigger=TriggerSpec(**copy.deepcopy(self.trigger)),
+            steps=[Step(**copy.deepcopy(step)) for step in self.steps],
             command_name=self.command_name,
             command_hidden=self.command_hidden,
             recipe=self.id,

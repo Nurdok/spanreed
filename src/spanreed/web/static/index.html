@@ -12,13 +12,17 @@
   :root {
     --bg: #f6f5f2; --card: #ffffff; --fg: #1d1d1b; --muted: #6b6a66; --line: #e2e0da;
     --accent: #3b5bdb; --accent-fg: #fff; --bubble: #ffffff; --mine: #dbe4ff; --notice: #fff4e6;
-    --err: #c92a2a;
+    --err: #c92a2a; --ok: #2b8a3e;
+    --trig: #a8590a; --trig-soft: #fdeed8; --act: #3b5bdb; --act-soft: #e4e9fd;
+    --ask: #0b7a5c; --ask-soft: #dcf3ea; --logic: #6a4bb5; --logic-soft: #ece6fa;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #161615; --card: #1f1f1e; --fg: #ecebe7; --muted: #9a9993; --line: #2f2f2d;
       --accent: #7b93f0; --accent-fg: #10121a; --bubble: #262624; --mine: #2b3561; --notice: #3a2e1d;
-      --err: #ff8787;
+      --err: #ff8787; --ok: #69db7c;
+      --trig: #f0a94e; --trig-soft: #3a2a14; --act: #8fa4f5; --act-soft: #232b4d;
+      --ask: #5fd0aa; --ask-soft: #15332a; --logic: #b6a0f0; --logic-soft: #2b2444;
     }
   }
   * { box-sizing: border-box; }
@@ -99,6 +103,94 @@
               background: var(--bg); padding: 10px 0; }
   .save-row .ok { color: var(--muted); }
   .save-row .err { color: var(--err); }
+  /* Workflows: a list on the left, one workflow's steps and runs beside it. */
+  #workflow-main { overflow-y: auto; padding: 16px; min-width: 0; min-height: 0;
+                   display: flex; flex-direction: column; gap: 14px; }
+  .k-trigger { --k: var(--trig); --ks: var(--trig-soft); }
+  .k-action { --k: var(--act); --ks: var(--act-soft); }
+  .k-ask { --k: var(--ask); --ks: var(--ask-soft); }
+  .k-logic { --k: var(--logic); --ks: var(--logic-soft); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }
+  .dot.off { background: var(--line); }
+  .dot.bad { background: var(--err); }
+  .glyph { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; flex: none;
+           background: var(--ks); color: var(--k); font-size: 11.5px; font-weight: 700; }
+  .glyph.sm { width: 20px; height: 20px; border-radius: 6px; font-size: 9.5px; }
+  .cmd.wf { display: flex; flex-direction: column; gap: 5px; }
+  .cmd.wf .wf-name { display: flex; align-items: baseline; gap: 8px; }
+  .cmd.wf .wf-name .dot { position: relative; top: -1px; }
+  .cmd.wf .chain { display: flex; gap: 3px; }
+  .cmd.wf small { font-weight: 400; }
+  .wf-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .wf-head h2 { font-size: 17px; margin: 0 auto 0 0; min-width: 0; overflow-wrap: anywhere; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); cursor: pointer; }
+  .switch input { appearance: none; -webkit-appearance: none; width: 36px; height: 20px; margin: 0; flex: none;
+                  border-radius: 999px; background: var(--line); position: relative; cursor: pointer; }
+  .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+                         border-radius: 50%; background: var(--card); transition: left .15s ease; }
+  .switch input:checked { background: var(--accent); }
+  .switch input:checked::after { left: 18px; }
+  .switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wf-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; color: var(--muted); font-size: 13px; }
+  .wf-sub span { display: inline-flex; align-items: center; gap: 6px; }
+  .wf-problems { background: var(--notice); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+  .wf-problems ul { margin: 4px 0 0; padding-left: 18px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 10px; color: var(--muted); }
+  .tab[aria-selected="true"] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+  /* The lane scrolls sideways when it is longer than the screen. Its right
+     edge fades out, which shows that there is more. */
+  .lane { display: flex; align-items: flex-start; overflow-x: auto; padding: 4px 32px 14px 2px;
+          -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+  .lane .join { flex: none; width: 26px; height: 40px; position: relative; }
+  .lane .join::before { content: ""; position: absolute; left: 0; right: 0; top: 20px; border-top: 2px solid var(--line); }
+  .wcard { flex: none; width: 224px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  .wcard.missing { border-color: var(--err); }
+  .wc-head { display: flex; align-items: center; gap: 9px; padding: 9px 10px 2px; }
+  .wc-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .wc-title small { color: var(--muted); font-size: 12px; }
+  .wc-title strong { font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
+  .num { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px;
+         background: var(--k); color: var(--card); font-size: 11px; font-weight: 700; flex: none; align-self: flex-start; }
+  .wc-kind { padding: 0 10px 8px; color: var(--k); font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+  .wc-sec { border-top: 1px solid var(--line); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
+  .wc-field { display: flex; flex-direction: column; gap: 2px; }
+  .wc-field label, .outs-l { font-size: 12px; color: var(--muted); }
+  .val { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: 4px 7px; font-size: 13px;
+         line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; min-height: 28px; }
+  .val .expr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .val .row-line { display: flex; flex-wrap: wrap; gap: 2px 6px; }
+  .val .row-line code { font-size: 12px; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px 0 2px; margin: 1px; border-radius: 999px;
+          background: var(--ks); color: var(--k); font: 12px/18px system-ui, -apple-system, "Segoe UI", sans-serif;
+          white-space: nowrap; vertical-align: baseline; }
+  .pill.plain { padding-left: 7px; }
+  .pill b { display: inline-grid; place-items: center; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px;
+            background: var(--k); color: var(--card); font-size: 10px; font-weight: 700; }
+  .outs { display: flex; flex-wrap: wrap; gap: 2px; }
+  .runs { display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
+  details.run { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  details.run summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 9px 12px; cursor: pointer; list-style: none; }
+  details.run summary::-webkit-details-marker { display: none; }
+  details.run summary .run-when { font-weight: 600; }
+  details.run summary .run-how { color: var(--muted); font-size: 13px; }
+  details.run summary .run-out { flex: 1 1 100%; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .trace { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .tstep { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 9px; }
+  .tstep .num { grid-row: span 4; }
+  .tstep .t-head { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
+  .tstep .t-head small { color: var(--muted); font-size: 12px; }
+  .tstep .kv { grid-column: 2; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
+  .tstep .kv b { color: var(--fg); font-weight: 500; }
+  .tstep .kv.err { color: var(--err); }
+  @media (max-width: 720px) {
+    .lane { flex-direction: column; align-items: stretch; overflow-x: visible; padding-right: 2px;
+            -webkit-mask-image: none; mask-image: none; }
+    .wcard { width: auto; }
+    .lane .join { width: auto; height: 16px; }
+    .lane .join::before { left: 50%; right: auto; top: 0; bottom: 0; border-top: 0; border-left: 2px solid var(--line); }
+  }
   /* The header must never be wider than the screen: the title gives way. */
   header h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .account { max-width: 720px; display: flex; flex-direction: column; gap: 14px; }
@@ -124,7 +216,7 @@
              opacity: 0; pointer-events: none; transition: opacity .2s ease; }
     body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
   }
-  @media (prefers-reduced-motion: reduce) { aside, #scrim { transition: none !important; } }
+  @media (prefers-reduced-motion: reduce) { aside, #scrim, .switch input::after { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -135,6 +227,7 @@
     <span id="conn" class="conn" hidden>Reconnecting…</span>
     <span id="who" class="who"></span>
     <button id="push-toggle" class="link" hidden></button>
+    <button id="workflows-toggle" class="link">Workflows</button>
     <button id="settings-toggle" class="link">Settings</button>
   </header>
   <div class="layout" id="commands-view">
@@ -147,6 +240,13 @@
       <div id="log" aria-live="polite"></div>
       <div id="dock"></div>
     </main>
+  </div>
+  <div class="layout" id="workflows" hidden>
+    <aside>
+      <h2>Workflows</h2>
+      <nav id="workflow-list"></nav>
+    </aside>
+    <div id="workflow-main"></div>
   </div>
   <div class="layout" id="settings" hidden>
     <aside>
@@ -705,12 +805,7 @@ async function openSettings(id) {
   renderSettingsForm(await res.json());
 }
 
-async function showSettings(show) {
-  $("settings").hidden = !show;
-  $("commands-view").hidden = show;
-  $("settings-toggle").textContent = show ? "Commands" : "Settings";
-  $("drawer-toggle").setAttribute("aria-label", show ? "Settings sections" : "Commands");
-  if (!show) { scrollDown(); return; }
+async function loadSettings() {
   const res = await api("settings");
   settingsPlugins = res.ok ? (await res.json()).plugins : [];
   if (currentSettings !== ACCOUNT && !settingsPlugins.some((p) => p.id === currentSettings)) {
@@ -719,6 +814,331 @@ async function showSettings(show) {
   renderSettingsNav();
   if (currentSettings) return;
   openSettings(settingsPlugins.length ? settingsPlugins[0].id : ACCOUNT);
+}
+
+// --- Workflows: the list, and one workflow's steps and runs. ---
+
+let currentWorkflow = null, workflowTab = "steps";
+
+// A short mark for a plugin: "HC" for Health Connect, "To" for Todoist.
+function monogram(app) {
+  const words = app.split(/\s+/).filter(Boolean);
+  if (!words.length) return "?";
+  return words.length > 1 ? words[0][0] + words[1][0] : app.slice(0, 2);
+}
+function glyph(app, kind, small) {
+  const g = el("span", "glyph k-" + kind + (small ? " sm" : ""), monogram(app));
+  g.title = app || "Unknown block";
+  return g;
+}
+
+function when(iso) {
+  const d = new Date(iso);
+  if (d.toDateString() === new Date().toDateString()) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+const runDot = (run) => run.status === "failed" ? "bad" : run.status === "cancelled" ? "off" : "";
+
+// What the list and the head say about a workflow: a dot and a line.
+function workflowStatus(w) {
+  if (w.problem || (w.problems && w.problems.length)) return { dot: "bad", text: "Cannot run" };
+  if (!w.enabled) return { dot: "off", text: "Off" };
+  if (!w.last_run) return { dot: "", text: "Has not run yet" };
+  const run = w.last_run;
+  return { dot: runDot(run), text: "Last run " + when(run.started_at) + ": " + run.outcome };
+}
+
+function renderWorkflowNav(list) {
+  const nav = $("workflow-list");
+  nav.replaceChildren();
+  for (const w of list) {
+    const status = workflowStatus(w);
+    const b = el("button", "cmd wf" + (w.id === currentWorkflow ? " current" : ""));
+    const name = el("span", "wf-name");
+    name.append(el("span", "dot " + status.dot), el("span", "", w.name));
+    const chain = el("span", "chain");
+    for (const a of w.apps) chain.append(glyph(a.app, a.kind, true));
+    b.append(name, chain, el("small", "", status.text));
+    b.onclick = () => openWorkflow(w.id);
+    nav.append(b);
+  }
+}
+
+async function loadWorkflows() {
+  const main = $("workflow-main");
+  const res = await api("workflows");
+  if (view !== "workflows") return;
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    $("workflow-list").replaceChildren();
+    main.replaceChildren(el("p", "sys err", body.error || "Could not load the workflows."));
+    return;
+  }
+  const list = (await res.json()).workflows;
+  if (!list.some((w) => w.id === currentWorkflow)) currentWorkflow = null;
+  renderWorkflowNav(list);
+  if (!list.length) {
+    main.replaceChildren(el("p", "empty",
+      "You have no workflows yet. Run “Manage workflows” from the commands to add one from a recipe."));
+    return;
+  }
+  openWorkflow(currentWorkflow || list[0].id);
+}
+
+async function openWorkflow(id) {
+  setDrawer(false);
+  currentWorkflow = id;
+  for (const b of $("workflow-list").children) b.classList.remove("current");
+  const res = await api("workflows/" + encodeURIComponent(id));
+  if (currentWorkflow !== id) return;
+  if (!res.ok) {
+    $("workflow-main").replaceChildren(el("p", "sys err", "Could not load this workflow."));
+    return;
+  }
+  renderWorkflow(await res.json());
+  // The list shows the same state, so read it again.
+  const list = await api("workflows");
+  if (list.ok && view === "workflows") renderWorkflowNav((await list.json()).workflows);
+}
+
+// A value that an earlier card gave: its number (T for the trigger) and name.
+function pill(source, path, sources) {
+  const from = sources[source];
+  const p = el("span", "pill k-" + from.kind);
+  p.append(el("b", "", from.badge), document.createTextNode(path));
+  return p;
+}
+
+// Text as it is stored, with each {{ ... }} drawn as what it refers to.
+const REFERENCE = /\b([a-z][a-z0-9_]*)\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/g;
+function richText(text, sources) {
+  const out = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(/\{\{(.*?)\}\}/gs)) {
+    if (m.index > last) out.append(text.slice(last, m.index));
+    const expression = m[1].trim(), box = el("span", "expr");
+    let at = 0;
+    for (const r of expression.matchAll(REFERENCE)) {
+      if (!(r[1] in sources)) continue;
+      if (r.index > at) box.append(expression.slice(at, r.index));
+      box.append(pill(r[1], r[2], sources));
+      at = r.index + r[0].length;
+    }
+    if (at < expression.length) box.append(expression.slice(at));
+    out.append(box);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.append(text.slice(last));
+  return out;
+}
+
+const plain = (v) => typeof v === "string" ? v : v === true ? "yes" : v === false ? "no" : JSON.stringify(v);
+
+function richValue(value, sources) {
+  const box = el("div", "val");
+  if (typeof value === "string") {
+    box.append(richText(value, sources));
+  } else if (Array.isArray(value)) {
+    box.append(richText(value.map(plain).join(", "), sources));
+  } else if (value && typeof value === "object") {
+    for (const [key, v] of Object.entries(value)) {
+      const row = el("div", "row-line");
+      row.append(el("code", "", key), "←", richText(plain(v), sources));
+      box.append(row);
+    }
+  } else {
+    box.append(value === null || value === undefined ? "Not set" : plain(value));
+  }
+  return box;
+}
+
+function renderCard(card, badge, sources) {
+  const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : ""));
+  const head = el("div", "wc-head"), title = el("div", "wc-title");
+  title.append(el("small", "", card.app || "Unknown block"), el("strong", "", card.title));
+  head.append(glyph(card.app, card.kind), title, el("span", "num", badge));
+  c.append(head, el("div", "wc-kind", card.kind));
+  if (card.fields.length) {
+    const sec = el("div", "wc-sec");
+    for (const field of card.fields) {
+      const f = el("div", "wc-field");
+      f.append(el("label", "", field.label), richValue(field.value, sources));
+      sec.append(f);
+    }
+    c.append(sec);
+  }
+  if (card.outputs.length) {
+    const sec = el("div", "wc-sec"), chips = el("div", "outs");
+    for (const name of card.outputs) chips.append(el("span", "pill plain k-" + card.kind, name));
+    sec.append(el("div", "outs-l", "Outputs"), chips);
+    c.append(sec);
+  }
+  return c;
+}
+
+// The trigger and the steps, left to right. On a phone, top to bottom.
+function renderLane(d) {
+  const sources = { trigger: { badge: "T", kind: "trigger" }, run: { badge: "run", kind: "logic" } };
+  for (const step of d.steps) sources[step.id] = { badge: String(step.number), kind: step.kind };
+  const lane = el("div", "lane");
+  lane.append(renderCard(d.trigger, "T", sources));
+  for (const step of d.steps) lane.append(el("span", "join"), renderCard(step, String(step.number), sources));
+  return lane;
+}
+
+function traceLines(row, label, data) {
+  if (data === undefined || data === null) return;
+  const entries = typeof data === "object" && !Array.isArray(data) ? Object.entries(data) : [["", data]];
+  if (!entries.length) return;
+  const line = el("div", "kv");
+  line.append(label + " ");
+  entries.forEach(([key, value], i) => {
+    if (i) line.append(" · ");
+    let text = plain(value);
+    if (text.length > 300) text = text.slice(0, 300) + "…";
+    if (key) line.append(key + " ");
+    line.append(el("b", "", text));
+  });
+  row.append(line);
+}
+
+function renderTrace(run, d) {
+  const trace = el("div", "trace");
+  const first = el("div", "tstep k-trigger"), head = el("div", "t-head");
+  head.append(el("strong", "", d.trigger.title), el("small", "", d.trigger.app));
+  first.append(el("span", "num", "T"), head);
+  traceLines(first, "gave", run.trigger.outputs);
+  trace.append(first);
+  run.steps.forEach((step, i) => {
+    const card = d.steps.find((s) => s.id === step.id);
+    const row = el("div", "tstep k-" + (card ? card.kind : "action")), h = el("div", "t-head");
+    const how = step.status === "ok" ? step.duration_ms + " ms"
+      : step.status === "stopped" ? "stopped here" : "failed";
+    h.append(el("strong", "", step.title), el("small", "", how));
+    row.append(el("span", "num", String(i + 1)), h);
+    traceLines(row, "got", step.inputs);
+    traceLines(row, "gave", step.outputs);
+    if (step.reason) row.append(el("div", "kv", step.reason));
+    if (step.error) row.append(el("div", "kv err", step.error));
+    trace.append(row);
+  });
+  return trace;
+}
+
+async function renderHistory(d, body) {
+  body.replaceChildren(el("p", "sys", "Loading…"));
+  const res = await api("workflows/" + encodeURIComponent(d.id) + "/runs");
+  if (currentWorkflow !== d.id || workflowTab !== "history") return;
+  if (!res.ok) { body.replaceChildren(el("p", "sys err", "Could not load the runs.")); return; }
+  const runs = (await res.json()).runs;
+  if (!runs.length) { body.replaceChildren(el("p", "sys", "This workflow has not run yet.")); return; }
+  const list = el("div", "runs");
+  for (const run of runs) {
+    const item = el("details", "run"), sum = el("summary");
+    const how = (run.manual ? "By hand" : "By itself") + (run.attempt > 1 ? ", try " + run.attempt : "");
+    sum.append(el("span", "dot " + runDot(run)), el("span", "run-when", when(run.started_at)),
+               el("span", "run-how", how), el("span", "run-out", run.outcome));
+    item.append(sum, renderTrace(run, d));
+    list.append(item);
+  }
+  body.replaceChildren(list);
+}
+
+function renderWorkflow(d) {
+  const main = $("workflow-main");
+  const head = el("div", "wf-head");
+  const sw = el("label", "switch"), box = el("input");
+  box.type = "checkbox"; box.checked = d.enabled; box.setAttribute("role", "switch");
+  box.onchange = () => changeWorkflow(d.id, "enabled", { enabled: box.checked });
+  sw.append(box, el("span", "", d.enabled ? "On" : "Off"));
+  head.append(el("h2", "", d.name), sw);
+  if (d.by_hand) {
+    const run = el("button", "small", "Run now");
+    run.onclick = () => runWorkflow(d);
+    head.append(run);
+  }
+
+  const status = workflowStatus(d), sub = el("div", "wf-sub"), line = el("span");
+  line.append(el("span", "dot " + status.dot), status.text);
+  sub.append(line);
+  if (d.command && d.enabled) {
+    const command = el("span");
+    const toggle = el("button", "link", d.command.hidden ? "Show it" : "Hide it");
+    toggle.onclick = () => changeWorkflow(d.id, "command", { hidden: !d.command.hidden });
+    command.append(d.command.hidden ? "Not in the command menu." : "In the command menu as “" + d.command.text + "”.", toggle);
+    sub.append(command);
+  } else if (d.command) {
+    // A workflow that is off has no command. It can still be run from here.
+    sub.append(el("span", "", "It does not run by itself and has no command."));
+  }
+
+  const parts = [head, sub];
+  if (d.problems.length) {
+    const box = el("div", "wf-problems"), ul = el("ul");
+    for (const problem of d.problems) ul.append(el("li", "", problem));
+    box.append("This workflow cannot run.", ul);
+    parts.push(box);
+  }
+
+  const tabs = el("div", "tabs"), body = el("div");
+  tabs.setAttribute("role", "tablist");
+  const show = (tab) => {
+    workflowTab = tab;
+    for (const t of tabs.children) t.setAttribute("aria-selected", String(t.dataset.tab === tab));
+    if (tab === "history") renderHistory(d, body);
+    else body.replaceChildren(renderLane(d));
+  };
+  for (const [tab, label] of [["steps", "Steps"], ["history", "History"]]) {
+    const t = el("button", "tab", label);
+    t.dataset.tab = tab; t.setAttribute("role", "tab");
+    t.onclick = () => show(tab);
+    tabs.append(t);
+  }
+  parts.push(tabs, body);
+  main.replaceChildren(...parts);
+  show(workflowTab);
+}
+
+async function changeWorkflow(id, what, body) {
+  const res = await post("workflows/" + encodeURIComponent(id) + "/" + what, body);
+  if (!res.ok) {
+    const error = (await res.json().catch(() => ({}))).error;
+    $("workflow-main").prepend(el("p", "sys err", error || "Could not change the workflow."));
+  }
+  // Read it again either way, so the page shows what is stored.
+  if (currentWorkflow === id) openWorkflow(id);
+}
+
+async function runWorkflow(d) {
+  if ((activeFlowId || openPrompt) &&
+      !confirm(`Stop what's running and start "${d.name}"?`)) return;
+  const res = await post("workflows/" + encodeURIComponent(d.id) + "/run");
+  // What the run asks and says is a conversation, so go to where it shows.
+  showView("commands");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    addSys(body.error || "Could not start the workflow.", true);
+  }
+}
+
+// --- Views: the conversation, the workflows and the settings. One shows at a time. ---
+
+let view = "commands";
+const VIEWS = { commands: "commands-view", workflows: "workflows", settings: "settings" };
+const DRAWER_LABELS = { commands: "Commands", workflows: "Workflows", settings: "Settings sections" };
+
+function showView(name) {
+  view = name;
+  for (const [key, id] of Object.entries(VIEWS)) $(id).hidden = key !== name;
+  // Each button opens its view, and leads back to the conversation from it.
+  $("workflows-toggle").textContent = name === "workflows" ? "Commands" : "Workflows";
+  $("settings-toggle").textContent = name === "settings" ? "Commands" : "Settings";
+  $("drawer-toggle").setAttribute("aria-label", DRAWER_LABELS[name]);
+  if (name === "commands") scrollDown();
+  else if (name === "workflows") loadWorkflows();
+  else loadSettings();
 }
 
 // --- The drawer: on a phone, the list on the left slides in over the messages. ---
@@ -751,7 +1171,8 @@ document.addEventListener("touchend", (e) => {
   setDrawer(dx > 0);
 }, { passive: true });
 
-$("settings-toggle").onclick = () => { setDrawer(false); showSettings($("settings").hidden); };
+$("settings-toggle").onclick = () => { setDrawer(false); showView(view === "settings" ? "commands" : "settings"); };
+$("workflows-toggle").onclick = () => { setDrawer(false); showView(view === "workflows" ? "commands" : "workflows"); };
 $("filter").oninput = renderCommands;
 loadState().then(poll, () => { $("conn").hidden = false; setTimeout(() => location.reload(), 5000); });
 </script>
