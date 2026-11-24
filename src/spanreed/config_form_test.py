@@ -219,31 +219,43 @@ def test_real_plugin_configs_have_a_form(config_class: Any) -> None:
     assert schema["kind"] == "object"
 
 
-def test_gmail_monitor_config_round_trips_through_the_form() -> None:
-    config = gmail_monitor.UserConfig(
-        rules=[
-            gmail_monitor.EmailRule(
-                name="Receipts",
-                filter=gmail_monitor.EmailFilter(
-                    sender_regex="shop", has_attachments=True
-                ),
-                actions=[
-                    gmail_monitor.EmailAction(
-                        type="save_attachment_to_vault", config={"folder": "Receipts"}
-                    )
-                ],
-            )
+@dataclasses.dataclass
+class _Step:
+    kind: str
+    options: dict[str, Any]
+
+
+@dataclasses.dataclass
+class _Recipe:
+    name: str
+    steps: list[_Step]
+    enabled: bool = True
+
+
+@dataclasses.dataclass
+class _Cookbook:
+    recipes: list[_Recipe]
+    servings: int = 2
+
+
+def test_a_config_of_lists_of_groups_round_trips_through_the_form() -> None:
+    config = _Cookbook(
+        recipes=[
+            _Recipe(name="Soup", steps=[_Step(kind="boil", options={"minutes": 20})])
         ],
-        check_interval_minutes=30,
+        servings=4,
     )
     saved = dataclasses.asdict(config)
 
-    data = config_data_from_form(
-        gmail_monitor.UserConfig, form_value(gmail_monitor.UserConfig, saved), saved
-    )
+    data = config_data_from_form(_Cookbook, form_value(_Cookbook, saved), saved)
 
     assert data == saved
-    assert gmail_monitor.UserConfig(**data) == config
+
+
+def test_gmail_monitor_form_has_nothing_to_edit() -> None:
+    # The Gmail login is not kept in the config, and the rules are workflows.
+    assert form_schema(gmail_monitor.UserConfig)["fields"] == []
+    assert config_data_from_form(gmail_monitor.UserConfig, {}, {}) == {}
 
 
 def test_health_connect_form_has_nothing_to_edit_and_keeps_the_token() -> None:

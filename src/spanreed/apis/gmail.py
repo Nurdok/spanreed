@@ -368,13 +368,6 @@ class GmailApi:
             self._logger.error(f"Unexpected error fetching messages: {error}")
             raise
 
-    async def get_messages_since(
-        self, since_date: datetime.datetime
-    ) -> List[EmailMessage]:
-        # Gmail query format for date
-        date_query = f"after:{since_date.strftime('%Y/%m/%d')}"
-        return await self.get_recent_messages(query=date_query)
-
     async def get_messages_after(self, moment: datetime.datetime) -> List[EmailMessage]:
         """Return the messages that reached Gmail after a moment, newest first.
 
