@@ -8,9 +8,11 @@ This replaces behavior that used to be written into a plugin. A plugin decided
 when it ran, what it did and whether it told you. A workflow keeps those apart,
 so that each can be changed without code.
 
-There is no editor yet. Workflows come from recipes, and the chat command
-**Manage workflows** lists them, turns them on and off, runs them and shows
-their last runs.
+There is no editor yet. Workflows come from recipes. The web UI shows a
+workflow's steps and the history of its runs, turns it on and off and runs it
+(see [web-ui.md](web-ui.md#workflows)). The chat command **Manage workflows**
+does the same without the pictures, and also adds a workflow from a recipe
+and deletes one.
 
 ## The parts
 

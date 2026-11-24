@@ -126,6 +126,11 @@ class WorkflowEngine:
         """Return where the workflows and their traces are kept."""
         return self._store
 
+    @property
+    def command_plugin(self) -> str:
+        """Return the canonical name of the plugin that owns the engine."""
+        return self._command_plugin
+
     # -- what runs --------------------------------------------------------
 
     async def start(self, user_ids: Iterable[int]) -> None:
