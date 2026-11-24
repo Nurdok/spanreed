@@ -139,7 +139,7 @@ def test_no_overdue_is_silent_when_nothing_is_overdue(mock_bot: AsyncMock) -> No
     assert [step["id"] for step in run["steps"]] == ["find", "any"]
     # Only the line that every run by hand ends with.
     mock_bot.send_message.assert_awaited_once_with(
-        "Daily chores never overdue: stopped at step 2, Only continue if.",
+        "Daily chores never overdue: done. The run ended at step 2, Only continue if.",
         parse_html=False,
     )
 

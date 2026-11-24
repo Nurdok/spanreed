@@ -16,6 +16,7 @@ from spanreed.workflows.blocks import (
     Action,
     Block,
     BlockRegistry,
+    ManualError,
     NoParams,
     NoQuestion,
     Poll,
@@ -88,6 +89,49 @@ class Ranged(Events):
         """Return one event for today, or seven for the last week."""
         count = 1 if answer.days == "Today" else 7
         return [Event(f"day {day}") for day in range(count)]
+
+
+@dataclass
+class Which:
+    """What ``Asking`` asks before a manual run."""
+
+    which: Literal["Everything", "One"]
+    # Asked only for "One".
+    name: str = field(
+        default="", metadata={"prompt": "Which one?", "ask_if": {"which": "One"}}
+    )
+
+
+class Asking(Events):
+    """A trigger that asks for a choice, and for a text if the choice needs one.
+
+    There is nothing of the name ``nothing``.
+    """
+
+    id = "fake.asking"
+    title = "Fake asking"
+    Manual = Which
+
+    def __init__(self) -> None:
+        """Create the trigger with no manual run noted."""
+        # The event of each manual run that is over, and whether it worked.
+        self.done: list[tuple[str, bool]] = []
+
+    async def manual_events(
+        self, ctx: TriggerContext, params: Params, answer: Any
+    ) -> list[Event]:
+        """Return two events for everything, or the one that was named."""
+        if answer.which == "Everything":
+            return [Event("first"), Event("second")]
+        if answer.name == "nothing":
+            raise ManualError("There is nothing of that name.")
+        return [Event(answer.name)]
+
+    async def manual_run_done(
+        self, ctx: TriggerContext, params: Params, event: Event, worked: bool
+    ) -> None:
+        """Keep the event and how its run went."""
+        self.done.append((event.value, worked))
 
 
 class Silent(Events):
@@ -229,7 +273,7 @@ def workflow_of(
     """Return a workflow of user 4 with these steps."""
     values: dict[str, Any] = {"id": "wf_1", "user_id": 4, "name": "Test workflow"}
     values.update(fields)
-    scripted = trigger in ("fake.events", "fake.ranged", "fake.silent")
+    scripted = trigger in ("fake.events", "fake.ranged", "fake.silent", "fake.asking")
     params = {"events": events or []} if scripted else {}
     return Workflow(
         trigger=TriggerSpec(block=trigger, params=params),

@@ -52,6 +52,7 @@ def test_name() -> None:
     assert [block.id for block in plugin.blocks()] == [
         "core.schedule",
         "core.continue-if",
+        "core.for-each",
         "core.send-message",
     ]
 
@@ -300,7 +301,8 @@ def test_manage_runs_a_workflow_and_shows_its_runs(
         _manage(plugin)
 
     mock_engine_bot.send_message.assert_awaited_once_with(
-        f"{NO_OVERDUE}: stopped at step 2, Only continue if.", parse_html=False
+        f"{NO_OVERDUE}: done. The run ended at step 2, Only continue if.",
+        parse_html=False,
     )
     # The status now has the run, and so does the list of runs.
     assert "Last run, " in asked[2][0]

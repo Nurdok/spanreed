@@ -8,7 +8,8 @@ There are two shapes of block:
 
 - An ``Action`` is a step. It gets its inputs and returns its outputs.
   Blocks that ask the user something and blocks that hold logic are actions
-  too; ``kind`` says which, for the editor.
+  too; ``kind`` says which, for the editor. A ``Loop`` is an action that
+  holds steps, and runs them once for each of its rounds.
 - A ``Trigger`` starts runs. It yields one event for each run, and says
   whether, and how, it can be started by hand. A ``PushTrigger`` is a
   trigger that a plugin feeds: the plugin says what changed, and the
@@ -70,6 +71,14 @@ class BlockKind(enum.StrEnum):
     ACTION = "action"
     ASK = "ask"
     LOGIC = "logic"
+
+
+class ManualError(Exception):
+    """Raised by a trigger that cannot give the events of a manual run.
+
+    The message is for the user: the answer was not a date, or there is
+    nothing of that name.
+    """
 
 
 class StopRun(Exception):
@@ -250,6 +259,30 @@ class Action(Block, Generic[InT, OutT]):
         """Do the step for one run."""
 
 
+class Loop(Action[InT, OutT]):
+    """An action that holds steps, and runs them once for each round.
+
+    The engine runs the steps inside for each value that ``rounds``
+    returns. Inside, the id of the loop's step refers to that value, so a
+    step of ``For each`` whose id is ``each`` reads the item it runs for as
+    ``{{ each.item }}``. After the loop, the id refers to what ``run``
+    returns, as for any action. Both have the type ``Output``.
+
+    A step inside that ends the run (``StopRun``) ends only its round. A
+    step inside that fails makes the loop fail, and with it the run.
+    """
+
+    kind = BlockKind.LOGIC
+    # What the steps inside are shown under, and what one time through
+    # them is called.
+    inside_title: ClassVar[str] = "For each round"
+    round_name: ClassVar[str] = "Round"
+
+    @abc.abstractmethod
+    def rounds(self, inputs: InT) -> list[OutT]:
+        """Return what the steps inside see, for each time they run."""
+
+
 class Trigger(Block, Generic[ParamsT, EventT]):
     """What starts a run. Each event that ``events`` yields is one run.
 
@@ -258,9 +291,9 @@ class Trigger(Block, Generic[ParamsT, EventT]):
     ``{{ trigger.<field> }}``.
 
     ``Manual`` says whether the user can start a run by hand. ``None`` means
-    no. Otherwise it is a dataclass that holds what to ask first: each field
-    is a ``Literal`` of the choices, and ``NoQuestion`` asks nothing. A
-    trigger with a ``Manual`` implements ``manual_events``.
+    no. Otherwise it is a dataclass that holds what to ask first (see
+    ``manual_questions``), and ``NoQuestion`` asks nothing. A trigger with
+    a ``Manual`` implements ``manual_events``.
     """
 
     kind = BlockKind.TRIGGER
@@ -295,8 +328,18 @@ class Trigger(Block, Generic[ParamsT, EventT]):
         """Return the events of a run started by hand.
 
         ``answer`` is an instance of ``Manual``, filled in by the user.
+        Raise ``ManualError`` to tell the user why there is nothing to run.
         """
         raise NotImplementedError(f"{self.id} cannot be started by hand.")
+
+    async def manual_run_done(
+        self, ctx: TriggerContext, params: ParamsT, event: EventT, worked: bool
+    ) -> None:
+        """Take note that a run started by hand is over.
+
+        ``event`` is one that ``manual_events`` returned. Nothing is done
+        by default.
+        """
 
 
 class PushTrigger(Trigger[ParamsT, EventT]):
@@ -420,27 +463,75 @@ class PollTrigger(Trigger[RepeatT, EventT]):
             await self._wait_until_due(ctx, params)
             polled_at = _now()
             found = await self.poll(ctx, params, await ctx.state.get(_CURSOR))
-            seen = await self._seen(ctx)
             every_run_worked = True
             for event in found.events:
-                key, version = self.key(event), self.version(event)
-                if seen.get(key) == version:
+                # Read each time: a run by hand may have been for this event.
+                if not self._is_new(event, await self._seen(ctx)):
                     continue
                 worked = yield event
                 if worked is False:
                     every_run_worked = False
-                    continue
-                # Put last, so that the keys stay in the order they ran in.
-                seen.pop(key, None)
-                seen[key] = version
-                while len(seen) > self.remembers:
-                    del seen[next(iter(seen))]
-                await ctx.state.set(_SEEN, json.dumps(seen))
+                else:
+                    await self._remember(ctx, event)
             if every_run_worked and found.cursor is not None:
                 await ctx.state.set(_CURSOR, found.cursor)
             # Kept only now, when the runs are over: a poll that a restart
             # cut short is due again when Spanreed comes back.
             await ctx.state.set(_POLLED_AT, polled_at.isoformat())
+
+    async def new_events(self, ctx: TriggerContext, params: RepeatT) -> list[EventT]:
+        """Poll now, and return what the workflow has not run for.
+
+        For ``manual_events`` of a trigger that lets the user check now.
+        The cursor stays where it is, and the pace of the polls too.
+        """
+        found = await self.poll(ctx, params, await ctx.state.get(_CURSOR))
+        seen = await self._seen(ctx)
+        return [event for event in found.events if self._is_new(event, seen)]
+
+    async def manual_run_done(
+        self, ctx: TriggerContext, params: RepeatT, event: EventT, worked: bool
+    ) -> None:
+        """Remember an event that a run by hand worked for.
+
+        So that the next poll does not run for it again.
+        """
+        if worked:
+            await self._remember(ctx, event)
+
+    @staticmethod
+    async def start_from(
+        state: TriggerState, *, cursor: str | None, keys: Iterable[str]
+    ) -> None:
+        """Give a trigger that never polled the memory of what was done.
+
+        For a plugin that becomes a workflow: ``cursor`` is where the
+        plugin's own polls had got to, and ``keys`` are the things it
+        already handled, which the workflow must not run for again. They
+        are remembered as a trigger that runs once for a key does.
+
+        Do nothing if the trigger has a cursor or a memory already.
+        """
+        if await state.get(_CURSOR) is not None or await state.get(_SEEN) is not None:
+            return
+        if cursor is not None:
+            await state.set(_CURSOR, cursor)
+        seen = {key: "" for key in keys}
+        if seen:
+            await state.set(_SEEN, json.dumps(seen))
+
+    def _is_new(self, event: EventT, seen: dict[str, str]) -> bool:
+        return seen.get(self.key(event)) != self.version(event)
+
+    async def _remember(self, ctx: TriggerContext, event: EventT) -> None:
+        """Keep that the workflow ran for an event."""
+        seen = await self._seen(ctx)
+        # Put last, so that the keys stay in the order they ran in.
+        seen.pop(self.key(event), None)
+        seen[self.key(event)] = self.version(event)
+        while len(seen) > self.remembers:
+            del seen[next(iter(seen))]
+        await ctx.state.set(_SEEN, json.dumps(seen))
 
     @staticmethod
     async def _wait_until_due(ctx: TriggerContext, params: Repeat) -> None:
@@ -528,23 +619,53 @@ def _require_dataclasses(block: Block, *names: str) -> None:
             raise ValueError(f"Block {block.id}: {name} must be a dataclass.")
 
 
-def manual_choices(manual: type[Any]) -> list[tuple[str, list[str]]]:
-    """Return the questions of a ``Manual``: each field with its choices.
+@dataclass(frozen=True)
+class Question:
+    """One thing that a manual run asks the user first."""
 
-    Raise ``ValueError`` if a field is not a ``Literal`` of strings.
+    # The field of ``Manual`` that the answer goes to.
+    name: str
+    # What to ask. ``None`` leaves the wording to the engine.
+    prompt: str | None
+    # The answers to pick from. ``None`` asks for a text.
+    choices: list[str] | None
+    # Asked only if the earlier answers are these, by field name.
+    ask_if: dict[str, str]
+
+
+def manual_questions(manual: type[Any]) -> list[Question]:
+    """Return what a ``Manual`` asks, in the order of its fields.
+
+    A field that is a ``Literal`` of strings is a choice, and a field that
+    is a ``str`` is a text. The metadata of a field can hold the ``prompt``
+    and ``ask_if``: the answers to earlier questions that this one depends
+    on. A question that is not asked leaves its field at its default.
+
+    Raise ``ValueError`` if a field is of another type, if ``ask_if``
+    names a field that is not an earlier one, or if a field that is not
+    always asked has no default.
     """
     hints = typing.get_type_hints(manual)
-    questions = []
+    questions: list[Question] = []
     for field in dataclasses.fields(manual):
+        where = f"{manual.__qualname__}.{field.name}"
         tp = hints[field.name]
-        choices = list(typing.get_args(tp))
-        if typing.get_origin(tp) is not typing.Literal or not all(
-            isinstance(choice, str) for choice in choices
-        ):
-            raise ValueError(
-                f"{manual.__qualname__}.{field.name} must be a Literal of strings."
-            )
-        questions.append((field.name, choices))
+        choices: list[str] | None = None
+        if typing.get_origin(tp) is typing.Literal:
+            choices = list(typing.get_args(tp))
+            if not all(isinstance(choice, str) for choice in choices):
+                raise ValueError(f"{where} must be a Literal of strings.")
+        elif tp is not str:
+            raise ValueError(f"{where} must be a Literal of strings, or str.")
+        ask_if = dict(field.metadata.get("ask_if") or {})
+        earlier = {question.name for question in questions}
+        if not set(ask_if) <= earlier:
+            raise ValueError(f"{where}: ask_if must name earlier fields.")
+        if ask_if and field.default is dataclasses.MISSING:
+            raise ValueError(f"{where} is not always asked, so it needs a default.")
+        questions.append(
+            Question(field.name, field.metadata.get("prompt"), choices, ask_if)
+        )
     return questions
 
 
@@ -554,6 +675,6 @@ def _check_manual(trigger: Trigger) -> None:
     if not dataclasses.is_dataclass(trigger.Manual):
         raise ValueError(f"Block {trigger.id}: Manual must be a dataclass.")
     try:
-        manual_choices(trigger.Manual)
+        manual_questions(trigger.Manual)
     except ValueError as e:
         raise ValueError(f"Block {trigger.id}: {e}") from e

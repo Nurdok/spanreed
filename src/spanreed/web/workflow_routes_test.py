@@ -286,7 +286,7 @@ def test_run_now_runs_the_workflow_as_a_conversation_on_the_page() -> None:
                 (e["type"], e.get("title") or e.get("html") or e.get("flow_id"))
                 for e in events["events"]
             ]
-            closing = f"{NO_OVERDUE}: stopped at step 2, Only continue if."
+            closing = f"{NO_OVERDUE}: done. The run ended at step 2, Only continue if."
             assert said == [
                 ("flow-started", NO_OVERDUE),
                 ("message", closing),

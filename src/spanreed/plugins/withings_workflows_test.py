@@ -384,7 +384,7 @@ def test_by_hand_the_last_week_is_written_and_summed_up() -> None:
         assert world.properties_set() == [("Daily/2026-05-05.md", "weight", 81.0)]
         assert world.said() == [
             "Logged weight=81.0 for 2026-05-05.",
-            "Withings → daily note: 2 runs. 1 finished, 1 stopped, 0 failed.",
+            "Withings → daily note: 2 runs. 1 finished, 1 ended early, 0 failed.",
         ]
 
     _run(scenario)

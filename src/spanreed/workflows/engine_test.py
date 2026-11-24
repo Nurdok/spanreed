@@ -4,12 +4,13 @@ from unittest.mock import AsyncMock, patch
 
 from spanreed.interaction import SurfaceBusyError, commands
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
-from spanreed.workflows.blocks import BlockRegistry
-from spanreed.workflows.builtin import ContinueIf
-from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.blocks import BlockRegistry, NoQuestion
+from spanreed.workflows.builtin import ContinueIf, ForEach
+from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
 from spanreed.workflows.testing import (
+    Asking,
     Polled,
     Pushed,
     Record,
@@ -298,6 +299,166 @@ def test_a_trigger_that_fails_is_started_again_after_a_pause(
 
     assert record.texts == ["a"]
     assert [call.args[0] for call in sleep.await_args_list] == [60]
+
+
+# -- steps inside a loop -----------------------------------------------------
+
+
+def _for_each(*steps: Step) -> Step:
+    """Return a loop over the letters of the event: ``a,b,c``."""
+    return Step(
+        id="each",
+        block="core.for-each",
+        inputs={"items": "{{ trigger.value.split(',') if trigger.value else [] }}"},
+        steps=list(steps),
+    )
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_the_steps_inside_a_loop_run_once_for_each_item(mock_bot: AsyncMock) -> None:
+    record = Record()
+    workflow = workflow_of(
+        _for_each(
+            _record("inner", "{{ each.item }} {{ each.index }}/{{ each.count }}")
+        ),
+        _record("after", "{{ each.count }} items"),
+        events=["a,b,c"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, ForEach())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == ["a 1/3", "b 2/3", "c 3/3", "3 items"]
+    assert run["status"] == "finished"
+    loop = run["steps"][0]
+    assert (loop["round_name"], loop["round_count"], loop["rounds_run"]) == (
+        "Item",
+        3,
+        3,
+    )
+    assert [r["number"] for r in loop["rounds"]] == [1, 2, 3]
+    assert loop["rounds"][1]["steps"][0]["inputs"] == {"text": "b 2/3"}
+    assert loop["outputs"] == {"item": None, "index": 0, "count": 3}
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_step_inside_a_loop_that_ends_the_run_ends_only_its_round(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    skip_b = Step(
+        id="not_b",
+        block="core.continue-if",
+        inputs={"condition": "{{ each.item != 'b' }}"},
+    )
+    workflow = workflow_of(
+        _for_each(skip_b, _record("inner", "{{ each.item }}")),
+        _record("after", "done"),
+        events=["a,b,c"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, ForEach(), ContinueIf())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == ["a", "c", "done"]
+    assert run["status"] == "finished"
+    assert [r["status"] for r in run["steps"][0]["rounds"]] == [
+        "finished",
+        "stopped",
+        "finished",
+    ]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_step_inside_a_loop_that_fails_fails_the_run_and_it_starts_over(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    # "a" works, then "b" fails once.
+    record.failures = [None, RuntimeError("Obsidian did not answer")]
+    workflow = workflow_of(
+        _for_each(_record("inner", "{{ each.item }}")),
+        _record("after", "done"),
+        events=["a,b,c"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, ForEach())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage(), _sleeps():
+        failed, worked = asyncio.run(scenario())
+
+    # The second try wrote "a" again: a step must be safe to repeat.
+    assert record.texts == ["a", "a", "b", "c", "done"]
+    assert failed["status"] == "failed"
+    assert failed["steps"][0]["error"] == (
+        "Item 2 of 3, Fake record: Obsidian did not answer"
+    )
+    assert outcome(failed) == (
+        "failed at step 1, For each: Item 2 of 3, Fake record: "
+        "Obsidian did not answer"
+    )
+    assert [r["status"] for r in failed["steps"][0]["rounds"]] == ["finished", "failed"]
+    # The third item was not got to.
+    assert failed["steps"][0]["rounds_run"] == 2
+    assert worked["status"] == "finished"
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_loop_over_nothing_runs_nothing_inside(mock_bot: AsyncMock) -> None:
+    record = Record()
+    workflow = workflow_of(
+        _for_each(_record("inner", "{{ each.item }}")),
+        _record("after", "{{ each.count }} items"),
+        events=[""],
+    )
+
+    async def scenario() -> None:
+        engine = _engine(record, ForEach())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+    assert record.texts == ["0 items"]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_the_trace_of_a_long_loop_keeps_its_first_rounds(mock_bot: AsyncMock) -> None:
+    record = Record()
+    workflow = workflow_of(
+        _for_each(_record("inner", "{{ each.item }}")), events=["a,b,c,d"]
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, ForEach())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage(), patch.object(WorkflowEngine, "ROUNDS_KEPT", 2):
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == ["a", "b", "c", "d"]
+    loop = run["steps"][0]
+    assert (loop["round_count"], loop["rounds_run"]) == (4, 4)
+    assert [r["number"] for r in loop["rounds"]] == [1, 2]
 
 
 # -- triggers that a plugin feeds --------------------------------------------
@@ -720,8 +881,118 @@ def test_a_trigger_can_ask_before_a_run_by_hand(mock_bot: AsyncMock) -> None:
     )
     assert record.texts == [f"day {day}" for day in range(7)]
     mock_bot.send_message.assert_awaited_once_with(
-        "Test workflow: 7 runs. 7 finished, 0 stopped, 0 failed.", parse_html=False
+        "Test workflow: 7 runs. 7 finished, 0 ended early, 0 failed.", parse_html=False
     )
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_trigger_can_ask_for_a_text_after_a_choice_that_needs_one(
+    mock_bot: AsyncMock,
+) -> None:
+    record, asking = Record(), Asking()
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.asking")
+    mock_bot.request_user_choice.return_value = 1  # One
+    mock_bot.request_user_input.return_value = " the red one \n"
+
+    async def scenario() -> None:
+        engine = _engine(record, asking)
+        await engine.save(workflow)
+        await engine.run_by_hand(workflow.id, mock_user_find_by_id(4))
+        await engine.stop()
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+    mock_bot.request_user_input.assert_awaited_once_with("Which one?")
+    assert record.texts == ["the red one"]
+    # The trigger is told how the run went.
+    assert asking.done == [("the red one", True)]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_question_whose_choice_was_not_picked_is_not_asked(
+    mock_bot: AsyncMock,
+) -> None:
+    record, asking = Record(), Asking()
+    record.failures = [None, RuntimeError("boom")]
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.asking")
+    mock_bot.request_user_choice.return_value = 0  # Everything
+
+    async def scenario() -> None:
+        engine = _engine(record, asking)
+        await engine.save(workflow)
+        await engine.run_by_hand(workflow.id, mock_user_find_by_id(4))
+        await engine.stop()
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+    mock_bot.request_user_input.assert_not_called()
+    assert asking.done == [("first", True), ("second", False)]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_trigger_can_say_why_there_is_nothing_to_run_by_hand(
+    mock_bot: AsyncMock,
+) -> None:
+    record, asking = Record(), Asking()
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.asking")
+    mock_bot.request_user_choice.return_value = 1  # One
+    mock_bot.request_user_input.return_value = "nothing"
+
+    async def scenario() -> None:
+        engine = _engine(record, asking)
+        await engine.save(workflow)
+        await engine.run_by_hand(workflow.id, mock_user_find_by_id(4))
+        assert await _runs(engine, workflow) == []
+        await engine.stop()
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+    mock_bot.send_message.assert_awaited_once_with(
+        "There is nothing of that name.", parse_html=False
+    )
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_poll_does_not_run_again_for_what_a_run_by_hand_worked_for(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+
+    class ByHand(Polled):
+        Manual = NoQuestion
+
+        async def manual_events(self, ctx: Any, params: Any, answer: Any) -> list[Any]:
+            return await self.new_events(ctx, params)
+
+    # The check by hand finds "a" and "b". Then the first poll does too.
+    polled = ByHand(["a", "b"], ["a", "b", "c"], waits=True)
+    # By hand, the run for "b" fails.
+    record.failures = [None, RuntimeError("boom")]
+    workflow = workflow_of(
+        _record("one", "{{ trigger.value }}"), trigger="fake.polled", enabled=False
+    )
+
+    async def scenario() -> None:
+        engine = _engine(record, polled)
+        await engine.save(workflow)
+        await engine.run_by_hand(workflow.id, mock_user_find_by_id(4))
+        assert record.texts == ["a"]
+
+        workflow.enabled = True
+        await engine.save(workflow)
+        await _until(lambda: polled.waiting)
+        await engine.stop()
+
+    with fake_storage(), _no_wait_between_polls():
+        asyncio.run(scenario())
+
+    # The poll ran for "b", which failed by hand, and for "c". Not for "a".
+    assert record.texts == ["a", "b", "c"]
+    # The check by hand left the cursor where it was.
+    assert polled.cursors == [None, None]
 
 
 @patch_user_interaction("spanreed.workflows.engine")

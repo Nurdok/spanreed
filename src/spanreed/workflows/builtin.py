@@ -6,12 +6,14 @@ import asyncio
 import datetime
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
+from typing import Any
 
 from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import (
     Action,
     Block,
     BlockKind,
+    Loop,
     NoOutput,
     NoQuestion,
     Repeat,
@@ -112,6 +114,46 @@ class ContinueIf(Action[ContinueIfInput, NoOutput]):
 
 
 @dataclass
+class ForEachInput:
+    """The input of ``ForEach``."""
+
+    items: list[Any]
+
+
+@dataclass
+class ForEachOutput:
+    """What ``ForEach`` gives: inside, the item of the round; after, the count."""
+
+    # The item that the steps inside run for. Empty after the loop.
+    item: Any = None
+    # The place of the item, from 1. After the loop, 0.
+    index: int = 0
+    # How many items there are.
+    count: int = 0
+
+
+class ForEach(Loop[ForEachInput, ForEachOutput]):
+    """Run the steps inside once for each item of a list."""
+
+    id = "core.for-each"
+    title = "For each"
+    inside_title = "For each item"
+    round_name = "Item"
+
+    def rounds(self, inputs: ForEachInput) -> list[ForEachOutput]:
+        """Return each item with its place and the number of items."""
+        count = len(inputs.items)
+        return [
+            ForEachOutput(item=item, index=index, count=count)
+            for index, item in enumerate(inputs.items, start=1)
+        ]
+
+    async def run(self, ctx: StepContext, inputs: ForEachInput) -> ForEachOutput:
+        """Return the number of items, for the steps after the loop."""
+        return ForEachOutput(count=len(inputs.items))
+
+
+@dataclass
 class SendMessageInput:
     """The input of ``SendMessage``."""
 
@@ -138,4 +180,4 @@ class SendMessage(Action[SendMessageInput, NoOutput]):
 
 def builtin_blocks() -> list[Block]:
     """Return the blocks that Spanreed itself publishes."""
-    return [Schedule(), ContinueIf(), SendMessage()]
+    return [Schedule(), ContinueIf(), ForEach(), SendMessage()]
