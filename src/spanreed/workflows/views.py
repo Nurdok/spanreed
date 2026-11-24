@@ -25,6 +25,7 @@ from spanreed.workflows.blocks import (
 )
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Step, Workflow
+from spanreed.workflows.recipes import Recipe
 from spanreed.workflows.values import to_data
 
 # What the blocks that Spanreed itself publishes are shown as coming from.
@@ -344,19 +345,49 @@ def detail(
     }
 
 
+def _marks(
+    trigger: dict[str, Any], steps: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    """Return the plugin and the kind of each card, in the order they run.
+
+    For the row of marks that shows at a glance what a workflow touches.
+    """
+    return [
+        {"app": card["app"], "kind": card["kind"]} for card in [trigger, *_flat(steps)]
+    ]
+
+
+def recipe_view(engine: WorkflowEngine, recipe: Recipe) -> dict[str, Any]:
+    """Return what the page shows of a recipe before it is added.
+
+    The cards are those of the workflow that the recipe gives, with every
+    input as it ships.
+    """
+    workflow = recipe.workflow_for(0)
+    trigger = _card(
+        engine, workflow.trigger.block, workflow.trigger.params, "trigger", Trigger
+    )
+    steps = _step_cards(engine, workflow.steps)
+    return {
+        "id": recipe.id,
+        "name": recipe.name,
+        "description": recipe.description,
+        "apps": _marks(trigger, steps),
+        "trigger": trigger,
+        "steps": steps,
+    }
+
+
 def summary(
     engine: WorkflowEngine, workflow: Workflow, last_run: dict[str, Any] | None
 ) -> dict[str, Any]:
     """Return what the list of workflows shows of one workflow."""
     full = detail(engine, workflow, last_run)
-    cards = [full["trigger"], *_flat(full["steps"])]
     return {
         "id": full["id"],
         "name": full["name"],
         "enabled": full["enabled"],
         "problem": full["problems"][0] if full["problems"] else None,
         "last_run": full["last_run"],
-        # The plugin and the kind of each card, for the row of marks that
-        # shows at a glance what the workflow touches.
-        "apps": [{"app": card["app"], "kind": card["kind"]} for card in cards],
+        "apps": _marks(full["trigger"], full["steps"]),
     }

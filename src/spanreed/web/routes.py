@@ -17,6 +17,7 @@ import asyncio
 import dataclasses
 import functools
 import html
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -35,6 +36,7 @@ from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.user import User
 from spanreed.web import auth, google_auth, push
 from spanreed.workflows import editing as workflow_editing
+from spanreed.workflows import sharing as workflow_sharing
 from spanreed.workflows import views as workflow_views
 from spanreed.workflows.blocks import Trigger as WorkflowTrigger
 from spanreed.workflows.engine import WorkflowEngine
@@ -48,6 +50,8 @@ LONG_POLL_TIMEOUT_S = 25.0
 # custom header to a cross-site request without a CORS preflight (which we
 # never grant), so together with the SameSite cookie this blocks CSRF.
 CSRF_HEADER = "X-Spanreed-Request"
+# The bytes that the file of a workflow may have when it is brought in.
+MAX_WORKFLOW_FILE = 256 * 1024
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -740,29 +744,62 @@ async def workflow_catalog() -> Any:
                 if not registered.get(name, False)
             ],
             "installed": recipe.id in installed,
+            # What it touches, as the list of workflows shows it.
+            "apps": workflow_views.recipe_view(wf_engine, recipe)["apps"],
         }
         for recipe in all_recipes().values()
     ]
     return _no_store(jsonify({"blocks": blocks, "recipes": recipes}))
 
 
+@blueprint.get("/api/workflows/recipes/<recipe_id>")
+@api_auth
+async def workflow_recipe(recipe_id: str) -> Any:
+    """Return a recipe as cards, to look at before it is added."""
+    wf_engine = await _workflow_engine()
+    if wf_engine is None:
+        return jsonify({"error": "Workflows are not running yet."}), 503
+    recipe = all_recipes().get(recipe_id)
+    if recipe is None:
+        return jsonify({"error": "There is no such recipe."}), 404
+    return _no_store(jsonify(workflow_views.recipe_view(wf_engine, recipe)))
+
+
 @blueprint.post("/api/workflows")
 @api_auth
 async def create_workflow() -> Any:
-    """Give the user a new workflow: from a recipe, or with only a trigger.
+    """Give the user a new workflow: from a recipe, a file, or only a trigger.
 
     A workflow from a recipe is on, as when it is added in chat. One that
     starts with only a trigger is off: it has no steps yet, and its
-    trigger must not start to count things as done.
+    trigger must not start to count things as done. One from a file is off
+    too: it comes from somewhere else, and its new owner looks at it first.
     """
     user: User = g.user
     wf_engine = await _workflow_engine()
     if wf_engine is None:
         return jsonify({"error": "Workflows are not running yet."}), 503
+    # The length that the request names may be missing, so count.
+    if len(await request.get_data()) > MAX_WORKFLOW_FILE:
+        return jsonify({"error": "This file is too large for a workflow."}), 413
     body = await request.get_json(silent=True) or {}
     recipe_id, trigger_id = body.get("recipe"), body.get("trigger")
 
-    if isinstance(recipe_id, str):
+    if "workflow" in body:
+        mine = await wf_engine.store.list_for_user(user.id)
+        try:
+            workflow = workflow_sharing.imported(
+                body["workflow"], user.id, wf_engine.registry, {w.name for w in mine}
+            )
+        except workflow_sharing.NotAWorkflow as e:
+            return (
+                jsonify(
+                    {"error": "This file cannot be added.", "problems": e.problems}
+                ),
+                400,
+            )
+        await wf_engine.save(workflow)
+    elif isinstance(recipe_id, str):
         recipe = all_recipes().get(recipe_id)
         if recipe is None:
             return jsonify({"error": "There is no such recipe."}), 404
@@ -808,7 +845,7 @@ async def create_workflow() -> Any:
             return jsonify({"error": problems[0]}), 400
         await wf_engine.save(workflow)
     else:
-        return jsonify({"error": "Name a recipe or a trigger."}), 400
+        return jsonify({"error": "Name a recipe, a trigger or a file."}), 400
 
     _logger.info(f"User {user.id} added workflow {workflow.id}")
     return jsonify(await _workflow_detail(wf_engine, workflow)), 201
@@ -920,6 +957,31 @@ async def test_workflow(workflow_id: str) -> Any:
         f"User {edited.user_id} tested workflow {edited.id}: {trace['status']}"
     )
     return jsonify({"run": workflow_views.run_view(trace)})
+
+
+@blueprint.get("/api/workflows/<workflow_id>/export")
+@api_auth
+async def export_workflow(workflow_id: str) -> Any:
+    """Return a workflow as a file: the JSON of a recipe.
+
+    It holds the trigger and the steps as the user wrote them, and nothing
+    of what the workflow remembers or of its history.
+    """
+    found = await _own_workflow(workflow_id)
+    if not isinstance(found[1], Workflow):
+        return found
+    wf_engine, workflow = found
+    data = workflow_sharing.exported(workflow, wf_engine.registry)
+    # Written as the recipes that ship are: in their order, for a person
+    # to read.
+    response = Response(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+        mimetype="application/json",
+    )
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="{data["id"]}.json"'
+    )
+    return _no_store(response)
 
 
 @blueprint.get("/api/workflows/<workflow_id>/runs")

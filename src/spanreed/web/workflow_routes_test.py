@@ -803,10 +803,49 @@ def test_the_catalog_lists_the_recipes_and_which_the_user_has() -> None:
                 [],
             )
             assert chores["description"]
+            # What it touches, as the list of workflows shows it.
+            assert chores["apps"] == [
+                {"app": "Spanreed", "kind": "trigger"},
+                {"app": "Todoist", "kind": "action"},
+                {"app": "Spanreed", "kind": "logic"},
+                {"app": "Todoist", "kind": "action"},
+                {"app": "Spanreed", "kind": "ask"},
+            ]
             # A recipe whose plugins are not loaded here cannot be added.
             hevy = recipes["hevy-set-notes"]
             assert hevy["installed"] is False
             assert hevy["missing"] == ["hevy", "obsidian"]
+
+    asyncio.run(run())
+
+
+def test_a_recipe_can_be_looked_at_before_it_is_added() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            url = "/app/api/workflows/recipes/todoist-no-overdue"
+            assert (await client.get(url)).status_code == 401
+            await _login(client)
+
+            response = await client.get(url)
+
+            assert response.status_code == 200
+            assert response.headers["Cache-Control"] == "no-store"
+            shown = await _json(response)
+            assert (shown["id"], shown["name"]) == ("todoist-no-overdue", NO_OVERDUE)
+            assert shown["description"]
+            assert shown["trigger"]["title"] == "On a schedule"
+            assert [card["title"] for card in shown["steps"]] == [
+                "Find tasks",
+                "Only continue if",
+                "Set due date",
+                "Send message",
+            ]
+            assert [card["number"] for card in shown["steps"]] == ["1", "2", "3", "4"]
+            # Looking adds nothing.
+            assert await engine.store.list_for_user(USER_ID) == []
+
+            missing = await client.get("/app/api/workflows/recipes/no-such-recipe")
+            assert missing.status_code == 404
 
     asyncio.run(run())
 
@@ -980,6 +1019,101 @@ def test_the_page_shows_what_a_workflow_remembers_and_can_make_it_forget() -> No
                 f"/app/api/workflows/{theirs.id}/forget", json={}, headers=H
             )
             assert other.status_code == 404
+
+    asyncio.run(run())
+
+
+def test_a_workflow_goes_out_as_a_file_and_comes_in_as_a_new_one() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            mine = await _install(engine)
+            theirs = await _install(engine, OTHER_USER_ID)
+            url = f"/app/api/workflows/{mine.id}/export"
+            assert (await client.get(url)).status_code == 401
+            await _login(client)
+            assert (
+                await client.get(f"/app/api/workflows/{theirs.id}/export")
+            ).status_code == 404
+
+            response = await client.get(url)
+
+            assert response.status_code == 200
+            assert response.headers["Content-Disposition"] == (
+                'attachment; filename="daily-chores-never-overdue.json"'
+            )
+            assert response.headers["Cache-Control"] == "no-store"
+            file = await _json(response)
+            assert (file["name"], file["requires"]) == (NO_OVERDUE, ["todoist"])
+            # In the order of a recipe that ships, for a person to read.
+            assert list(file) == [
+                "id",
+                "name",
+                "description",
+                "requires",
+                "command_hidden",
+                "trigger",
+                "steps",
+            ]
+            assert (await response.get_data(as_text=True)).startswith('{\n  "id": ')
+            assert file["trigger"] == mine.to_data()["trigger"]
+            assert mine.id not in str(file) and "user_id" not in file
+
+            # The file comes in as a workflow of its own, turned off.
+            response = await client.post(
+                "/app/api/workflows",
+                json={"workflow": {**file, "user_id": OTHER_USER_ID, "enabled": True}},
+                headers=H,
+            )
+
+            assert response.status_code == 201
+            shown = await _json(response)
+            assert (shown["name"], shown["enabled"]) == (NO_OVERDUE + " (2)", False)
+            assert shown["problems"] == []
+            stored = await engine.store.get(shown["id"])
+            assert stored is not None
+            assert (stored.user_id, stored.recipe) == (USER_ID, None)
+            assert stored.steps == mine.steps
+            assert len(await engine.store.list_for_user(USER_ID)) == 2
+            assert len(await engine.store.list_for_user(OTHER_USER_ID)) == 1
+            # It is off: its schedule does not run, and it has no command.
+            assert stored.id not in engine._sources
+
+    asyncio.run(run())
+
+
+def test_a_file_that_is_no_workflow_or_cannot_run_here_is_not_added() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            await _login(client)
+
+            for file, start in (
+                ("a text", "This is not the file of a workflow."),
+                ({"name": "No steps"}, "This is not the file of a workflow."),
+                (
+                    {
+                        "name": "From elsewhere",
+                        "trigger": {"block": "core.schedule", "params": {}},
+                        "steps": [
+                            {"id": "one", "block": "elsewhere.block", "inputs": {}}
+                        ],
+                    },
+                    "Step 1: there is no block “elsewhere.block”.",
+                ),
+            ):
+                response = await client.post(
+                    "/app/api/workflows", json={"workflow": file}, headers=H
+                )
+                assert response.status_code == 400, file
+                answer = await _json(response)
+                assert answer["error"] == "This file cannot be added."
+                assert answer["problems"][0].startswith(start)
+
+            large = {"name": "x" * (routes.MAX_WORKFLOW_FILE + 1)}
+            response = await client.post(
+                "/app/api/workflows", json={"workflow": large}, headers=H
+            )
+            assert response.status_code == 413
+            assert await engine.store.list_for_user(USER_ID) == []
 
     asyncio.run(run())
 
