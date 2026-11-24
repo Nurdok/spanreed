@@ -148,9 +148,15 @@ async def take(user_id: int, raw: Any) -> None:
     if said.get("kind") == "watchdog":
         vault.last_seen = _now()
     elif said.get("kind") == "error":
-        _logger.info(f"Obsidian plugin error for user {user_id}: {said}")
         if said.get("message") in IGNORED_ERRORS:
+            _logger.info(
+                f"The Obsidian plugin of user {user_id} lost its connection:"
+                f" {said['message']}"
+            )
             return
+        # What the error says may name a note, so it stays out of the log.
+        # It reaches its user as an error of Spanreed.
+        _logger.info(f"The Obsidian plugin of user {user_id} had an error.")
         if _now() - vault.error_at > ERROR_PAUSE:
             await errors.report(f"Obsidian plugin error: {said}")
             vault.error_at = _now()

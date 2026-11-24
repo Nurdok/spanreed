@@ -1154,6 +1154,10 @@ its user about that itself (see [What the engine does](#what-the-engine-does)).
   that it started first.
 - **Every workflow with the trigger gets every error.** The plugin's users
   took them from one list, so each error reached one of them.
+- **What Obsidian's plugin says stays out of the log.** The monitor wrote
+  every heartbeat and every error to it, as they came. A heartbeat is not
+  logged now, and of an error only that there was one: what it says may
+  name a note. It reaches its user as an error of Spanreed.
 - **An error of Obsidian's plugin is reported for every user of Obsidian**,
   not only for the users of the monitor. As before, at most one in half an
   hour, none in the first half hour after a start, and not the errors of a
