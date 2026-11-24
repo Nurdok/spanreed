@@ -139,11 +139,15 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | Block | Kind | Published by |
 | --- | --- | --- |
 | `core.schedule` On a schedule | trigger | Workflows |
+| `core.random-schedule` At random times | trigger | Workflows |
+| `core.called` When another workflow runs it | trigger | Workflows |
 | `core.command` When I run its command | trigger | Workflows |
 | `core.continue-if` Only continue if | logic | Workflows |
 | `core.if` If | logic | Workflows |
 | `core.for-each` For each | logic | Workflows |
 | `core.stop` End the run | logic | Workflows |
+| `core.call-workflow` Run a workflow | logic | Workflows |
+| `core.run-one` Run one workflow | logic | Workflows |
 | `core.remember` Remember | logic | Workflows |
 | `core.recall` Recall | logic | Workflows |
 | `core.forget` Forget | logic | Workflows |
@@ -319,7 +323,7 @@ run to the next. It survives a restart and is deleted with the workflow.
 | Block | Does | Gives |
 | --- | --- | --- |
 | Remember | Keeps a value under a name. Without a value: only that it is remembered | |
-| Recall | Reads what is kept under a name | `found`, `value`, `at` (when it was kept, in UTC) |
+| Recall | Reads what is kept under a name | `found`, `value`, `at` (when it was kept, in UTC), `age_hours` (how long ago that was) |
 | Forget | Drops what is kept under a name | `found` |
 
 The usual use is to do something once for each thing, however often it comes
@@ -337,10 +341,68 @@ up:
 "Remember" comes after the question, so a question that got no answer is
 asked again at the next run.
 
+For something to do at most every so often, the condition is `{{ not
+last.found or last.age_hours > 72 }}`.
+
+The page of a workflow says how many things it remembers, lists the names,
+and can make it forget one or all of them (`POST
+/app/api/workflows/<id>/forget`, with `name` for one). A workflow that
+forgets that it asked asks again. What the trigger remembers, such as a
+cursor, is not part of this.
+
 A block reaches the same memory as `ctx.memory`, with `get`, `set` and
 `forget`. It is what a plugin used `get_user_data` and `set_user_data` for.
 In a test of a block, `StepContext` has a memory that lasts as long as the
 context does.
+
+### One workflow runs another
+
+A workflow can be a part of others. Its trigger is "When another workflow
+runs it": it starts no run by itself. It has a command too, which a recipe
+usually hides.
+
+| Block | Does | Gives |
+| --- | --- | --- |
+| Run a workflow | Runs the workflow of that name, and goes on when it is over | `status`, `finished`, `outcome` |
+| Run one workflow | Runs one of several: one picked at random, or the user's pick | `ran`, `status`, `on_offer` |
+
+```json
+{
+  "id": "one",
+  "block": "core.run-one",
+  "inputs": {
+    "workflows": {
+      "Journaling Prompt": true,
+      "Mood": "{{ not mood.found }}",
+      "Books": "{{ run.manual or not last.found or last.age_hours > 72 }}"
+    },
+    "how": "{{ 'ask me' if run.manual else 'at random' }}",
+    "question": "What's your poison?"
+  }
+}
+```
+
+- **The other workflow runs inside the run of the step**: in the same
+  conversation, and the step is over when it is. Its trace is in its own
+  history, marked with the name of the workflow that ran it.
+- **A workflow is named, not linked.** A step finds it by its name among the
+  user's workflows. Renaming it breaks the step, which then fails and says
+  that there is no workflow of that name.
+- **What can be run** is a workflow that is on, has nothing wrong with it,
+  and whose trigger starts a run by hand without a question: a part, a
+  command, a schedule. "Run a workflow" fails for any other. "Run one
+  workflow" leaves it out, and does nothing if none is left.
+- **A row of "Run one workflow"** is the name of a workflow and whether it is
+  on offer: yes, no, or a condition.
+- **A workflow cannot run itself**, directly or through another.
+- **A part that fails fails the step**, and with it the run. The part is not
+  tried again by itself: the run that needed it is.
+- **A part that is in a run of its own** is waited for, for a minute. Then
+  the step fails.
+- **Test** does not run a workflow with one of these steps: the part may ask.
+
+A block runs a workflow through `ctx.workflows`, with `run(name)` and
+`on_offer(names)`.
 
 ### Files
 
@@ -585,6 +647,13 @@ class WorkoutChoice:
 `core.schedule` keeps the time of its last event. After a restart it fires at
 once if it is due and waits for the rest of its interval if it is not. A new
 workflow fires at once.
+
+`core.random-schedule` waits a different time before each event, picked at
+random between **At least** and **At most**. With **Only from** and **Only
+until**, two times of day in the user's timezone, a wait that ends outside
+those hours fires nothing, and the next wait starts. It keeps when the next
+event is due, so a restart does not fire early. By hand it fires whatever
+the hour.
 
 ## Commands
 
