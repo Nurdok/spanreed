@@ -1,0 +1,49 @@
+{
+  "id": "timekiller-journal",
+  "name": "Journaling Prompt",
+  "description": "Offers a journaling prompt and adds your answer to today's daily note. “Kill time” runs it.",
+  "requires": [
+    "timekiller"
+  ],
+  "command_hidden": true,
+  "trigger": {
+    "block": "core.called",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "journal",
+      "block": "timekiller.journal",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "prompts": [
+          "What are you doing right now?",
+          "What are you grateful for today?",
+          "What are you looking forward to today?",
+          "What are you struggling with today?",
+          "What are you proud of today?",
+          "What are you excited about today?",
+          "What are you worried about today?",
+          "Did you make progress on a project today? If so, what?",
+          "What is one thing you learned today?",
+          "What did you do today to take care of yourself?",
+          "What did you do today to take care of someone else?",
+          "What did you do today to take care of your home?",
+          "What friend did you talk to today?",
+          "What family member did you talk to today?",
+          "What did you do today for your yearly theme?",
+          "Take a picture of you or something you did today.",
+          "What did you do for physical health today?",
+          "What did you do for mental health today?",
+          "What did you do today for fun?",
+          "What are you currently watching?",
+          "What are you currently listening to?",
+          "What is your favorite song right now?",
+          "Do you have plans to meet up with friends anytime soon?",
+          "What project are you currently working on?"
+        ],
+        "heading": null
+      }
+    }
+  ]
+}
