@@ -9,13 +9,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spanreed.workflows import expressions
-from spanreed.workflows.blocks import Action, BlockRegistry, Loop, Trigger
+from spanreed.workflows.blocks import Action, BlockRegistry, Trigger
 from spanreed.workflows.values import from_data
 
 # Names that step inputs can refer to besides the ids of earlier steps.
 TRIGGER_NAME = "trigger"
 RUN_NAME = "run"
 _STEP_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# Words that a template reads as something else than the name of a step.
+RESERVED_IDS = frozenset(
+    {"and", "or", "not", "in", "is", "if", "else", "true", "false", "none"}
+)
 
 
 @dataclass
@@ -28,15 +32,18 @@ class Step:
     id: str
     block: str
     inputs: dict[str, Any] = field(default_factory=dict)
-    # The steps inside this one, if its block is a loop. They run once for
-    # each round of the loop.
+    # The steps inside this one, if its block holds steps. A loop runs them
+    # once for each round, and a branch runs them if it goes the first way.
     steps: list[Step] = field(default_factory=list)
+    # The steps that a branch runs if it goes the other way.
+    otherwise: list[Step] = field(default_factory=list)
 
     @classmethod
     def from_data(cls, data: dict[str, Any]) -> Step:
         """Build a step, and the steps inside it, from JSON data."""
         values = dict(data)
-        values["steps"] = [cls.from_data(step) for step in data.get("steps", [])]
+        for lane in ("steps", "otherwise"):
+            values[lane] = [cls.from_data(step) for step in data.get(lane, [])]
         return cls(**values)
 
 
@@ -127,15 +134,18 @@ def _step_problems(
     known_names: set[str],
     used_ids: set[str],
     prefix: str,
+    first: int = 1,
 ) -> list[str]:
     """Return what is wrong with some steps and the steps inside them.
 
     ``known_names`` holds what a template of the first step can refer to.
     ``used_ids`` holds every id of the workflow so far, also of steps that
-    cannot be referred to from here. Both are added to.
+    cannot be referred to from here. Both are added to. ``first`` is the
+    number of the first step: the second list of a branch goes on counting
+    where the first stopped.
     """
     found: list[str] = []
-    for number, step in enumerate(steps, start=1):
+    for number, step in enumerate(steps, start=first):
         label = f"{prefix}{number}"
         where = f"Step {label}"
         if not _STEP_ID_RE.match(step.id):
@@ -145,6 +155,11 @@ def _step_problems(
             )
         elif step.id in used_ids:
             found.append(f"{where}: the id “{step.id}” is already in use.")
+        elif step.id in RESERVED_IDS:
+            found.append(
+                f"{where}: the id “{step.id}” is a word that templates read as "
+                "something else."
+            )
         used_ids.add(step.id)
 
         block = registry.get(step.block)
@@ -166,21 +181,34 @@ def _step_problems(
                 )
         known_names.add(step.id)
 
-        if isinstance(block, Loop):
-            # The steps inside can refer to what is known here and to each
-            # other. The steps after the loop cannot refer to them: what
-            # they give differs from round to round.
-            found.extend(
-                _step_problems(
-                    step.steps,
-                    registry,
-                    known_names=set(known_names),
-                    used_ids=used_ids,
-                    prefix=f"{label}.",
+        lanes = [key for key, _ in block.lanes()] if isinstance(block, Action) else []
+        counted = 1
+        for key, inside in (("steps", step.steps), ("otherwise", step.otherwise)):
+            if key in lanes:
+                # The steps inside can refer to what is known here and to
+                # each other. The steps after cannot refer to them: what
+                # they give differs from round to round, or they did not
+                # run at all.
+                found.extend(
+                    _step_problems(
+                        inside,
+                        registry,
+                        known_names=set(known_names),
+                        used_ids=used_ids,
+                        prefix=f"{label}.",
+                        first=counted,
+                    )
                 )
-            )
-        elif step.steps:
-            found.append(f"{where}: only a block that repeats steps can hold steps.")
+                counted += len(inside)
+            elif inside and key == "steps":
+                found.append(
+                    f"{where}: only a block that repeats steps can hold steps."
+                )
+            elif inside:
+                found.append(
+                    f"{where}: only a block that chooses between steps can "
+                    "hold “otherwise” steps."
+                )
     return found
 
 

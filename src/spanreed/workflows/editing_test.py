@@ -4,7 +4,7 @@ from typing import Any, Literal
 import pytest
 
 from spanreed.workflows import editing
-from spanreed.workflows.builtin import ForEach
+from spanreed.workflows.builtin import ForEach, If
 from spanreed.workflows.editing import FormError, workflow_from_form
 from spanreed.workflows.model import Step, problems
 from spanreed.workflows.testing import Record, registry_of, workflow_of
@@ -371,3 +371,37 @@ def test_a_block_that_is_not_there_is_left_for_the_check_of_the_workflow() -> No
 def test_a_form_that_is_not_a_workflow_is_refused(form: Any) -> None:
     with pytest.raises(FormError):
         workflow_from_form(registry_of(Record()), workflow_of(), form)
+
+
+def test_a_form_with_a_branch_becomes_a_step_with_both_sides() -> None:
+    registry = registry_of(Record(), If())
+    form = _form(
+        steps=[
+            {
+                "id": "check",
+                "block": "core.if",
+                "inputs": {"condition": "{{ trigger.value == 'a' }}"},
+                "steps": [
+                    {"id": "yes", "block": "fake.record", "inputs": {"text": "y"}}
+                ],
+                "otherwise": [
+                    {"id": "no", "block": "fake.record", "inputs": {"text": 5}}
+                ],
+            }
+        ]
+    )
+
+    with pytest.raises(FormError) as refused:
+        workflow_from_form(registry, workflow_of(), form)
+    # The second side goes on counting where the first stopped.
+    assert refused.value.problems == [
+        "Step 1.2, Fake record: Text: a text is expected."
+    ]
+
+    form["steps"][0]["otherwise"][0]["inputs"]["text"] = "n"
+    edited = workflow_from_form(registry, workflow_of(), form)
+
+    (check,) = edited.steps
+    assert [step.id for step in check.steps] == ["yes"]
+    assert [step.id for step in check.otherwise] == ["no"]
+    assert problems(edited, registry) == []

@@ -21,6 +21,9 @@ from spanreed.workflows.builtin import (
     ForEach,
     ForEachInput,
     ForEachOutput,
+    If,
+    IfInput,
+    IfOutput,
     Schedule,
     SendMessage,
     SendMessageInput,
@@ -94,6 +97,7 @@ def test_the_builtin_blocks_are_well_formed() -> None:
     assert [block.id for block in registry.all()] == [
         "core.schedule",
         "core.continue-if",
+        "core.if",
         "core.for-each",
         "core.send-message",
     ]
@@ -170,6 +174,17 @@ def test_a_schedule_must_wait_between_events() -> None:
         from_data(Repeat, {"every": 0, "unit": "hours"})
     with pytest.raises(ValueError):
         from_data(Repeat, {"every": 4, "unit": "fortnights"})
+
+
+def test_if_goes_the_first_way_when_its_condition_holds() -> None:
+    assert If().takes_first(IfInput(condition=True))
+    assert not If().takes_first(IfInput(condition=False))
+    assert asyncio.run(If().run(_step_context(), IfInput(condition=True))) == IfOutput(
+        yes=True
+    )
+    assert If().lanes() == [("steps", "If yes"), ("otherwise", "Otherwise")]
+    assert ForEach().lanes() == [("steps", "For each item")]
+    assert SendMessage().lanes() == []
 
 
 def test_for_each_gives_each_item_with_its_place_and_then_the_count() -> None:

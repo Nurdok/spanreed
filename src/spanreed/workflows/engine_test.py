@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from spanreed.interaction import SurfaceBusyError, commands
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
 from spanreed.workflows.blocks import BlockRegistry, NoQuestion
-from spanreed.workflows.builtin import ContinueIf, ForEach
+from spanreed.workflows.builtin import ContinueIf, ForEach, If
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
@@ -459,6 +459,178 @@ def test_the_trace_of_a_long_loop_keeps_its_first_rounds(mock_bot: AsyncMock) ->
     loop = run["steps"][0]
     assert (loop["round_count"], loop["rounds_run"]) == (4, 4)
     assert [r["number"] for r in loop["rounds"]] == [1, 2]
+
+
+# -- steps inside a branch ---------------------------------------------------
+
+
+def _if(condition: str, then: list[Step], otherwise: list[Step]) -> Step:
+    return Step(
+        id="check",
+        block="core.if",
+        inputs={"condition": condition},
+        steps=then,
+        otherwise=otherwise,
+    )
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_branch_runs_one_of_its_sides_and_the_run_goes_on(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    workflow = workflow_of(
+        _if(
+            "{{ trigger.value == 'a' }}",
+            [
+                _record("yes", "yes {{ trigger.value }}"),
+                _record("more", "len {{ yes.length }}"),
+            ],
+            [_record("no", "no {{ trigger.value }} {{ check.yes }}")],
+        ),
+        _record("after", "after {{ check.yes }}"),
+        events=["a", "b"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, If())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        first, second = asyncio.run(scenario())
+
+    assert record.texts == [
+        "yes a",
+        "len 5",
+        "after True",
+        "no b False",
+        "after False",
+    ]
+    assert (first["status"], second["status"]) == ("finished", "finished")
+    took = first["steps"][0]
+    assert (took["took"], took["took_title"]) == ("steps", "If yes")
+    assert [inner["id"] for inner in took["inside"]] == ["yes", "more"]
+    assert took["outputs"] == {"yes": True}
+    other = second["steps"][0]
+    assert (other["took"], other["took_title"]) == ("otherwise", "Otherwise")
+    assert [inner["id"] for inner in other["inside"]] == ["no"]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_side_with_no_steps_does_nothing(mock_bot: AsyncMock) -> None:
+    record = Record()
+    workflow = workflow_of(
+        _if("{{ trigger.value == 'a' }}", [_record("yes", "yes")], []),
+        _record("after", "after"),
+        events=["b"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, If())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == ["after"]
+    assert run["steps"][0]["inside"] == []
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_step_inside_a_branch_that_fails_fails_the_run(mock_bot: AsyncMock) -> None:
+    record = Record()
+    record.failures = [RuntimeError("Obsidian did not answer")]
+    workflow = workflow_of(
+        _if("{{ true }}", [_record("yes", "yes")], []),
+        _record("after", "after"),
+        events=["a"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, If())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage(), _sleeps():
+        failed, worked = asyncio.run(scenario())
+
+    assert outcome(failed) == (
+        "failed at step 1, If: Fake record: Obsidian did not answer"
+    )
+    assert failed["steps"][0]["inside"][0]["status"] == "failed"
+    assert worked["status"] == "finished"
+    assert record.texts == ["yes", "after"]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_step_inside_a_branch_that_ends_the_run_ends_it(mock_bot: AsyncMock) -> None:
+    record = Record()
+    stop = Step(
+        id="stop", block="core.continue-if", inputs={"condition": "{{ false }}"}
+    )
+    workflow = workflow_of(
+        _if("{{ true }}", [stop, _record("yes", "yes")], []),
+        _record("after", "after"),
+        events=["a"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, If(), ContinueIf())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == []
+    assert run["status"] == "stopped"
+    assert outcome(run) == "stopped at step 1, If."
+    assert run["steps"][0]["reason"] == "The condition is false."
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_branch_inside_a_loop_that_ends_the_run_ends_only_its_round(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    stop = Step(
+        id="stop", block="core.continue-if", inputs={"condition": "{{ false }}"}
+    )
+    check = Step(
+        id="check",
+        block="core.if",
+        inputs={"condition": "{{ each.item == 'b' }}"},
+        steps=[stop],
+        otherwise=[_record("kept", "{{ each.item }}")],
+    )
+    workflow = workflow_of(
+        _for_each(check, _record("inner", "{{ each.item }}!")),
+        _record("after", "done"),
+        events=["a,b,c"],
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, If(), ForEach(), ContinueIf())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+
+    assert record.texts == ["a", "a!", "c", "c!", "done"]
+    assert run["status"] == "finished"
+    assert [r["status"] for r in run["steps"][0]["rounds"]] == [
+        "finished",
+        "stopped",
+        "finished",
+    ]
 
 
 # -- triggers that a plugin feeds --------------------------------------------

@@ -1,12 +1,14 @@
 from typing import Any
 
-from spanreed.workflows.builtin import ForEach
+from spanreed.workflows.builtin import ForEach, If
 from spanreed.workflows.model import Step, Workflow, problems
 from spanreed.workflows.testing import Record, registry_of, workflow_of
 
 
 def _problems(*steps: Step, **fields: Any) -> list[str]:
-    return problems(workflow_of(*steps, **fields), registry_of(Record(), ForEach()))
+    return problems(
+        workflow_of(*steps, **fields), registry_of(Record(), ForEach(), If())
+    )
 
 
 def _record(step_id: str, text: str) -> Step:
@@ -206,3 +208,91 @@ def test_a_loop_inside_a_loop_is_checked_too() -> None:
             ),
         )
     )
+
+
+# -- steps inside a branch -----------------------------------------------------
+
+
+def _if(step_id: str, then: list[Step], otherwise: list[Step]) -> Step:
+    return Step(
+        id=step_id,
+        block="core.if",
+        inputs={"condition": "{{ trigger.value == 'a' }}"},
+        steps=then,
+        otherwise=otherwise,
+    )
+
+
+def test_a_workflow_with_a_branch_survives_being_stored() -> None:
+    workflow = workflow_of(
+        _if("check", [_record("yes", "a")], [_record("no", "b")]),
+    )
+
+    stored = Workflow.from_data(workflow.to_data())
+
+    assert stored == workflow
+    assert isinstance(stored.steps[0].otherwise[0], Step)
+    # A step stored before there were branches has no second list.
+    data = workflow.to_data()
+    del data["steps"][0]["otherwise"]
+    assert Workflow.from_data(data).steps[0].otherwise == []
+
+
+def test_each_side_of_a_branch_can_refer_to_what_is_before_and_to_the_branch() -> None:
+    assert not _problems(
+        _record("before", "x"),
+        _if(
+            "check",
+            [
+                _record("yes", "{{ before.text }} {{ check.yes }}"),
+                _record("more", "{{ yes.text }}"),
+            ],
+            [_record("no", "{{ before.text }}")],
+        ),
+        _record("after", "{{ check.yes }}"),
+    )
+
+
+def test_a_side_of_a_branch_cannot_refer_to_the_other_side_or_be_referred_to_after() -> (
+    None
+):
+    assert _problems(
+        _if("check", [_record("yes", "a")], [_record("no", "{{ yes.text }}")]),
+        _record("after", "{{ no.text }}"),
+    ) == [
+        "Step 1.2, Fake record: “yes” is not the trigger, the run or an earlier step.",
+        "Step 2, Fake record: “no” is not the trigger, the run or an earlier step.",
+    ]
+
+
+def test_the_second_side_of_a_branch_goes_on_counting() -> None:
+    assert _problems(
+        _if(
+            "check",
+            [_record("one", "a"), _record("two", "b")],
+            [_record("three", "c"), _record("four", "{{ nothing.text }}")],
+        )
+    ) == [
+        "Step 1.4, Fake record: “nothing” is not the trigger, the run or an "
+        "earlier step."
+    ]
+
+
+def test_a_step_cannot_be_named_by_a_word_that_templates_use() -> None:
+    assert _problems(_record("if", "a"), _record("is_ok", "b")) == [
+        "Step 1: the id “if” is a word that templates read as something else."
+    ]
+
+
+def test_only_a_branch_can_hold_otherwise_steps() -> None:
+    plain = _record("one", "a")
+    plain.otherwise = [_record("inner", "b")]
+    loop = _for_each("each", _record("inside", "c"))
+    loop.otherwise = [_record("other", "d")]
+
+    assert _problems(plain, loop) == [
+        "Step 1, Fake record: only a block that chooses between steps can hold "
+        "“otherwise” steps.",
+        "Step 2, For each: only a block that chooses between steps can hold "
+        "“otherwise” steps.",
+    ]

@@ -710,6 +710,7 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
             assert list(blocks) == [
                 "core.schedule",
                 "core.continue-if",
+                "core.if",
                 "core.for-each",
                 "core.send-message",
                 "core.download-file",
@@ -732,7 +733,15 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
             ] == [("label", "text", True), ("due", "choice", False)]
             assert find["card"]["fields"][1]["edit"]["text"] == "any"
             assert find["card"]["outputs"] == ["tasks", "count"]
-            assert blocks["core.for-each"]["card"]["inside_title"] == "For each item"
+            # A block that holds steps says which lists it has.
+            assert blocks["core.for-each"]["card"]["lanes"] == [
+                {"key": "steps", "title": "For each item"}
+            ]
+            assert blocks["core.if"]["card"]["lanes"] == [
+                {"key": "steps", "title": "If yes"},
+                {"key": "otherwise", "title": "Otherwise"},
+            ]
+            assert find["card"]["lanes"] == []
             schedule = blocks["core.schedule"]
             assert (schedule["kind"], schedule["by_hand"]) == ("trigger", True)
 

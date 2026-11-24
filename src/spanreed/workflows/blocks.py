@@ -9,7 +9,8 @@ There are two shapes of block:
 - An ``Action`` is a step. It gets its inputs and returns its outputs.
   Blocks that ask the user something and blocks that hold logic are actions
   too; ``kind`` says which, for the editor. A ``Loop`` is an action that
-  holds steps, and runs them once for each of its rounds.
+  holds steps, and runs them once for each of its rounds. A ``Branch``
+  holds two lists of steps, and runs one of them.
 - A ``Trigger`` starts runs. It yields one event for each run, and says
   whether, and how, it can be started by hand. A ``PushTrigger`` is a
   trigger that a plugin feeds: the plugin says what changed, and the
@@ -258,6 +259,14 @@ class Action(Block, Generic[InT, OutT]):
     async def run(self, ctx: StepContext, inputs: InT) -> OutT:
         """Do the step for one run."""
 
+    def lanes(self) -> list[tuple[str, str]]:
+        """Return the lists of steps that a step of this block holds.
+
+        Each is the name of the list in a step, ``steps`` or ``otherwise``,
+        and the title it is shown under. None for a plain action.
+        """
+        return []
+
     def writes(self, inputs: dict[str, Any]) -> list[str]:
         """Name what a step of this block writes that another could too.
 
@@ -289,9 +298,40 @@ class Loop(Action[InT, OutT]):
     inside_title: ClassVar[str] = "For each round"
     round_name: ClassVar[str] = "Round"
 
+    def lanes(self) -> list[tuple[str, str]]:
+        """Return the one list of steps of a loop."""
+        return [("steps", self.inside_title)]
+
     @abc.abstractmethod
     def rounds(self, inputs: InT) -> list[OutT]:
         """Return what the steps inside see, for each time they run."""
+
+
+class Branch(Action[InT, OutT]):
+    """An action that holds two lists of steps, and runs one of them.
+
+    ``takes_first`` says which, from the inputs: the step's ``steps``, or
+    its ``otherwise``. The steps inside can refer to the branch by its id
+    for what ``run`` returns, as the steps after it can. A step after the
+    branch cannot refer to a step inside it: only one side ran.
+
+    A step inside that ends the run (``StopRun``) ends it, or ends the
+    round of the loop that the branch is in. A step inside that fails
+    makes the branch fail.
+    """
+
+    kind = BlockKind.LOGIC
+    # What the two lists of steps are shown under.
+    first_title: ClassVar[str] = "Then"
+    second_title: ClassVar[str] = "Otherwise"
+
+    def lanes(self) -> list[tuple[str, str]]:
+        """Return the two lists of steps of a branch."""
+        return [("steps", self.first_title), ("otherwise", self.second_title)]
+
+    @abc.abstractmethod
+    def takes_first(self, inputs: InT) -> bool:
+        """Return whether the first list of steps runs, and not the second."""
 
 
 class Trigger(Block, Generic[ParamsT, EventT]):

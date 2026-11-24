@@ -2,7 +2,7 @@ from typing import Any
 
 from spanreed.apis.obsidian_blocks import SetNoteProperties, WriteNote
 from spanreed.workflows import views
-from spanreed.workflows.builtin import ForEach
+from spanreed.workflows.builtin import ForEach, If
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.testing import registry_of, workflow_of
@@ -139,3 +139,43 @@ def test_a_long_event_is_cut_short_in_its_summary() -> None:
 
     assert len(shown["test"]["last"]["summary"]) == 120
     assert shown["test"]["now"] is True
+
+
+# -- the cards of a branch -----------------------------------------------------
+
+
+def test_a_branch_shows_both_of_its_sides_numbered_one_after_the_other() -> None:
+    engine = WorkflowEngine(registry_of(If(), ForEach(), WriteNote()))
+
+    def note(step_id: str) -> Step:
+        return Step(id=step_id, block="obsidian.write-note", inputs={"path": step_id})
+
+    check = Step(
+        id="check",
+        block="core.if",
+        inputs={"condition": "{{ trigger.value }}"},
+        steps=[note("a"), note("b")],
+        otherwise=[note("c")],
+    )
+    workflow = workflow_of(check, note("d"))
+
+    shown = views.detail(engine, workflow, None)
+    card, after = shown["steps"]
+
+    assert card["lanes"] == [
+        {"key": "steps", "title": "If yes"},
+        {"key": "otherwise", "title": "Otherwise"},
+    ]
+    assert [(c["id"], c["number"]) for c in card["steps"]] == [
+        ("a", "1.1"),
+        ("b", "1.2"),
+    ]
+    assert [(c["id"], c["number"]) for c in card["otherwise"]] == [("c", "1.3")]
+    assert (after["number"], after["lanes"], after["otherwise"]) == ("2", [], [])
+    # The list of workflows counts the steps of both sides.
+    assert len(views.summary(engine, workflow, None)["apps"]) == 6
+    # What a step on either side writes counts for the note about writes.
+    other = workflow_of(note("c"), id="wf_2", name="Other")
+    assert views.detail(engine, workflow, None, others=[other])["warnings"] == [
+        "“Other” also writes the file c."
+    ]

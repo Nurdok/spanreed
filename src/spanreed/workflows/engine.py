@@ -37,6 +37,7 @@ from spanreed.workflows import expressions, model
 from spanreed.workflows.blocks import (
     Action,
     BlockRegistry,
+    Branch,
     Loop,
     ManualError,
     NoQuestion,
@@ -69,8 +70,8 @@ _sleep = asyncio.sleep
 _NO_MORE = object()
 
 
-class _RoundFailed(Exception):
-    """A step inside a loop failed. The message says where and why."""
+class _InsideFailed(Exception):
+    """A step inside a loop or a branch failed. The message says where and why."""
 
 
 def _now() -> str:
@@ -476,10 +477,12 @@ class WorkflowEngine:
             outputs = await self._call(block, ctx, inputs)
             context[step.id] = outputs
             entry["outputs"] = to_data(outputs)
+            if isinstance(block, Branch):
+                await self._run_side(step, block, inputs, ctx, context, entry)
         except StopRun as stop:
             entry["status"] = STOPPED
             entry["reason"] = stop.reason
-        except _RoundFailed as failed:
+        except _InsideFailed as failed:
             # The step inside wrote the failure to the log already.
             entry["status"] = FAILED
             entry["error"] = str(failed)
@@ -506,7 +509,7 @@ class WorkflowEngine:
 
         In a round, the id of the loop's step refers to the value of the
         round. A step that ends the run ends only its round. Raise
-        ``_RoundFailed`` at the first step that fails.
+        ``_InsideFailed`` at the first step that fails.
 
         Add the rounds to the loop's ``entry`` of the trace.
         """
@@ -526,10 +529,42 @@ class WorkflowEngine:
                 entry["rounds"].append(kept)
             if status == FAILED:
                 failed = steps[-1]
-                raise _RoundFailed(
+                raise _InsideFailed(
                     f"{loop.round_name} {number} of {len(values)}, {failed['title']}: "
                     f"{failed['error']}"
                 )
+
+    async def _run_side(
+        self,
+        step: Step,
+        branch: Branch,
+        inputs: Any,
+        ctx: StepContext,
+        context: dict[str, Any],
+        entry: dict[str, Any],
+    ) -> None:
+        """Run the side of a branch that its inputs choose.
+
+        The steps inside see what the steps before the branch gave, the
+        branch itself, and each other. What they give is not there after
+        the branch. Raise ``_InsideFailed`` if a step inside fails, and
+        ``StopRun`` if one ends the run.
+
+        Add which side was taken, and its steps, to the branch's ``entry``
+        of the trace.
+        """
+        first = branch.takes_first(inputs)
+        entry["took"] = "steps" if first else "otherwise"
+        entry["took_title"] = branch.first_title if first else branch.second_title
+        entry["inside"] = []
+        status = await self._run_steps(
+            step.steps if first else step.otherwise, ctx, dict(context), entry["inside"]
+        )
+        if status == FAILED:
+            failed = entry["inside"][-1]
+            raise _InsideFailed(f"{failed['title']}: {failed['error']}")
+        if status == STOPPED:
+            raise StopRun(entry["inside"][-1].get("reason") or "A step ended the run.")
 
     async def _call(self, block: Action, ctx: StepContext, inputs: Any) -> Any:
         """Call a block. Wait and call it again during flood control.
