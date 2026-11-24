@@ -214,7 +214,21 @@
     outline: 2px solid var(--accent); outline-offset: -1px; }
   .inner .wcard textarea, .inner .wcard select, .inner .wcard input[type=text] { background: var(--card); }
   .ins { font-size: 12px; padding: 0 2px; }
-  #workflow-new { margin: 10px 0 0 10px; }
+  .wf-new { display: flex; gap: 8px; margin: 10px 0 0 10px; }
+  a.link { text-decoration: none; }
+  /* The recipes: one tile for each, with what it touches. */
+  .recipes { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+  .recipe { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+            display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .recipe strong { font-size: 15px; overflow-wrap: anywhere; }
+  .recipe p { margin: 0; color: var(--muted); font-size: 13px; flex: 1; }
+  .recipe .chain { display: flex; flex-wrap: wrap; gap: 3px; }
+  .recipe .acts { display: flex; align-items: center; gap: 8px; }
+  .recipe .acts small { color: var(--muted); font-size: 12px; margin-right: auto; }
+  .recipe .acts small.why { color: var(--err); }
+  .recipe .acts .small { align-self: center; margin-left: auto; }
+  .recipe .acts .small + .small { margin-left: 0; }
+  .wf-back { align-self: flex-start; padding-left: 0; }
   /* Where a step can be added: on the line between two cards, and after the last. */
   .lane.editing .join, .inner .vjoin.add { display: grid; place-items: center; }
   .lane.editing .join { width: 44px; }
@@ -347,7 +361,10 @@
     <aside>
       <h2>Workflows</h2>
       <nav id="workflow-list"></nav>
-      <button class="small" id="workflow-new" type="button">New workflow</button>
+      <div class="wf-new">
+        <button class="small" id="workflow-new" type="button">New workflow</button>
+        <button class="small" id="workflow-recipes" type="button">Recipes</button>
+      </div>
     </aside>
     <div id="workflow-main"></div>
   </div>
@@ -983,7 +1000,7 @@ async function loadWorkflows() {
   if (!list.some((w) => w.id === currentWorkflow)) currentWorkflow = null;
   renderWorkflowNav(list);
   if (!list.length) {
-    main.replaceChildren(el("p", "empty", "You have no workflows yet. “New workflow” adds one."));
+    main.replaceChildren(el("p", "empty", "You have no workflows yet. “New workflow” adds one, and “Recipes” shows the ones that ship."));
     return;
   }
   openWorkflow(currentWorkflow || list[0].id);
@@ -1028,33 +1045,114 @@ function option(title, about, why, onPick, todo = true) {
 
 const setUpFirst = (apps) => "Set up " + apps.join(" and ") + " with “Manage plugins” first.";
 
+// What is said once above the workflow that is shown next.
+let workflowNote = "";
+
+// Ask for a new workflow, and show it. Say what is wrong if there is none.
+async function addWorkflow(body, thenEdit) {
+  const res = await post("workflows", body);
+  const answer = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const box = el("div", "wf-problems"), ul = el("ul");
+    for (const problem of answer.problems || []) ul.append(el("li", "", problem));
+    box.append(answer.error || "Could not add the workflow.", ul);
+    $("workflow-main").prepend(box);
+    return false;
+  }
+  currentWorkflow = answer.id;
+  await loadWorkflows();
+  // A workflow with only a trigger is there to be filled in.
+  if (thenEdit) startEditing(answer);
+  return true;
+}
+
+// A workflow that was exported, or written by hand, as a file.
+function addWorkflowFromFile() {
+  const input = el("input");
+  input.type = "file"; input.accept = ".json,application/json";
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    let data = null;
+    try { data = JSON.parse(await file.text()); } catch (e) { data = file.name; }
+    workflowNote = "This workflow came from a file. It is off: look at its steps, then turn it on.";
+    if (!await addWorkflow({ workflow: data }, false)) workflowNote = "";
+  };
+  input.click();
+}
+
 async function newWorkflow() {
   if (!mayLeaveEditor()) return;
   if (!await loadCatalog()) { $("workflow-main").prepend(el("p", "sys err", "Could not load the recipes.")); return; }
   setDrawer(false);
   openSheet("New workflow", (sheet, close) => {
-    const make = async (body, thenEdit) => {
-      close();
-      const res = await post("workflows", body);
-      const answer = await res.json().catch(() => ({}));
-      if (!res.ok) { $("workflow-main").prepend(el("p", "sys err", answer.error || "Could not add the workflow.")); return; }
-      currentWorkflow = answer.id;
-      await loadWorkflows();
-      // A workflow with only a trigger is there to be filled in.
-      if (thenEdit) startEditing(answer);
-    };
-    sheet.append(el("h4", "", "From a recipe"));
-    for (const recipe of catalog.recipes) {
-      const why = recipe.installed ? "You have this one." : recipe.missing.length ? setUpFirst(recipe.missing) : "";
-      sheet.append(option(recipe.name, recipe.description, why, () => make({ recipe: recipe.id }, false), !recipe.installed));
-    }
+    sheet.append(option("From a recipe", "A workflow that ships with Spanreed. Look at it first, then add it.", "",
+                        () => { close(); showRecipes(); }));
+    sheet.append(option("From a file", "A workflow that was exported here or somewhere else. It starts turned off.", "",
+                        () => { close(); addWorkflowFromFile(); }));
     sheet.append(el("h4", "", "Or start with a trigger"));
     for (const block of catalog.blocks.filter((b) => b.kind === "trigger")) {
       sheet.append(option(block.title, block.app + " · " + block.description, block.connected ? "" : setUpFirst([block.app]),
-                          () => make({ trigger: block.block }, true)));
+                          () => { close(); addWorkflow({ trigger: block.block }, true); }));
     }
   });
 }
+
+// --- The recipes: the workflows that ship, to look at and to add. ---
+
+// Why a recipe cannot be added, and whether the user can do something about it.
+const recipeWhy = (recipe) => recipe.installed ? { text: "You have this one.", todo: false }
+  : recipe.missing.length ? { text: setUpFirst(recipe.missing), todo: true } : null;
+
+function leaveWorkflow() {
+  currentWorkflow = null;
+  for (const b of $("workflow-list").children) b.classList.remove("current");
+}
+
+async function showRecipes() {
+  if (!mayLeaveEditor()) return;
+  if (!await loadCatalog()) { $("workflow-main").prepend(el("p", "sys err", "Could not load the recipes.")); return; }
+  setDrawer(false);
+  leaveWorkflow();
+  const head = el("div", "wf-head"), sub = el("div", "wf-sub"), tiles = el("div", "recipes");
+  head.append(el("h2", "", "Recipes"));
+  sub.append(el("span", "", "Workflows that ship with Spanreed. One that you add is yours to change."));
+  // The ones that can be added first, then the ones that need a plugin,
+  // then the ones the user has.
+  const rank = (recipe) => recipe.installed ? 2 : recipe.missing.length ? 1 : 0;
+  const recipes = [...catalog.recipes].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  for (const recipe of recipes) {
+    const tile = el("div", "recipe"), chain = el("span", "chain"), acts = el("div", "acts");
+    for (const a of recipe.apps) chain.append(glyph(a.app, a.kind, true));
+    const why = recipeWhy(recipe);
+    const look = el("button", "small", "Look"), add = el("button", "small", "Add");
+    look.onclick = () => showRecipe(recipe);
+    add.onclick = () => addWorkflow({ recipe: recipe.id }, false);
+    add.disabled = !!why;
+    if (why) acts.append(el("small", why.todo ? "why" : "", why.text));
+    acts.append(look, add);
+    tile.append(el("strong", "", recipe.name), chain, el("p", "", recipe.description), acts);
+    tiles.append(tile);
+  }
+  $("workflow-main").replaceChildren(head, sub, tiles);
+}
+
+// One recipe as the cards it would give, before it is added.
+async function showRecipe(recipe) {
+  const res = await api("workflows/recipes/" + encodeURIComponent(recipe.id));
+  if (!res.ok) { $("workflow-main").prepend(el("p", "sys err", "Could not load this recipe.")); return; }
+  const d = await res.json(), why = recipeWhy(recipe);
+  const back = el("button", "link wf-back", "‹ Recipes"), head = el("div", "wf-head"), sub = el("div", "wf-sub");
+  back.onclick = showRecipes;
+  const add = el("button", "small", "Add this workflow");
+  add.onclick = () => addWorkflow({ recipe: recipe.id }, false);
+  add.disabled = !!why;
+  head.append(el("h2", "", d.name), add);
+  sub.append(el("span", "", d.description));
+  if (why) sub.append(el("span", "", why.text));
+  $("workflow-main").replaceChildren(back, head, sub, renderLane(d));
+}
+$("workflow-recipes").onclick = showRecipes;
 $("workflow-new").onclick = newWorkflow;
 
 async function openWorkflow(id) {
@@ -1746,7 +1844,17 @@ function renderWorkflow(d) {
     sub.append(memory);
   }
 
+  const out = el("a", "link", "Export");
+  out.href = "/app/api/workflows/" + encodeURIComponent(d.id) + "/export";
+  out.setAttribute("download", "");
+  out.title = "This workflow as a file, to keep or to give to someone";
+  sub.append(out);
+
   const parts = [head, sub];
+  if (workflowNote) {
+    parts.push(el("div", "wf-notes", workflowNote));
+    workflowNote = "";
+  }
   if (d.problems.length) {
     const box = el("div", "wf-problems"), ul = el("ul");
     for (const problem of d.problems) ul.append(el("li", "", problem));
