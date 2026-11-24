@@ -14,7 +14,11 @@ from spanreed.apis.obsidian_blocks import (
     WriteFileOutput,
     obsidian_blocks,
 )
-from spanreed.test_utils import mock_user_find_by_id, patch_obsidian
+from spanreed.test_utils import (
+    mock_user_find_by_id,
+    patch_obsidian,
+    patch_user_interaction,
+)
 from spanreed.workflows.blocks import BlockRegistry, NoInput, RunInfo, StepContext
 from spanreed.workflows.testing import fake_plugin
 
@@ -156,6 +160,49 @@ def test_a_missing_note_is_skipped(mock_obsidian: AsyncMock) -> None:
     assert _sets(mock_obsidian) == []
     assert output.note_missing
     assert output.count == 0
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+@patch_user_interaction("spanreed.apis.obsidian_blocks")
+def test_a_missing_note_is_skipped_without_a_word(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    mock_obsidian.get_property.side_effect = FileNotFoundError("file not found")
+
+    _set(mock_obsidian)
+
+    mock_bot.send_message.assert_not_called()
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+@patch_user_interaction("spanreed.apis.obsidian_blocks")
+def test_a_missing_note_can_be_skipped_with_a_message(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    mock_obsidian.get_property.side_effect = FileNotFoundError("file not found")
+
+    output = _set(mock_obsidian, if_note_missing="skip and tell me")
+
+    assert output.note_missing
+    assert output.count == 0
+    # Plain text: the path of a note can hold anything.
+    mock_bot.send_message.assert_awaited_once_with(
+        "There is no note Daily/2026-05-09.md, so nothing was written to it.",
+        parse_html=False,
+    )
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+@patch_user_interaction("spanreed.apis.obsidian_blocks")
+def test_a_note_that_is_there_gives_no_message(
+    mock_bot: AsyncMock, mock_obsidian: AsyncMock
+) -> None:
+    mock_obsidian.get_property.return_value = None
+
+    output = _set(mock_obsidian, if_note_missing="skip and tell me")
+
+    assert output.count == 1
+    mock_bot.send_message.assert_not_called()
 
 
 @patch_obsidian("spanreed.apis.obsidian_blocks")

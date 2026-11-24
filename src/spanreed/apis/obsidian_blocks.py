@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from spanreed.apis.obsidian import ObsidianApi
+from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, NoInput, NoOutput, StepContext
 
 
@@ -44,7 +45,9 @@ class SetNotePropertiesInput:
     # ``empty``: set a property only if the note has no value for it.
     # ``always``: set every property, without reading the note first.
     write_when: Literal["changed", "empty", "always"] = "changed"
-    if_note_missing: Literal["skip", "fail"] = "skip"
+    # ``skip and tell me``: go on without writing, and send the user a
+    # message that names the note.
+    if_note_missing: Literal["skip", "skip and tell me", "fail"] = "skip"
 
 
 @dataclass
@@ -89,6 +92,12 @@ class SetNoteProperties(Action[SetNotePropertiesInput, SetNotePropertiesOutput])
             if inputs.if_note_missing == "fail":
                 raise
             note_missing = True
+            if inputs.if_note_missing == "skip and tell me":
+                bot = await UserInteractionApi.for_user(ctx.user)
+                await bot.send_message(
+                    f"There is no note {inputs.note}, so nothing was written to it.",
+                    parse_html=False,
+                )
         return SetNotePropertiesOutput(
             note=inputs.note,
             written=list(written),
