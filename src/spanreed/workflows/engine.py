@@ -7,7 +7,9 @@ each step received and returned is kept as the run's trace.
 
 A run that fails is tried again for the same event, from its first step,
 after a pause that doubles each time. So a step can run more than once for
-one event, and a block must be safe to repeat.
+one event, and a block must be safe to repeat. A workflow whose runs keep
+failing, because a service is down for hours, is then tried only once every
+half hour until a run works.
 
 The engine never writes a step's inputs or outputs to the log: they can hold
 anything the user's services know. They are kept in the trace only.
@@ -23,7 +25,7 @@ import logging
 import random
 import secrets
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from telegram.error import RetryAfter
@@ -59,6 +61,9 @@ CANCELLED = "cancelled"
 # registry use them too).
 _monotonic = time.monotonic
 _sleep = asyncio.sleep
+
+# What ``anext`` gives when a trigger has no more events.
+_NO_MORE = object()
 
 
 def _now() -> str:
@@ -112,8 +117,9 @@ class WorkflowEngine:
         self._command_plugin = command_plugin
         self._sources: dict[str, asyncio.Task] = {}
         self._locks: dict[str, asyncio.Lock] = {}
-        # Workflows whose user was told that they fail, until a run works.
-        self._failing: set[str] = set()
+        # Workflows whose user was told that they fail, until a run works,
+        # each with the time of its last failed try.
+        self._failing: dict[str, float] = {}
         self._logger = logging.getLogger("spanreed.workflows.engine")
 
     @property
@@ -147,13 +153,22 @@ class WorkflowEngine:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def install(self, user: User, recipe: Recipe) -> Workflow:
+    async def install(
+        self,
+        user: User,
+        recipe: Recipe,
+        customize: Callable[[Workflow], None] | None = None,
+    ) -> Workflow:
         """Give a user a new workflow made from a recipe, and start it.
 
-        Raise ``ValueError`` if the recipe does not fit the blocks that are
+        ``customize`` can change the workflow before it is checked and
+        stored, for example to carry over the settings of a plugin. Raise
+        ``ValueError`` if the workflow does not fit the blocks that are
         loaded.
         """
         workflow = recipe.workflow_for(user.id)
+        if customize is not None:
+            customize(workflow)
         found = self.problems(workflow)
         if found:
             raise ValueError(f"Recipe {recipe.id} cannot be installed: {found}")
@@ -169,7 +184,7 @@ class WorkflowEngine:
         """Stop a workflow and delete it with its history."""
         self._stop_source(workflow.id)
         commands.unregister_command(self._command_id(workflow.id))
-        self._failing.discard(workflow.id)
+        self._failing.pop(workflow.id, None)
         self._locks.pop(workflow.id, None)
         await self._store.delete(workflow)
 
@@ -226,6 +241,7 @@ class WorkflowEngine:
             user=user,
             workflow_id=workflow.id,
             state=self._store.trigger_state(workflow.id),
+            queue=self._store.queue(workflow.id),
         )
 
     async def _supervise(self, workflow: Workflow) -> None:
@@ -257,12 +273,42 @@ class WorkflowEngine:
         trigger = self._trigger_of(workflow)
         params = from_data(trigger.Params, workflow.trigger.params)
         user = await User.find_by_id(workflow.user_id)
-        ctx = self._trigger_context(workflow, user)
-        async for event in trigger.events(ctx, params):
-            await self._run_until_done(workflow, event)
+        events = trigger.events(self._trigger_context(workflow, user), params)
+        try:
+            event = await anext(events, _NO_MORE)
+            while event is not _NO_MORE:
+                worked = await self._run_until_done(workflow, event)
+                try:
+                    # Tell the trigger how it went, and take its next event.
+                    event = await events.asend(worked)
+                except StopAsyncIteration:
+                    break
+        finally:
+            await events.aclose()
 
-    async def _run_until_done(self, workflow: Workflow, event: Any) -> None:
-        """Run a workflow for an event, again if the run fails."""
+    async def _run_until_done(self, workflow: Workflow, event: Any) -> bool:
+        """Run a workflow for an event, again if the run fails.
+
+        Return whether a run worked. A run that a block ended on purpose
+        worked.
+
+        A workflow that already failed every try for an earlier event gets
+        one try for this one, and no sooner than ``RETRY_MAX_S`` after its
+        last failure. So a service that is down for hours is asked twice an
+        hour, as by a plugin that keeps crashing, until a run works.
+        """
+        if workflow.id in self._failing:
+            wait = self._failing[workflow.id] + self.RETRY_MAX_S - _monotonic()
+            if wait > 0:
+                await _sleep(wait)
+            user = await User.find_by_id(workflow.user_id)
+            trace = await self._run(workflow, user, event, manual=False, attempt=1)
+            if trace["status"] == FAILED:
+                self._failing[workflow.id] = _monotonic()
+                return False
+            del self._failing[workflow.id]
+            return True
+
         delay = self.RETRY_INITIAL_S
         for attempt in range(1, self.MAX_ATTEMPTS + 1):
             # Loaded for each try: the user's settings may have changed.
@@ -271,26 +317,24 @@ class WorkflowEngine:
                 workflow, user, event, manual=False, attempt=attempt
             )
             if trace["status"] != FAILED:
-                self._failing.discard(workflow.id)
-                return
+                return True
             if attempt < self.MAX_ATTEMPTS:
                 await _sleep(delay)
                 delay = min(delay * 2, self.RETRY_MAX_S)
         await self._tell_about_failure(workflow, user, trace)
+        return False
 
     async def _tell_about_failure(
         self, workflow: Workflow, user: User, trace: dict[str, Any]
     ) -> None:
         """Tell the user that a workflow fails, once until it works again."""
-        if workflow.id in self._failing:
-            return
-        self._failing.add(workflow.id)
+        self._failing[workflow.id] = _monotonic()
         try:
             bot = await UserInteractionApi.for_user(user)
             await bot.notify(
                 f"The workflow “{workflow.name}” {outcome(trace)}\n"
-                f"It was tried {self.MAX_ATTEMPTS} times. It runs again at "
-                "its next event.",
+                f"It was tried {self.MAX_ATTEMPTS} times, and will be tried "
+                "again.",
                 parse_html=False,
             )
         except Exception:

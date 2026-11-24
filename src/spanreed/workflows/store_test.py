@@ -2,7 +2,7 @@ import asyncio
 
 from spanreed.workflows import store as store_module
 from spanreed.workflows.model import Step
-from spanreed.workflows.store import WorkflowStore
+from spanreed.workflows.store import WorkflowStore, emit
 from spanreed.workflows.testing import fake_storage, workflow_of
 
 
@@ -73,3 +73,128 @@ def test_only_the_last_runs_are_kept_and_they_expire() -> None:
     with fake_storage() as redis:
         asyncio.run(scenario())
         assert redis.expirations["workflows:workflow:wf_1:runs"] == 30 * 24 * 3600
+
+
+# -- the queue of a workflow -------------------------------------------------
+
+
+def test_keys_come_out_oldest_first_and_stay_until_done() -> None:
+    async def scenario() -> None:
+        queue = WorkflowStore().queue("wf_1")
+        await queue.put("a")
+        await queue.put("b")
+
+        key, token = await queue.next()
+        assert key == "a"
+        # Not taken out yet: a restart during the run finds it again.
+        assert await queue.keys() == ["a", "b"]
+        assert (await queue.next())[0] == "a"
+
+        await queue.done(key, token)
+        assert await queue.keys() == ["b"]
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+
+def test_a_key_that_waits_is_not_queued_twice() -> None:
+    async def scenario() -> None:
+        queue = WorkflowStore().queue("wf_1")
+        for key in ("a", "b", "a"):
+            await queue.put(key)
+        assert await queue.keys() == ["a", "b"]
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+
+def test_a_key_put_again_during_its_run_is_run_again() -> None:
+    async def scenario() -> None:
+        queue = WorkflowStore().queue("wf_1")
+        await queue.put("a")
+        await queue.put("b")
+        key, token = await queue.next()
+
+        # It changed again while the workflow ran for it.
+        await queue.put("a")
+        await queue.done(key, token)
+
+        # Still there, behind the others.
+        assert await queue.keys() == ["b", "a"]
+        key, token = await queue.next()
+        await queue.done(key, token)
+        key, token = await queue.next()
+        await queue.done(key, token)
+        assert await queue.keys() == []
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+
+def test_later_moves_a_key_behind_the_others() -> None:
+    async def scenario() -> None:
+        queue = WorkflowStore().queue("wf_1")
+        for key in ("a", "b", "c"):
+            await queue.put(key)
+
+        await queue.later("a")
+
+        assert await queue.keys() == ["b", "c", "a"]
+        # Its token is kept, so done still takes it out.
+        key, token = await queue.next()
+        assert key == "b"
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+
+def test_next_waits_for_a_key() -> None:
+    async def scenario() -> None:
+        queue = WorkflowStore().queue("wf_1")
+        waiting = asyncio.create_task(queue.next())
+        await asyncio.sleep(0)
+        assert not waiting.done()
+
+        await WorkflowStore().queue("wf_1").put("a")
+
+        assert (await asyncio.wait_for(waiting, 1))[0] == "a"
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+
+def test_emit_queues_keys_for_the_workflows_that_are_on_and_use_the_trigger() -> None:
+    async def scenario() -> None:
+        store = WorkflowStore()
+        on = workflow_of(id="wf_on", trigger="fake.pushed")
+        off = workflow_of(id="wf_off", trigger="fake.pushed", enabled=False)
+        other_trigger = workflow_of(id="wf_other")
+        other_user = workflow_of(id="wf_user", trigger="fake.pushed", user_id=7)
+        for workflow in (on, off, other_trigger, other_user):
+            await store.save(workflow)
+
+        await emit(4, "fake.pushed", ["a", "b"])
+        await emit(4, "fake.pushed", [])
+
+        assert await store.queue("wf_on").keys() == ["a", "b"]
+        for workflow in (off, other_trigger, other_user):
+            assert await store.queue(workflow.id).keys() == []
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+
+def test_deleting_a_workflow_deletes_its_queue() -> None:
+    async def scenario() -> None:
+        store = WorkflowStore()
+        workflow = workflow_of(trigger="fake.pushed")
+        await store.save(workflow)
+        await store.queue(workflow.id).put("a")
+
+        await store.delete(workflow)
+
+        assert await store.queue(workflow.id).keys() == []
+
+    with fake_storage() as redis:
+        asyncio.run(scenario())
+        assert not redis.hashes and not redis.lists

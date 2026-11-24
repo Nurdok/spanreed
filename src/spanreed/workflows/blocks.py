@@ -10,7 +10,9 @@ There are two shapes of block:
   Blocks that ask the user something and blocks that hold logic are actions
   too; ``kind`` says which, for the editor.
 - A ``Trigger`` starts runs. It yields one event for each run, and says
-  whether, and how, it can be started by hand.
+  whether, and how, it can be started by hand. A ``PushTrigger`` is a
+  trigger that a plugin feeds: the plugin says what changed, and the
+  trigger turns each change into an event.
 
 A plugin publishes its blocks from ``Plugin.blocks()``.
 """
@@ -22,7 +24,7 @@ import dataclasses
 import enum
 import re
 import typing
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar
 
@@ -58,8 +60,18 @@ class StopRun(Exception):
 
 
 @dataclass
+class NoInput:
+    """The inputs of a block that has none."""
+
+
+@dataclass
 class NoOutput:
     """The outputs of a block that has none."""
+
+
+@dataclass
+class NoParams:
+    """The parameters of a trigger that has none."""
 
 
 @dataclass
@@ -101,6 +113,28 @@ class TriggerState(Protocol):
         """Store a value."""
 
 
+class EventQueue(Protocol):
+    """The keys of what a workflow still has to run for, oldest first.
+
+    A key names something that changed: a date, a record. It is kept for
+    each workflow and survives a restart. A key stays in the queue while
+    the workflow runs for it, so a run that a restart cuts short happens
+    again.
+    """
+
+    async def put(self, key: str) -> None:
+        """Add a key, or note that a key that waits changed again."""
+
+    async def next(self) -> tuple[str, str]:
+        """Wait for the oldest key. Return it with a token for ``done``."""
+
+    async def done(self, key: str, token: str) -> None:
+        """Take a key out, unless it was put again since ``next`` gave it."""
+
+    async def later(self, key: str) -> None:
+        """Move a key behind the others, to run for it again later."""
+
+
 @dataclass(frozen=True)
 class TriggerContext:
     """What the engine hands to a trigger besides its parameters."""
@@ -108,13 +142,23 @@ class TriggerContext:
     user: User
     workflow_id: str
     state: TriggerState
+    queue: EventQueue
 
 
 def _type_arguments(cls: type, generic: type) -> tuple[Any, ...] | None:
-    """Return the types a class gave to its generic base, if it gave any."""
+    """Return the types a class gave to its generic base, if it gave any.
+
+    The base can be ``generic`` itself or a generic class between the two,
+    such as ``PushTrigger``. A class that passes type variables on has not
+    given any types yet.
+    """
     for base in getattr(cls, "__orig_bases__", ()):
-        if typing.get_origin(base) is generic:
-            return typing.get_args(base)
+        origin = typing.get_origin(base)
+        if not (isinstance(origin, type) and issubclass(origin, generic)):
+            continue
+        arguments = typing.get_args(base)
+        if not any(isinstance(argument, TypeVar) for argument in arguments):
+            return arguments
     return None
 
 
@@ -182,13 +226,17 @@ class Trigger(Block, Generic[ParamsT, EventT]):
             cls.Params, cls.Event = arguments
 
     @abc.abstractmethod
-    def events(self, ctx: TriggerContext, params: ParamsT) -> AsyncIterator[EventT]:
+    def events(
+        self, ctx: TriggerContext, params: ParamsT
+    ) -> AsyncGenerator[EventT, bool | None]:
         """Yield an event each time the workflow should run.
 
         The engine runs the workflow for an event before it asks for the
         next one, so code after a ``yield`` runs when that run is over. The
-        engine cancels the iterator when the workflow is turned off, and
-        starts it again, after a pause, if it raises.
+        ``yield`` gives back whether the run worked: ``False`` if it failed
+        every time it was tried. The engine cancels the generator when the
+        workflow is turned off, and starts it again, after a pause, if it
+        raises.
         """
 
     async def manual_events(
@@ -199,6 +247,48 @@ class Trigger(Block, Generic[ParamsT, EventT]):
         ``answer`` is an instance of ``Manual``, filled in by the user.
         """
         raise NotImplementedError(f"{self.id} cannot be started by hand.")
+
+
+class PushTrigger(Trigger[ParamsT, EventT]):
+    """A trigger that its plugin feeds with the keys of what changed.
+
+    The plugin calls ``emit`` with a key for each thing that changed, for
+    example a date. The key waits in the queue of every workflow that uses
+    the trigger. ``event_for`` turns a key into an event when the workflow
+    is ready to run for it, so the event holds the state of that moment and
+    a key that is put twice runs once.
+
+    A key leaves the queue when its run worked. If the run failed every
+    time it was tried, the key goes behind the others and is tried again
+    after them.
+    """
+
+    @classmethod
+    async def emit(cls, user: User, keys: Iterable[str]) -> None:
+        """Say that these keys changed for a user."""
+        # Imported here: the store imports the model, which imports this.
+        from spanreed.workflows.store import emit
+
+        await emit(user.id, cls.id, keys)
+
+    async def events(
+        self, ctx: TriggerContext, params: ParamsT
+    ) -> AsyncGenerator[EventT, bool | None]:
+        """Yield the event of each key in the queue, oldest first."""
+        while True:
+            key, token = await ctx.queue.next()
+            event = await self.event_for(ctx, params, key)
+            worked = True if event is None else (yield event)
+            if worked is False:
+                await ctx.queue.later(key)
+            else:
+                await ctx.queue.done(key, token)
+
+    @abc.abstractmethod
+    async def event_for(
+        self, ctx: TriggerContext, params: ParamsT, key: str
+    ) -> EventT | None:
+        """Return the event for a key, or ``None`` if there is nothing to run."""
 
 
 class BlockRegistry:

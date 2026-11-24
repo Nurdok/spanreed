@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from spanreed.plugin import Plugin
 from spanreed.test_utils import FakeRedis, mock_user_find_by_id
+from spanreed.workflows import store
 from spanreed.workflows.blocks import (
     Action,
     Block,
     BlockRegistry,
+    NoParams,
     NoQuestion,
+    PushTrigger,
     StepContext,
     Trigger,
     TriggerContext,
@@ -47,7 +50,9 @@ class Events(Trigger[Params, Event]):
     title = "Fake events"
     Manual: ClassVar[type[Any] | None] = NoQuestion
 
-    async def events(self, ctx: TriggerContext, params: Params) -> AsyncIterator[Event]:
+    async def events(
+        self, ctx: TriggerContext, params: Params
+    ) -> AsyncGenerator[Event, bool | None]:
         """Yield each event of the parameters."""
         for value in params.events:
             yield Event(value)
@@ -89,6 +94,22 @@ class Silent(Events):
     Manual = None
 
 
+class Pushed(PushTrigger[NoParams, Event]):
+    """A trigger that its plugin feeds. The event of a key holds the key.
+
+    The key ``nothing`` has no event.
+    """
+
+    id = "fake.pushed"
+    title = "Fake pushed"
+
+    async def event_for(
+        self, ctx: TriggerContext, params: NoParams, key: str
+    ) -> Event | None:
+        """Return an event that holds the key."""
+        return None if key == "nothing" else Event(key)
+
+
 @dataclass
 class TextInput:
     """One text."""
@@ -108,6 +129,7 @@ class Record(Action[TextInput, TextOutput]):
     """An action that keeps every text it was given.
 
     ``failures`` holds what to raise in the next calls, first one first.
+    ``None`` in it is a call that works.
     """
 
     id = "fake.record"
@@ -116,12 +138,13 @@ class Record(Action[TextInput, TextOutput]):
     def __init__(self) -> None:
         """Create the block with nothing recorded."""
         self.texts: list[str] = []
-        self.failures: list[Exception] = []
+        self.failures: list[Exception | None] = []
 
     async def run(self, ctx: StepContext, inputs: TextInput) -> TextOutput:
         """Keep the text, or raise the next failure."""
-        if self.failures:
-            raise self.failures.pop(0)
+        failure = self.failures.pop(0) if self.failures else None
+        if failure is not None:
+            raise failure
         self.texts.append(inputs.text)
         return TextOutput(text=inputs.text, length=len(inputs.text))
 
@@ -139,7 +162,8 @@ def registry_of(*blocks: Block, registered: bool = True) -> BlockRegistry:
     """Return a registry of these blocks and of the fake triggers."""
     registry = BlockRegistry()
     plugin = fake_plugin(registered)
-    for block in (Events(), Ranged(), Silent(), *blocks):
+    fakes: list[Block] = [Events(), Ranged(), Silent(), Pushed()]
+    for block in (*fakes, *blocks):
         registry.register(block, plugin)
     return registry
 
@@ -153,8 +177,9 @@ def workflow_of(
     """Return a workflow of user 4 with these steps."""
     values: dict[str, Any] = {"id": "wf_1", "user_id": 4, "name": "Test workflow"}
     values.update(fields)
+    params = {} if trigger == "fake.pushed" else {"events": events or []}
     return Workflow(
-        trigger=TriggerSpec(block=trigger, params={"events": events or []}),
+        trigger=TriggerSpec(block=trigger, params=params),
         steps=list(steps),
         **values,
     )
@@ -164,6 +189,7 @@ def workflow_of(
 def fake_storage() -> Iterator[FakeRedis]:
     """Keep workflows in memory, and load users without Redis."""
     redis = FakeRedis()
+    store.reset_queues_for_tests()
     with patch("spanreed.workflows.store.redis_api", new=redis), patch(
         "spanreed.workflows.engine.User.find_by_id",
         new=AsyncMock(side_effect=mock_user_find_by_id),
