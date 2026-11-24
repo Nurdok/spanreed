@@ -95,3 +95,41 @@ def test_user_plugin_change_fires_listeners_immediately() -> None:
     commands.add_change_listener(lambda: fired.append(1))
     commands.notify_user_plugins_changed(mock_user_find_by_id(4))
     assert fired == [1]
+
+
+def test_a_command_of_one_user_is_only_theirs() -> None:
+    commands.register_command(
+        "workflows",
+        PluginCommand(text="Run it", callback=_noop, id="workflow.wf_1"),
+        user_id=4,
+    )
+    owner, other = mock_user_find_by_id(4), mock_user_find_by_id(7)
+    owner.plugins = other.plugins = ["workflows"]
+
+    assert [c.id for c in commands.commands_for_user(owner)] == ["workflow.wf_1"]
+    assert commands.commands_for_user(other) == []
+    assert commands.get_command_for_user(owner, "workflow.wf_1") is not None
+    assert commands.get_command_for_user(other, "workflow.wf_1") is None
+
+
+def test_get_command_for_user_checks_the_plugins_of_the_user() -> None:
+    commands.register_command(
+        "habit-tracker", PluginCommand(text="Track Habits", callback=_noop)
+    )
+    user = mock_user_find_by_id(4)
+
+    assert commands.get_command_for_user(user, "habit-tracker.track-habits") is None
+    user.plugins = ["habit-tracker"]
+    assert commands.get_command_for_user(user, "habit-tracker.track-habits") is not None
+    assert commands.get_command_for_user(user, "habit-tracker.nothing") is None
+
+
+def test_a_command_can_be_unregistered_and_registered_again() -> None:
+    command = PluginCommand(text="Run it", callback=_noop, id="workflow.wf_1")
+    commands.register_command("workflows", command, user_id=4)
+
+    assert commands.unregister_command("workflow.wf_1")
+    assert commands.get_command("workflow.wf_1") is None
+    assert not commands.unregister_command("workflow.wf_1")
+    commands.register_command("workflows", command, user_id=4)
+    assert commands.get_command("workflow.wf_1") is not None

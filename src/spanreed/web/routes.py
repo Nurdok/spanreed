@@ -392,10 +392,10 @@ async def events() -> Any:
 @api_auth
 async def run_command(command_id: str) -> Any:
     user: User = g.user
-    command = commands.get_command(command_id)
-    # Revalidate against the user's current plugin set: the page's list may
+    # Revalidate against the user's current commands: the page's list may
     # be stale.
-    if command is None or command.plugin_canonical_name not in user.plugins:
+    command = commands.get_command_for_user(user, command_id)
+    if command is None:
         return jsonify({"error": "This command is not available."}), 404
     surface = get_web_surface()
     surface.mark_seen(user.id)
