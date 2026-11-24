@@ -38,6 +38,7 @@ from spanreed.apis.health_connect_blocks import (
     health_connect_blocks,
     raw_records_key,
 )
+from spanreed.workflows import migrations
 from spanreed.workflows.blocks import Block
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Workflow
@@ -371,19 +372,9 @@ async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workf
     workflows = {w.recipe: w for w in await engine.store.list_for_user(user.id)}
     installed = []
 
-    def keep_properties(workflow: Workflow) -> None:
-        fields = saved.get("daily_note_fields") or {}
-        turned_off = {name.replace("_", "-") for name, on in fields.items() if not on}
-        for step in workflow.steps:
-            properties = step.inputs.get("properties")
-            if not isinstance(properties, dict):
-                continue
-            if turned_off >= set(properties):
-                # Nothing was written, so the workflow starts off.
-                workflow.enabled = False
-            else:
-                for name in turned_off:
-                    properties.pop(name, None)
+    keep_properties = migrations.keep_daily_note_properties(
+        saved.get("daily_note_fields")
+    )
 
     def keep_folder(workflow: Workflow) -> None:
         try:

@@ -7,8 +7,10 @@ from the code, but its users are still registered to it in Redis. For each
 of them, install the recipe and drop the registration.
 
 A plugin that stays, as the connection to its service, is converted: what
-it used to do with the data is now a set of recipes. For each of its users,
-install them with the settings the user had, and remember that it was done.
+it used to do with the data is now a set of recipes. For each user the
+plugin had at that moment, install them with the settings the user had, and
+remember that it was done. A user who joins the plugin later never had the
+old behavior, and adds the recipes they want.
 
 A user never has the old behavior and the new one, and doing either again
 changes nothing.
@@ -16,9 +18,11 @@ changes nothing.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from spanreed.interaction import UserInteractionApi
 from spanreed.storage import redis_api
@@ -105,7 +109,7 @@ class Conversion:
 
 
 def _conversions() -> list[Conversion]:
-    # Imported here: the plugins import the engine.
+    # Imported here: the plugins import this module.
     from spanreed.plugins import health_connect
 
     return [
@@ -121,15 +125,38 @@ def _conversions() -> list[Conversion]:
     ]
 
 
+def keep_daily_note_properties(fields: Any) -> Callable[[Workflow], None]:
+    """Return what makes a workflow write the properties a plugin wrote.
+
+    ``fields`` is the plugin's saved choice of daily note properties:
+    whether each one was written, by its name with ``_`` for ``-``. The
+    result takes the rows of the properties that were off out of a new
+    workflow. A workflow that would write nothing starts off instead,
+    with every row.
+    """
+    chosen = fields if isinstance(fields, dict) else {}
+    turned_off = {name.replace("_", "-") for name, on in chosen.items() if not on}
+
+    def customize(workflow: Workflow) -> None:
+        for step in workflow.steps:
+            properties = step.inputs.get("properties")
+            if not isinstance(properties, dict):
+                continue
+            if turned_off >= set(properties):
+                workflow.enabled = False
+            else:
+                for name in turned_off:
+                    properties.pop(name, None)
+
+    return customize
+
+
 async def convert_plugins(engine: WorkflowEngine) -> None:
     """Give the users of every converted plugin its recipes, once."""
     for conversion in _conversions():
-        users_key = f"config:plugin:name={conversion.canonical_name}:users"
         done_key = f"workflows:converted:{conversion.canonical_name}"
-        for raw_user_id in await redis_api.smembers(users_key):
-            user_id = int(raw_user_id)
-            if await redis_api.sismember(done_key, str(user_id)):
-                continue
+        to_convert = await _users_to_convert(conversion)
+        for user_id in list(to_convert):
             try:
                 user = await User.find_by_id(user_id)
                 workflows = await conversion.convert(engine, user)
@@ -143,6 +170,33 @@ async def convert_plugins(engine: WorkflowEngine) -> None:
                 )
                 continue
             await redis_api.sadd(done_key, str(user_id))
+            to_convert.remove(user_id)
+            await redis_api.set(_to_convert_key(conversion), json.dumps(to_convert))
+
+
+def _to_convert_key(conversion: Conversion) -> str:
+    return f"workflows:to-convert:{conversion.canonical_name}"
+
+
+async def _users_to_convert(conversion: Conversion) -> list[int]:
+    """Return the users of the old plugin who do not have its recipes yet.
+
+    The first time, they are the users the plugin has now. The list is
+    kept, so that a user who registers to the plugin after that is not
+    converted: such a user never had the old behavior.
+    """
+    stored = await redis_api.get(_to_convert_key(conversion))
+    if stored is not None:
+        return [int(user_id) for user_id in json.loads(stored)]
+    users_key = f"config:plugin:name={conversion.canonical_name}:users"
+    done_key = f"workflows:converted:{conversion.canonical_name}"
+    to_convert = []
+    for user_id in sorted(int(raw) for raw in await redis_api.smembers(users_key)):
+        # A start before the list was kept may have converted the user.
+        if not await redis_api.sismember(done_key, str(user_id)):
+            to_convert.append(user_id)
+    await redis_api.set(_to_convert_key(conversion), json.dumps(to_convert))
+    return to_convert
 
 
 async def _tell_about_conversion(
