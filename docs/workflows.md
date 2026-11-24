@@ -751,8 +751,52 @@ surfaces check a command with `get_command_for_user` before they run it.
 - **A run that asks holds the user's turn to talk** from its first question
   to its end. See [The turn to talk](#the-turn-to-talk).
 
-Not there yet: a question that survives a restart. A run that waits for an
-answer when Spanreed stops is gone, and so is the question.
+### A run goes on after a restart
+
+A run keeps its place when it starts and after each of its steps: the event
+it runs for, the steps that are done as the history shows them, and what
+each of them gave. The place is dropped when the run is over. If Spanreed is
+restarted in between, the run goes on from its first step that is not done.
+A question that waited for its answer is asked again.
+
+- **A restart in the middle of a step starts the step over.** A step that
+  holds steps, a loop for example, is one step: it starts with its first
+  round again. So a block must be safe to repeat, as it must be for a run
+  that is tried again.
+- **A run that a trigger started goes on when the trigger gives its event
+  again.** A trigger marks an event as done only once its run is over, so
+  after a restart it gives the event that was cut short first. The engine
+  asks the trigger whether it is the same one (`Trigger.same_event`): by
+  default, if it is equal in every field. What a poll finds is the same if
+  the thing is as it was, by its key and its version. The first event of
+  "On a schedule" and of "At random times" stands for the one that was cut
+  short, at whatever time it comes. If the event is another one, the place
+  is dropped and a new run starts.
+- **A run that the user started by hand goes on when Spanreed starts.**
+  Only the run that was in progress: if the command was to run for several
+  things, a week of days for example, the ones after it are not run.
+- **What a step gave is kept only if it can be made again as it was**: no
+  values, numbers, texts, and lists and mappings of those. From a step that
+  gave more than that, bytes or an object of a class, the place is the
+  start of the run, and the run starts over after a restart. The steps that
+  go on must not work with something else than they would have. The event
+  of a run by hand has to be plain in the same way, or the run is not gone
+  on with. The event of another run comes from its trigger.
+- **A place is for the workflow as it was.** If the trigger or the steps
+  changed in the meantime, the run is not gone on with.
+- **A run that ends for any other reason keeps no place**: one that failed,
+  one that a step ended, one that lost the turn to talk, one whose workflow
+  was turned off, and a run by hand that the user stopped by starting
+  another command.
+- **A place larger than 200,000 characters is not kept.** Such a run starts
+  over, as every run did before.
+- A test keeps no place, and neither does a run inside the step "Run a
+  workflow": it starts over with that step.
+
+The history shows such a run once, with "went on after a restart" next to
+how it was started.
+
+![A run that went on after a restart](images/web-ui-workflow-went-on-desktop.png)
 
 ## Editing
 
@@ -847,6 +891,7 @@ problem: both run.
 | `workflows:workflow:{id}:last_event` | The event it last ran for, whole, with the time of the run. Dropped 30 days after the last run. |
 | `workflows:workflow:{id}:queue` | List of the keys it still has to run for, oldest first |
 | `workflows:workflow:{id}:queued` | Hash of those keys, each with a token that changes when the key is put again |
+| `workflows:workflow:{id}:places` | Hash of how far each run that is not over got, by the id of the run: see [A run goes on after a restart](#a-run-goes-on-after-a-restart). Dropped 30 days after the last run. |
 | `workflows:converted:{plugin}` | Set of the users whose use of a plugin was converted to recipes |
 | `workflows:to-convert:{plugin}` | JSON list of the users the plugin had when it became recipes, and who are not converted yet |
 
