@@ -130,6 +130,7 @@ _APP_FILES = {
     "icons/icon-192.png": "image/png",
     "icons/icon-512.png": "image/png",
     "icons/icon-maskable-512.png": "image/png",
+    "icons/badge-96.png": "image/png",
 }
 
 

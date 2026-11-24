@@ -579,6 +579,8 @@ def test_app_files_are_served_without_login() -> None:
             worker = await client.get("/app/sw.js")
             assert worker.status_code == 200
             assert "showNotification" in await worker.get_data(as_text=True)
+            badge = await client.get("/app/icons/badge-96.png")
+            assert badge.status_code == 200
             assert (await client.get("/app/icons/nope.png")).status_code == 404
 
     asyncio.run(run())

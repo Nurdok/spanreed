@@ -24,7 +24,8 @@ self.addEventListener("push", (event) => {
     const options = {
       body: data.body || "",
       icon: "/app/icons/icon-192.png",
-      badge: "/app/icons/icon-192.png",
+      // Android draws the badge from its shape alone, in one colour.
+      badge: "/app/icons/badge-96.png",
       data: { url: APP_URL },
       // A prompt stays on screen until it is answered or swiped away.
       requireInteraction: data.kind === "prompt",
