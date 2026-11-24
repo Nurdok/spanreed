@@ -12,6 +12,8 @@ Keys:
   for, oldest first
 - ``workflows:workflow:{id}:queued``    hash of those keys, each with a
   token that changes when the key is put again
+- ``workflows:workflow:{id}:places``    hash of how far each run that is
+  not over got, by the id of the run, for a run to go on after a restart
 
 A workflow keeps the traces of its last ``RUNS_KEPT`` runs. They are dropped
 ``RUNS_TTL`` after the last run.
@@ -229,6 +231,7 @@ class WorkflowStore:
             f"{key}:queue",
             f"{key}:queued",
             f"{key}:last_event",
+            f"{key}:places",
         )
         await redis_api.srem(_user_key(workflow.user_id), workflow.id)
 
@@ -250,6 +253,35 @@ class WorkflowStore:
         await redis_api.lpush(key, json.dumps(trace))
         await redis_api.ltrim(key, 0, RUNS_KEPT - 1)
         await redis_api.expire(key, int(RUNS_TTL.total_seconds()))
+
+    async def keep_place(
+        self, workflow_id: str, run_id: str, place: dict[str, Any]
+    ) -> None:
+        """Keep how far a run got, in place of what was kept for it before.
+
+        ``place`` is JSON data. It is dropped with the traces if the run
+        never ends.
+        """
+        key = f"{_workflow_key(workflow_id)}:places"
+        await redis_api.hset(key, run_id, json.dumps(place))
+        await redis_api.expire(key, int(RUNS_TTL.total_seconds()))
+
+    async def places(self, workflow_id: str) -> dict[str, dict[str, Any]]:
+        """Return how far each run of a workflow that is not over got."""
+        key = f"{_workflow_key(workflow_id)}:places"
+        places = {}
+        for run_id, raw in (await redis_api.hgetall(key)).items():
+            try:
+                place = json.loads(_text(raw))
+            except ValueError:
+                continue
+            if isinstance(place, dict):
+                places[_text(run_id)] = place
+        return places
+
+    async def drop_place(self, workflow_id: str, run_id: str) -> None:
+        """Drop what was kept for a run: it is over."""
+        await redis_api.hdel(f"{_workflow_key(workflow_id)}:places", run_id)
 
     async def keep_last_event(self, workflow_id: str, at: str, event: Any) -> None:
         """Keep the event that a workflow last ran for, whole.
