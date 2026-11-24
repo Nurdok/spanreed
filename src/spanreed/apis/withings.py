@@ -4,7 +4,6 @@ from typing import Any, AsyncGenerator
 
 from yaml import YAMLError
 
-from spanreed.daily_note_fields import DailyNoteFieldsBase
 from spanreed.storage import redis_api
 from spanreed.user import User
 import contextlib
@@ -17,25 +16,12 @@ from spanreed.plugins.spanreed_monitor import suppress_and_log_exception
 
 
 @dataclass
-class DailyNoteFields(DailyNoteFieldsBase):
-    """Which Withings measurements are written into the daily note.
-
-    Each field is one property; its name is the property name with ``_``
-    for ``-``.
-    """
-
-    weight: bool = True
-    fat_percentage: bool = True
-    fat_mass: bool = True
-    heart_pulse: bool = True
-
-
-@dataclass
 class UserConfig:
-    """The result of the OAuth flow, and the user's own settings.
+    """The result of the OAuth flow.
 
-    The fields that the OAuth flow sets are hidden in the settings form,
-    because only the flow can set them.
+    Every field is hidden in the settings form, because only the flow can
+    set them. What is done with the measurements is up to the user's
+    workflows.
     """
 
     userid: str = field(metadata={"config_form": "hidden"})
@@ -44,20 +30,6 @@ class UserConfig:
     expires_in: str = field(metadata={"config_form": "hidden"})
     scope: str = field(metadata={"config_form": "hidden"})
     token_type: str = field(metadata={"config_form": "hidden"})
-    # The daily note properties to write. All of them by default.
-    daily_note_fields: DailyNoteFields = field(
-        default_factory=DailyNoteFields,
-        metadata={
-            "config_help": "The checked measurements are written to the "
-            "daily note. Unchecking one does not remove values already "
-            "written."
-        },
-    )
-
-    def __post_init__(self) -> None:
-        """Build ``daily_note_fields`` from the saved JSON data."""
-        if isinstance(self.daily_note_fields, dict):
-            self.daily_note_fields = DailyNoteFields.from_saved(self.daily_note_fields)
 
 
 class AuthenticationFlow:
@@ -154,13 +126,6 @@ class AuthenticationFlow:
 
         from spanreed.plugins.withings import WithingsPlugin
 
-        # New tokens must not reset what the user chose. Read the choice
-        # again, because the user may have changed it since this config was
-        # loaded.
-        saved = await WithingsPlugin.get_saved_config_data(user)
-        daily_note_fields = user_config.daily_note_fields
-        if saved is not None and isinstance(saved.get("daily_note_fields"), dict):
-            daily_note_fields = DailyNoteFields.from_saved(saved["daily_note_fields"])
         user_config = UserConfig(
             userid=body["userid"],
             access_token=body["access_token"],
@@ -168,7 +133,6 @@ class AuthenticationFlow:
             expires_in=body["expires_in"],
             scope=body["scope"],
             token_type=body["token_type"],
-            daily_note_fields=daily_note_fields,
         )
 
         await WithingsPlugin.set_config(user, user_config)

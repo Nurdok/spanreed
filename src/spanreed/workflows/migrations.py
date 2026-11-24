@@ -110,7 +110,7 @@ class Conversion:
 
 def _conversions() -> list[Conversion]:
     # Imported here: the plugins import this module.
-    from spanreed.plugins import health_connect
+    from spanreed.plugins import health_connect, withings
 
     return [
         Conversion(
@@ -121,6 +121,11 @@ def _conversions() -> list[Conversion]:
                 "The commands Sync steps, Sync heart rate and Sync VO2 max are "
                 "now one, “Sync health data”."
             ),
+        ),
+        Conversion(
+            canonical_name="withings",
+            name="Withings",
+            convert=withings.convert_to_workflows,
         ),
     ]
 

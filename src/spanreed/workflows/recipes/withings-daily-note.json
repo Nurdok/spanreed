@@ -1,0 +1,43 @@
+{
+  "id": "withings-daily-note",
+  "name": "Withings → daily note",
+  "description": "Writes each day's weight, body fat and heart pulse from Withings into its daily note.",
+  "requires": ["withings", "obsidian"],
+  "command_name": "Sync Withings data",
+  "trigger": {
+    "block": "withings.new-measurements",
+    "params": {"every": 1, "unit": "hours"}
+  },
+  "steps": [
+    {
+      "id": "today",
+      "block": "obsidian.create-daily-note",
+      "inputs": {}
+    },
+    {
+      "id": "write",
+      "block": "obsidian.set-note-properties",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "properties": {
+          "weight": "{{ trigger.weight }}",
+          "fat-percentage": "{{ trigger.fat_percentage }}",
+          "fat-mass": "{{ trigger.fat_mass }}",
+          "heart-pulse": "{{ trigger.heart_pulse }}"
+        },
+        "write_when": "empty",
+        "if_note_missing": "skip and tell me"
+      }
+    },
+    {
+      "id": "any",
+      "block": "core.continue-if",
+      "inputs": {"condition": "{{ write.count > 0 }}"}
+    },
+    {
+      "id": "tell",
+      "block": "core.send-message",
+      "inputs": {"message": "Logged {{ write.summary }} for {{ trigger.date }}."}
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import asyncio
-import datetime
+import json
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -7,31 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from spanreed.apis.withings import (
-    AuthenticationFlow,
-    DailyNoteFields,
-    MeasurementType,
-    UserConfig,
-)
+from spanreed.apis.withings import AuthenticationFlow, UserConfig
 from spanreed.plugin import Plugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.test_utils import (
     FakeRedis,
     mock_user_find_by_id,
-    patch_obsidian,
     patch_user_interaction,
 )
+from spanreed.workflows.model import TriggerSpec, Workflow
+from spanreed.workflows.store import WorkflowStore
 
-DATE = datetime.date(2026, 5, 9)
-NOTE = "Daily/2026-05-09.md"
-MEASUREMENTS = {
-    DATE: {
-        MeasurementType.WEIGHT: 80.5,
-        MeasurementType.FAT_PERCENTAGE: 20.1,
-        MeasurementType.FAT_MASS: 16.2,
-        MeasurementType.HEART_PULSE: 60,
-    }
-}
+CONFIG_KEY = "config:plugin:name=withings:user_id=4"
 
 
 def _config(**kwargs: Any) -> UserConfig:
@@ -49,21 +36,13 @@ def _config(**kwargs: Any) -> UserConfig:
 
 @pytest.fixture(autouse=True)
 def redis() -> Iterator[FakeRedis]:
+    """Give the plugin config and the workflows one empty Redis."""
     fake = FakeRedis()
-    with patch("spanreed.plugin.redis_api", new=fake):
-        yield fake
-
-
-@pytest.fixture(autouse=True)
-def withings_api() -> Iterator[AsyncMock]:
-    """Stand in for the Withings API, which returns ``MEASUREMENTS``."""
-    api = AsyncMock()
-    api.get_measurements.return_value = MEASUREMENTS
-    with patch(
-        "spanreed.plugins.withings.WithingsApi.for_user",
-        new=AsyncMock(return_value=api),
+    with (
+        patch("spanreed.plugin.redis_api", new=fake),
+        patch("spanreed.workflows.store.redis_api", new=fake),
     ):
-        yield api
+        yield fake
 
 
 def _plugin_and_user(config: UserConfig | None) -> tuple[WithingsPlugin, Any]:
@@ -75,134 +54,105 @@ def _plugin_and_user(config: UserConfig | None) -> tuple[WithingsPlugin, Any]:
     return plugin, user
 
 
-def _written(mock_obsidian: AsyncMock) -> dict[str, Any]:
-    return {
-        call.args[1]: call.args[2]
-        for call in mock_obsidian.set_value_of_property.await_args_list
-    }
-
-
-def test_config_saved_before_the_setting_writes_every_property() -> None:
-    config = _config()
-
-    assert config.daily_note_fields == DailyNoteFields()
-    assert DailyNoteFields.properties() == [
-        "weight",
-        "fat-percentage",
-        "fat-mass",
-        "heart-pulse",
-    ]
-    loaded = _config(daily_note_fields={"weight": False, "gone": True})
-    assert loaded.daily_note_fields == DailyNoteFields(weight=False)
-
-
-@patch_obsidian("spanreed.plugins.withings")
-@patch_user_interaction("spanreed.plugins.withings")
-def test_sync_writes_every_measurement_by_default(
-    mock_bot: AsyncMock, mock_obsidian: AsyncMock
-) -> None:
-    plugin, user = _plugin_and_user(_config())
-    mock_obsidian.get_daily_note.return_value = NOTE
-    mock_obsidian.get_property.return_value = None
-
-    written = asyncio.run(plugin._sync(user))
-
-    assert written == 4
-    assert _written(mock_obsidian) == {
-        "weight": 80.5,
-        "fat-percentage": 20.1,
-        "fat-mass": 16.2,
-        "heart-pulse": 60,
-    }
-
-
-@patch_obsidian("spanreed.plugins.withings")
-@patch_user_interaction("spanreed.plugins.withings")
-def test_sync_writes_only_the_properties_turned_on(
-    mock_bot: AsyncMock, mock_obsidian: AsyncMock
-) -> None:
-    fields = DailyNoteFields(fat_mass=False, heart_pulse=False)
-    plugin, user = _plugin_and_user(_config(daily_note_fields=fields))
-    mock_obsidian.get_daily_note.return_value = NOTE
-    mock_obsidian.get_property.return_value = None
-
-    written = asyncio.run(plugin._sync(user))
-
-    assert written == 2
-    assert _written(mock_obsidian) == {"weight": 80.5, "fat-percentage": 20.1}
-    # A property that is off is not read from the note either.
-    read = [call.args[1] for call in mock_obsidian.get_property.await_args_list]
-    assert read == ["weight", "fat-percentage"]
-
-
-@patch_obsidian("spanreed.plugins.withings")
-@patch_user_interaction("spanreed.plugins.withings")
-def test_nothing_is_fetched_when_every_property_is_off(
-    mock_bot: AsyncMock, mock_obsidian: AsyncMock
-) -> None:
-    fields = DailyNoteFields(
-        weight=False, fat_percentage=False, fat_mass=False, heart_pulse=False
-    )
-    plugin, user = _plugin_and_user(_config(daily_note_fields=fields))
-
-    assert asyncio.run(plugin._sync(user)) == 0
-    asyncio.run(plugin._sync_now(user))
-
-    mock_obsidian.set_value_of_property.assert_not_called()
-    mock_bot.request_user_choice.assert_not_called()
-    assert "turned off" in mock_bot.send_message.await_args.args[0]
-
-
-@patch_user_interaction("spanreed.plugins.withings")
-def test_reconfigure_changes_the_properties_and_keeps_the_login(
-    mock_bot: AsyncMock,
-) -> None:
-    plugin, user = _plugin_and_user(_config())
-    # Keep the current login; choose properties; turn fat-mass off; Done.
-    mock_bot.request_user_choice.side_effect = [0, 1, 2, 4]
-
-    with patch("spanreed.plugins.withings.WithingsApi.start_authentication") as start:
-        asyncio.run(WithingsPlugin.ask_for_user_config(user))
-        config = asyncio.run(WithingsPlugin.get_config(user))
-
-    start.assert_not_called()
-    assert config == _config(daily_note_fields=DailyNoteFields(fat_mass=False))
-
-
-@patch_user_interaction("spanreed.plugins.withings")
-def test_logging_in_again_keeps_the_chosen_properties(mock_bot: AsyncMock) -> None:
-    fields = DailyNoteFields(heart_pulse=False)
-    plugin, user = _plugin_and_user(_config(daily_note_fields=fields))
-    # Log in again; keep the properties.
-    mock_bot.request_user_choice.side_effect = [1, 0]
+def _login(config: UserConfig) -> Any:
+    """Return a stand-in for the Withings login that gives ``config``."""
     done = asyncio.Event()
     done.set()
     flow = MagicMock(spec=AuthenticationFlow)
     flow.get_done_event = AsyncMock(return_value=done)
     flow.get_url.return_value = "https://example.invalid/auth"
-    flow.get_user_config.return_value = _config(access_token="new")
+    flow.get_user_config.return_value = config
 
     @asynccontextmanager
     async def start(_user: Any) -> Any:
         yield flow
 
-    with patch("spanreed.plugins.withings.WithingsApi.start_authentication", new=start):
-        asyncio.run(WithingsPlugin.ask_for_user_config(user))
-        config = asyncio.run(WithingsPlugin.get_config(user))
-
-    assert config.access_token == "new"
-    assert config.daily_note_fields == fields
-
-
-def test_token_refresh_keeps_the_latest_choice_of_properties() -> None:
-    plugin, user = _plugin_and_user(_config())
-    stale = asyncio.run(WithingsPlugin.get_config(user))
-    # The user unchecks a property after the sync loaded its config.
-    asyncio.run(
-        WithingsPlugin.set_config(
-            user, _config(daily_note_fields=DailyNoteFields(weight=False))
-        )
+    return patch(
+        "spanreed.plugins.withings.WithingsApi.start_authentication", new=start
     )
+
+
+def _said(mock_bot: AsyncMock) -> list[str]:
+    return [call.args[0] for call in mock_bot.send_message.await_args_list]
+
+
+def test_the_plugin_publishes_the_withings_trigger() -> None:
+    plugin, _ = _plugin_and_user(None)
+
+    assert [block.id for block in plugin.blocks()] == ["withings.new-measurements"]
+
+
+def test_a_config_saved_with_the_old_setting_gives_the_login(redis: FakeRedis) -> None:
+    plugin, user = _plugin_and_user(_config())
+    # As the plugin saved it while it wrote the daily note itself.
+    saved = asyncio.run(WithingsPlugin.get_saved_config_data(user))
+    assert saved is not None
+    saved["daily_note_fields"] = {"weight": True, "fat_mass": False}
+    asyncio.run(redis.set(CONFIG_KEY, json.dumps(saved)))
+
+    assert asyncio.run(WithingsPlugin.get_config(user)) == _config()
+
+
+@patch_user_interaction("spanreed.plugins.withings")
+def test_setup_logs_in_and_points_to_the_recipe(mock_bot: AsyncMock) -> None:
+    plugin, user = _plugin_and_user(None)
+
+    with _login(_config(access_token="new")):
+        asyncio.run(WithingsPlugin.ask_for_user_config(user))
+
+    assert asyncio.run(WithingsPlugin.get_config(user)) == _config(access_token="new")
+    mock_bot.request_user_choice.assert_not_called()
+    link, hint = _said(mock_bot)
+    assert "https://example.invalid/auth" in link
+    assert "“Withings → daily note”" in hint and "“Manage workflows”" in hint
+
+
+@patch_user_interaction("spanreed.plugins.withings")
+def test_setup_again_can_keep_the_login(mock_bot: AsyncMock) -> None:
+    plugin, user = _plugin_and_user(_config())
+    mock_bot.request_user_choice.return_value = 0  # Keep the current login
+
+    with patch("spanreed.plugins.withings.WithingsApi.start_authentication") as start:
+        asyncio.run(WithingsPlugin.ask_for_user_config(user))
+
+    start.assert_not_called()
+    assert asyncio.run(WithingsPlugin.get_config(user)) == _config()
+
+
+@patch_user_interaction("spanreed.plugins.withings")
+def test_setup_again_can_log_in_again(mock_bot: AsyncMock) -> None:
+    plugin, user = _plugin_and_user(_config())
+    mock_bot.request_user_choice.return_value = 1  # Log in again
+
+    with _login(_config(access_token="new")):
+        asyncio.run(WithingsPlugin.ask_for_user_config(user))
+
+    assert asyncio.run(WithingsPlugin.get_config(user)).access_token == "new"
+
+
+@patch_user_interaction("spanreed.plugins.withings")
+def test_setup_says_nothing_of_recipes_to_a_user_who_has_the_workflow(
+    mock_bot: AsyncMock,
+) -> None:
+    plugin, user = _plugin_and_user(_config())
+    mock_bot.request_user_choice.return_value = 0  # Keep the current login
+    workflow = Workflow(
+        id="wf_1",
+        user_id=4,
+        name="Withings → daily note",
+        trigger=TriggerSpec(block="withings.new-measurements", params={}),
+        steps=[],
+    )
+    asyncio.run(WorkflowStore().save(workflow))
+
+    asyncio.run(WithingsPlugin.ask_for_user_config(user))
+
+    assert _said(mock_bot) == []
+
+
+def test_token_refresh_saves_the_new_tokens() -> None:
+    plugin, user = _plugin_and_user(_config())
+    config = asyncio.run(WithingsPlugin.get_config(user))
     response = MagicMock()
     response.json.return_value = {
         "status": 0,
@@ -222,12 +172,10 @@ def test_token_refresh_keeps_the_latest_choice_of_properties() -> None:
             AuthenticationFlow, "get_client_secret", new=AsyncMock(return_value="x")
         ),
     ):
-        refreshed = asyncio.run(AuthenticationFlow.refresh_token(user, stale))
+        refreshed = asyncio.run(AuthenticationFlow.refresh_token(user, config))
         saved = asyncio.run(WithingsPlugin.get_config(user))
 
-    assert refreshed.access_token == "fresh"
-    assert saved.access_token == "fresh"
-    assert saved.daily_note_fields == DailyNoteFields(weight=False)
+    assert refreshed == saved == _config(access_token="fresh", refresh_token="r2")
 
 
 # --- Secrets and health values stay out of the log ----------------------------
