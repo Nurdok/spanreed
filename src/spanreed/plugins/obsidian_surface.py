@@ -182,9 +182,7 @@ class ObsidianSurfacePlugin(Plugin):
             return
 
         async def command_flow() -> None:
-            from spanreed.plugins.spanreed_monitor import (
-                suppress_and_log_exception,
-            )
+            from spanreed.errors import suppress_and_log_exception
 
             async with suppress_and_log_exception(BaseException):
                 ui = await UserInteractionApi.for_user(user)

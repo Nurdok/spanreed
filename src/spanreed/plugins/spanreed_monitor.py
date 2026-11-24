@@ -1,15 +1,12 @@
 import asyncio
-import traceback
-import logging
 import json
 
 import datetime
-from contextlib import suppress, asynccontextmanager
-
-from typing import AsyncGenerator
+from contextlib import suppress
 
 import redis
 
+from spanreed import errors
 from spanreed.interaction import UserInteractionApi
 from spanreed.user import User
 from spanreed.plugin import Plugin
@@ -17,7 +14,7 @@ from spanreed.storage import redis_api
 
 
 class SpanreedMonitorPlugin(Plugin):
-    EXCEPTION_QUEUE_NAME = "spanreed-monitor-exceptions"
+    EXCEPTION_QUEUE_NAME = errors.QUEUE
     OBSIDIAN_PLUGIN_MONITOR_QUEUE_NAME = "obsidian-plugin-monitor"
     OBSIDIAN_PLUGIN_ERROR_IGNORE_LIST = [
         "read ECONNRESET",
@@ -131,38 +128,3 @@ class SpanreedMonitorPlugin(Plugin):
                         self._logger.debug("Obsidian plugin watchdog event received.")
                         time_since_last_watchdog = datetime.timedelta()
                         last_watchdog_message = datetime.datetime.now()
-
-
-class BoolValue:
-    def __init__(self) -> None:
-        self.value: bool | None = None
-
-    def set(self, value: bool) -> None:
-        if self.value is not None:
-            raise RuntimeError("Value already set.")
-        self.value = value
-
-    def __bool__(self) -> bool:
-        if self.value is None:
-            raise RuntimeError("Value not set.")
-        return self.value
-
-
-@asynccontextmanager
-async def suppress_and_log_exception(
-    *exceptions: type[BaseException],
-) -> AsyncGenerator[BoolValue, None]:
-    logger = logging.getLogger(__name__)
-    did_suppress = BoolValue()
-    try:
-        yield did_suppress
-    except Exception as e:
-        if not any(isinstance(e, exception) for exception in exceptions):
-            did_suppress.set(False)
-            raise
-        did_suppress.set(True)
-        exception_str = "".join(traceback.format_exception(type(e), e, None, limit=3))
-        logger.exception(f"Suppressed exception")
-        await redis_api.lpush(SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME, exception_str)
-    else:
-        did_suppress.set(False)

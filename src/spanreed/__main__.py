@@ -3,6 +3,7 @@ import traceback
 import logging
 from typing import List
 
+from spanreed import errors
 from spanreed.plugin import Plugin
 
 from spanreed.interaction import UserInteractionApi
@@ -115,7 +116,7 @@ def main() -> None:
 
         asyncio.run(
             make_redis().lpush(
-                SpanreedMonitorPlugin.EXCEPTION_QUEUE_NAME,
+                errors.QUEUE,
                 "".join(traceback.format_exception(type(e), e, None)),
             )
         )
