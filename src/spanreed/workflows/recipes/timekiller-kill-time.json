@@ -1,0 +1,72 @@
+{
+  "id": "timekiller-kill-time",
+  "name": "Kill time",
+  "description": "Every hour or two during the day, runs one of Journaling Prompt, Scan Processing, Books and Mood, picked at random. Its command lets you pick.",
+  "requires": [
+    "obsidian"
+  ],
+  "command_name": "Kill time",
+  "trigger": {
+    "block": "core.random-schedule",
+    "params": {
+      "at_least": 1,
+      "at_most": 2,
+      "unit": "hours",
+      "only_from": "08:00",
+      "only_until": "22:00"
+    }
+  },
+  "steps": [
+    {
+      "id": "today",
+      "block": "obsidian.create-daily-note",
+      "inputs": {}
+    },
+    {
+      "id": "mood",
+      "block": "obsidian.get-note-property",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "property": "mood"
+      }
+    },
+    {
+      "id": "books",
+      "block": "core.recall",
+      "inputs": {
+        "name": "currently-reading-books-last-asked"
+      }
+    },
+    {
+      "id": "one",
+      "block": "core.run-one",
+      "inputs": {
+        "workflows": {
+          "Journaling Prompt": true,
+          "Scan Processing": true,
+          "Books": "{{ run.manual or not books.found or books.age_hours > 72 }}",
+          "Mood": "{{ not mood.found }}"
+        },
+        "how": "{{ 'ask me' if run.manual else 'at random' }}",
+        "question": "What's your poison?"
+      }
+    },
+    {
+      "id": "was_books",
+      "block": "core.if",
+      "inputs": {
+        "condition": "{{ one.ran == 'Books' }}"
+      },
+      "steps": [
+        {
+          "id": "asked",
+          "block": "core.remember",
+          "inputs": {
+            "name": "currently-reading-books-last-asked",
+            "value": "{{ trigger.date }}"
+          }
+        }
+      ]
+    }
+  ]
+}

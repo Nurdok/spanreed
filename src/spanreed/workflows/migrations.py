@@ -216,6 +216,7 @@ def _conversions() -> list[Conversion]:
         health_connect,
         hevy,
         litnotes,
+        timekiller,
         withings,
     )
 
@@ -266,6 +267,17 @@ def _conversions() -> list[Conversion]:
                 "The folder of the notes and the two note templates are on "
                 "the step “Append to note” of the workflow. The command is "
                 "still “Add book note”."
+            ),
+        ),
+        Conversion(
+            canonical_name="timekiller",
+            name="Timekiller",
+            convert=timekiller.convert_to_workflows,
+            note=(
+                "“Kill time” picks one of the other four, and is still the "
+                "command. Set journal heading is the Heading on “Journaling "
+                "Prompt”. Clear skipped scans is on the page of “Scan "
+                "Processing”: what it remembers, and Forget."
             ),
         ),
     ]

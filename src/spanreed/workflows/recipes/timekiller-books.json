@@ -1,0 +1,30 @@
+{
+  "id": "timekiller-books",
+  "name": "Books",
+  "description": "Asks how it is going with each book you are reading: notes, finished, or giving up. “Kill time” runs it.",
+  "requires": [
+    "obsidian",
+    "timekiller"
+  ],
+  "command_hidden": true,
+  "trigger": {
+    "block": "core.called",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "notes",
+      "block": "obsidian.query-dataview",
+      "inputs": {
+        "query": "table title\nfrom #book\nwhere status = \"reading\""
+      }
+    },
+    {
+      "id": "books",
+      "block": "timekiller.reading-check-in",
+      "inputs": {
+        "books": "{{ notes.rows }}"
+      }
+    }
+  ]
+}

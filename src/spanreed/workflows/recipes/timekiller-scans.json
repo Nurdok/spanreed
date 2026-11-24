@@ -1,0 +1,22 @@
+{
+  "id": "timekiller-scans",
+  "name": "Scan Processing",
+  "description": "Sends you a scan that has no name yet and asks what to do with it: rename, delete, or skip for good. “Kill time” runs it.",
+  "requires": [
+    "timekiller"
+  ],
+  "command_hidden": true,
+  "trigger": {
+    "block": "core.called",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "scan",
+      "block": "timekiller.process-scan",
+      "inputs": {
+        "folder": "Assets/scans"
+      }
+    }
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "id": "timekiller-mood",
+  "name": "Mood",
+  "description": "Asks how your mood is and what you feel, once a day, and writes it to today's daily note. “Kill time” runs it.",
+  "requires": [
+    "obsidian"
+  ],
+  "command_hidden": true,
+  "trigger": {
+    "block": "core.called",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "mood",
+      "block": "obsidian.get-note-property",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "property": "mood"
+      }
+    },
+    {
+      "id": "recorded",
+      "block": "core.if",
+      "inputs": {
+        "condition": "{{ mood.found }}"
+      },
+      "steps": [
+        {
+          "id": "say_recorded",
+          "block": "core.send-message",
+          "inputs": {
+            "message": "You've already recorded your mood today."
+          }
+        },
+        {
+          "id": "end_recorded",
+          "block": "core.stop",
+          "inputs": {
+            "reason": "The mood of today is recorded."
+          }
+        }
+      ]
+    },
+    {
+      "id": "rate",
+      "block": "core.ask-choice",
+      "inputs": {
+        "question": "How would you rate your mood right now?\n (1 - negative, 5 - positive)",
+        "options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+        ],
+        "columns": 5
+      }
+    },
+    {
+      "id": "rated",
+      "block": "core.continue-if",
+      "inputs": {
+        "condition": "{{ rate.chosen }}"
+      }
+    },
+    {
+      "id": "feel",
+      "block": "core.ask-each",
+      "inputs": {
+        "question": "What are you feeling right now?",
+        "options": {
+          "happy": "happy",
+          "sad": "sad",
+          "angry": "angry",
+          "depressed": "depressed",
+          "anxious": "anxious",
+          "excited": "excited",
+          "tired": "tired",
+          "energetic": "energetic",
+          "bored": "bored",
+          "stressed": "stressed",
+          "calm": "calm",
+          "confused": "confused",
+          "frustrated": "frustrated",
+          "grateful": "grateful",
+          "proud": "proud",
+          "lonely": "lonely",
+          "loved": "loved",
+          "motivated": "motivated",
+          "optimistic": "optimistic",
+          "pessimistic": "pessimistic",
+          "relaxed": "relaxed",
+          "restless": "restless",
+          "satisfied": "satisfied",
+          "scared": "scared",
+          "shocked": "shocked",
+          "sick": "sick",
+          "sore": "sore",
+          "surprised": "surprised",
+          "thankful": "thankful",
+          "uncomfortable": "uncomfortable",
+          "worried": "worried",
+          "focused": "focused"
+        },
+        "done": "Done",
+        "columns": 3
+      }
+    },
+    {
+      "id": "today",
+      "block": "obsidian.create-daily-note",
+      "inputs": {}
+    },
+    {
+      "id": "write",
+      "block": "obsidian.set-note-properties",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "properties": {
+          "mood": "{{ rate.answer }}",
+          "feelings": "{{ feel.picked }}"
+        },
+        "write_when": "always",
+        "if_note_missing": "fail"
+      }
+    },
+    {
+      "id": "noted",
+      "block": "core.send-message",
+      "inputs": {
+        "message": "Noted!"
+      }
+    }
+  ]
+}

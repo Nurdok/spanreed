@@ -20,6 +20,7 @@ A workflow keeps the traces of its last ``RUNS_KEPT`` runs. They are dropped
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import json
 import secrets
@@ -95,10 +96,21 @@ class StoredMemory:
         kept = json.loads(_text(raw))
         return Remembered(value=kept["value"], at=kept["at"])
 
-    async def set(self, name: str, value: Any = True) -> None:
-        """Keep a JSON value under a name, in place of what was there."""
-        at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-        await redis_api.hset(self._key, name, json.dumps({"value": value, "at": at}))
+    async def set(self, name: str, value: Any = True, at: str | None = None) -> None:
+        """Keep a JSON value under a name, in place of what was there.
+
+        ``at`` is when it was kept, in ISO 8601, if that is not now: for
+        something a plugin remembered before the workflow took its place. A
+        time without a timezone is taken as UTC.
+        """
+        moment = datetime.datetime.now(datetime.timezone.utc)
+        if at is not None:
+            with contextlib.suppress(ValueError):
+                moment = datetime.datetime.fromisoformat(at)
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=datetime.timezone.utc)
+        kept = {"value": value, "at": moment.isoformat(timespec="seconds")}
+        await redis_api.hset(self._key, name, json.dumps(kept))
 
     async def forget(self, name: str) -> bool:
         """Drop what is kept under a name. Return whether there was anything."""
