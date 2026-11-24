@@ -95,8 +95,8 @@ or while the app is on screen.
 ## Workflows
 
 **Workflows** in the header shows the workflows you own (see
-[workflows.md](workflows.md)). It reads and controls them, and edits what
-their cards hold. It does not add, remove or move cards yet.
+[workflows.md](workflows.md)). It reads, controls and edits them, and makes
+new ones.
 
 ![A workflow's steps on desktop](images/web-ui-workflow-steps-desktop.png)
 
@@ -154,10 +154,22 @@ its command can be changed there too.
 - **A choice** is a list to pick from.
 - **Rows**, such as the properties to set, have a name and a value each.
   **Add a row** adds one, and × removes one.
+- **+** on the line between two cards, and after the last, adds a step
+  there. It opens the list of blocks, by plugin, with a box to search it. A
+  block of a plugin that is not set up is listed, and says what to do. A loop
+  has a + inside it for its own steps.
+- **← →** on a card move the step earlier or later, and **Remove** takes it
+  out. In a loop and on a phone the arrows point up and down. A step moves
+  within its list: to put it into a loop or take it out, remove it and add it
+  again.
 - **Save** stores the workflow, and it runs with the new values from then
   on. If a value does not fit, or the workflow could not run, nothing is
-  stored and the page says what has to change.
+  stored and the page says what has to change: a step that was moved before
+  one it takes a value from, for example.
 - **Cancel**, another workflow or another view asks before it drops changes.
+- **Delete this workflow** deletes it with its history, after asking.
+
+![The list of blocks](images/web-ui-workflow-add-step-desktop.png)
 
 ![The values a step inside a loop can use](images/web-ui-workflow-edit-values-desktop.png)
 
@@ -166,11 +178,26 @@ its command can be changed there too.
 ![Editing on a phone](images/web-ui-workflow-edit-phone.png)
 ![The list of values on a phone](images/web-ui-workflow-edit-values-phone.png)
 
-The API is `GET /app/api/workflows` (the list), `GET
-/app/api/workflows/<id>` (one workflow as cards), `PUT` on the same path (the
-workflow as the editor changed it) and `GET /app/api/workflows/<id>/runs`
-(the traces), and `POST` on `/app/api/workflows/<id>/enabled`, `/command` and
-`/run`. All of them answer
+![A loop being edited on a phone](images/web-ui-workflow-edit-loop-phone.png)
+![The list of blocks on a phone](images/web-ui-workflow-add-step-phone.png)
+
+### A new workflow
+
+**New workflow**, under the list, offers the recipes and the triggers.
+
+![A new workflow](images/web-ui-workflow-new-desktop.png)
+
+- **From a recipe** adds the workflow as it ships, turned on. A recipe you
+  have already, or one that needs a plugin you have not set up, is listed and
+  says so.
+- **Start with a trigger** makes a workflow with that trigger and no steps,
+  and opens it in the editor. It is off until you turn it on.
+
+The API is `GET /app/api/workflows` (the list), `POST` on the same path (a
+new workflow), `GET /app/api/workflows/catalog` (the blocks and the recipes),
+`GET /app/api/workflows/<id>` (one workflow as cards), `PUT` and `DELETE` on
+the same path, `GET /app/api/workflows/<id>/runs` (the traces), and `POST` on
+`/app/api/workflows/<id>/enabled`, `/command` and `/run`. All of them answer
 only for a workflow of the logged-in user. A trace holds what the steps
 received and returned, so it is sent only to its owner and only when the
 History tab asks for it: the list carries just the time and the outcome of

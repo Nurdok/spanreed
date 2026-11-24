@@ -209,6 +209,34 @@
     outline: 2px solid var(--accent); outline-offset: -1px; }
   .inner .wcard textarea, .inner .wcard select, .inner .wcard input[type=text] { background: var(--card); }
   .ins { font-size: 12px; padding: 0 2px; }
+  #workflow-new { margin: 10px 0 0 10px; }
+  /* Where a step can be added: on the line between two cards, and after the last. */
+  .lane.editing .join, .inner .vjoin.add { display: grid; place-items: center; }
+  .lane.editing .join { width: 44px; }
+  .addb { position: relative; z-index: 1; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line);
+          background: var(--card); color: var(--accent); font-size: 17px; line-height: 1; padding: 0; }
+  .addb:hover, .addb:focus-visible { border-color: var(--accent); outline: none; }
+  .inner .vjoin.add { height: 34px; }
+  .wc-tools { display: flex; gap: 4px; padding: 0 10px 8px; }
+  .wc-tools button { border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+                     font-size: 12px; padding: 2px 8px; }
+  .wc-tools button:hover:not(:disabled) { border-color: var(--accent); }
+  .wc-tools button:disabled { opacity: .35; cursor: default; }
+  .wc-tools .rm { margin-left: auto; }
+  .wc-tools .rm:hover { border-color: var(--err); color: var(--err); }
+  /* Earlier and later are left and right in the lane, up and down in a column. */
+  .wc-tools .v, .inner .wc-tools .h { display: none; }
+  .inner .wc-tools .v { display: inline; }
+  .danger { color: var(--err); margin-left: auto; }
+  .sheet input[type=search] { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+                              background: var(--bg); color: var(--fg); font: inherit; }
+  .sheet .opt { display: flex; flex-direction: column; gap: 1px; text-align: left; padding: 7px 9px; border-radius: 8px;
+                border: 1px solid var(--line); background: var(--bg); color: var(--fg); font: inherit; }
+  .sheet .opt:hover:not(:disabled), .sheet .opt:focus-visible { border-color: var(--accent); outline: none; }
+  .sheet .opt:disabled { opacity: .55; cursor: default; }
+  .sheet .opt small { color: var(--muted); font-size: 12px; }
+  .sheet .opt .why { color: var(--err); }
+  .sheet h4 { margin: 4px 0 0; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
   .erows { display: flex; flex-direction: column; gap: 8px; }
   .erow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 6px; align-items: center;
           border-left: 2px solid var(--line); padding-left: 7px; }
@@ -241,6 +269,10 @@
     .wcard textarea, .wcard select, .wcard input[type=text], .wf-sub input { font-size: 16px; }
     .sheet-back { align-items: flex-end; }
     .sheet { border-radius: 14px 14px 0 0; }
+    .sheet input[type=search] { font-size: 16px; }
+    .lane.editing .join { width: auto; height: 38px; }
+    .wc-tools .h { display: none; }
+    .wc-tools .v { display: inline; }
     .lane .join { width: auto; height: 16px; }
     .lane .join::before { left: 50%; right: auto; top: 0; bottom: 0; border-top: 0; border-left: 2px solid var(--line); }
   }
@@ -298,6 +330,7 @@
     <aside>
       <h2>Workflows</h2>
       <nav id="workflow-list"></nav>
+      <button class="small" id="workflow-new" type="button">New workflow</button>
     </aside>
     <div id="workflow-main"></div>
   </div>
@@ -933,12 +966,79 @@ async function loadWorkflows() {
   if (!list.some((w) => w.id === currentWorkflow)) currentWorkflow = null;
   renderWorkflowNav(list);
   if (!list.length) {
-    main.replaceChildren(el("p", "empty",
-      "You have no workflows yet. Run “Manage workflows” from the commands to add one from a recipe."));
+    main.replaceChildren(el("p", "empty", "You have no workflows yet. “New workflow” adds one."));
     return;
   }
   openWorkflow(currentWorkflow || list[0].id);
 }
+
+// --- What a workflow can be made of: the blocks of the plugins, and the recipes. ---
+
+let catalog = null;
+async function loadCatalog() {
+  const res = await api("workflows/catalog");
+  if (res.ok) catalog = await res.json();
+  return res.ok;
+}
+
+// A sheet with a list to pick from. `fill` gets the sheet and a function
+// that closes it.
+function openSheet(label, fill) {
+  const back = el("div", "sheet-back"), sheet = el("div", "sheet");
+  sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-label", label);
+  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const close = () => { back.remove(); document.removeEventListener("keydown", onKey, true); };
+  sheet.append(el("h3", "", label));
+  fill(sheet, close);
+  back.append(sheet);
+  back.onclick = (e) => { if (e.target === back) close(); };
+  document.addEventListener("keydown", onKey, true);
+  document.body.append(back);
+  return sheet;
+}
+
+// One thing to pick: a title, a line about it, and why it cannot be picked.
+// `todo` says that the reason is something the user can do about.
+function option(title, about, why, onPick, todo = true) {
+  const b = el("button", "opt");
+  b.type = "button";
+  b.append(el("strong", "", title));
+  if (about) b.append(el("small", "", about));
+  if (why) { b.append(el("small", todo ? "why" : "", why)); b.disabled = true; }
+  else b.onclick = onPick;
+  return b;
+}
+
+const setUpFirst = (apps) => "Set up " + apps.join(" and ") + " with “Manage plugins” first.";
+
+async function newWorkflow() {
+  if (!mayLeaveEditor()) return;
+  if (!await loadCatalog()) { $("workflow-main").prepend(el("p", "sys err", "Could not load the recipes.")); return; }
+  setDrawer(false);
+  openSheet("New workflow", (sheet, close) => {
+    const make = async (body, thenEdit) => {
+      close();
+      const res = await post("workflows", body);
+      const answer = await res.json().catch(() => ({}));
+      if (!res.ok) { $("workflow-main").prepend(el("p", "sys err", answer.error || "Could not add the workflow.")); return; }
+      currentWorkflow = answer.id;
+      await loadWorkflows();
+      // A workflow with only a trigger is there to be filled in.
+      if (thenEdit) startEditing(answer);
+    };
+    sheet.append(el("h4", "", "From a recipe"));
+    for (const recipe of catalog.recipes) {
+      const why = recipe.installed ? "You have this one." : recipe.missing.length ? setUpFirst(recipe.missing) : "";
+      sheet.append(option(recipe.name, recipe.description, why, () => make({ recipe: recipe.id }, false), !recipe.installed));
+    }
+    sheet.append(el("h4", "", "Or start with a trigger"));
+    for (const block of catalog.blocks.filter((b) => b.kind === "trigger")) {
+      sheet.append(option(block.title, block.app + " · " + block.description, block.connected ? "" : setUpFirst([block.app]),
+                          () => make({ trigger: block.block }, true)));
+    }
+  });
+}
+$("workflow-new").onclick = newWorkflow;
 
 async function openWorkflow(id) {
   if (draft && draft.id !== id && !mayLeaveEditor()) return;
@@ -1012,11 +1112,14 @@ function richValue(value, sources, pairs) {
 
 function renderCard(card, badge, sources, edit) {
   const inside = card.steps || [];
-  const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : "") + (inside.length ? " holds" : ""));
+  // A loop that is being edited shows where its steps go, also while it has none.
+  const holds = inside.length || (edit && "inside_title" in card);
+  const c = el("div", "wcard k-" + card.kind + (card.missing ? " missing" : "") + (holds ? " holds" : ""));
   const head = el("div", "wc-head"), title = el("div", "wc-title");
   title.append(el("small", "", card.app || "Unknown block"), el("strong", "", card.title));
   head.append(glyph(card.app, card.kind), title, el("span", "num", badge));
   c.append(head, el("div", "wc-kind", card.kind));
+  if (edit && edit.list) c.append(stepTools(card, edit));
   if (card.fields.length) {
     const sec = el("div", "wc-sec");
     for (const field of card.fields) {
@@ -1033,17 +1136,20 @@ function renderCard(card, badge, sources, edit) {
     sec.append(el("div", "outs-l", "Outputs"), chips);
     c.append(sec);
   }
-  if (inside.length) {
+  if (holds) {
     // The steps of a loop, inside its card.
     const sec = el("div", "wc-sec"), inner = el("div", "inner");
     // Inside, the loop offers the item of the round, and each step offers
     // its outputs to the ones after it.
     let offers = edit ? [...edit.offers, loopOffer(card, edit.cards)] : null;
+    const list = edit && draftStep(card.id).steps;
     inside.forEach((step, i) => {
-      if (i) inner.append(el("span", "vjoin"));
-      inner.append(renderCard(step, step.number, sources, edit && { ...edit, offers }));
+      if (edit) inner.append(addStepButton(list, i, "vjoin add"));
+      else if (i) inner.append(el("span", "vjoin"));
+      inner.append(renderCard(step, step.number, sources, edit && { ...edit, offers, list, index: i }));
       if (edit) offers = [...offers, offerOf(step)];
     });
+    if (edit) inner.append(addStepButton(list, inside.length, "vjoin add"));
     sec.append(el("div", "outs-l", card.inside_title || "Steps inside"), inner);
     c.append(sec);
   }
@@ -1054,25 +1160,42 @@ function renderCard(card, badge, sources, edit) {
 const allSteps = (steps) => steps.flatMap((step) => [step, ...allSteps(step.steps || [])]);
 
 // The trigger and the steps, left to right. On a phone, top to bottom.
-function renderLane(d, editing) {
+function renderLane(d) {
   const sources = { trigger: { badge: "T", kind: "trigger" }, run: { badge: "run", kind: "logic" } };
   for (const step of allSteps(d.steps)) sources[step.id] = { badge: step.number, kind: step.kind };
-  const lane = el("div", "lane" + (editing ? " editing" : ""));
-  if (!editing) {
-    lane.append(renderCard(d.trigger, "T", sources));
-    for (const step of d.steps) lane.append(el("span", "join"), renderCard(step, step.number, sources));
-    return lane;
+  const lane = el("div", "lane");
+  lane.append(renderCard(d.trigger, "T", sources));
+  for (const step of d.steps) lane.append(el("span", "join"), renderCard(step, step.number, sources));
+  return lane;
+}
+
+// The lane while a workflow is edited. It is drawn from the draft, which
+// holds the steps as they are now: added, removed and moved.
+function renderDraftLane() {
+  const number = (steps, prefix) => steps.forEach((step, i) => {
+    step.number = prefix + (i + 1);
+    number(step.steps, step.number + ".");
+  });
+  number(draft.steps, "");
+  const view = (step) => ({ ...step.card, id: step.id, number: step.number, steps: step.steps.map(view) });
+  const trigger = { ...draft.trigger.card, id: "trigger" };
+  const sources = { trigger: { badge: "T", kind: "trigger" }, run: { badge: "run", kind: "logic" } };
+  const cards = { trigger };
+  for (const step of allSteps(draft.steps)) {
+    sources[step.id] = { badge: step.number, kind: step.card.kind };
+    cards[step.id] = step.card;
   }
-  const cards = { trigger: d.trigger };
-  for (const step of allSteps(d.steps)) cards[step.id] = step;
+  const lane = el("div", "lane editing");
   // The trigger starts the run, so there is nothing before it to offer.
-  lane.append(renderCard(d.trigger, "T", sources, { cards, offers: [] }));
-  let offers = [{ id: "trigger", badge: "T", kind: "trigger", title: d.trigger.title, names: d.trigger.outputs },
-                { id: "run", badge: "run", kind: "logic", title: "This run", names: d.run_outputs }];
-  for (const step of d.steps) {
-    lane.append(el("span", "join"), renderCard(step, step.number, sources, { cards, offers }));
-    offers = [...offers, offerOf(step)];
-  }
+  lane.append(renderCard(trigger, "T", sources, { cards, offers: [] }));
+  let offers = [{ id: "trigger", badge: "T", kind: "trigger", title: trigger.title, names: trigger.outputs },
+                { id: "run", badge: "run", kind: "logic", title: "This run", names: draft.shown.run_outputs }];
+  draft.steps.forEach((step, i) => {
+    const card = view(step);
+    lane.append(addStepButton(draft.steps, i, "join"), renderCard(card, card.number, sources, { cards, offers, list: draft.steps, index: i }));
+    offers = [...offers, offerOf(card)];
+  });
+  lane.append(addStepButton(draft.steps, draft.steps.length, "join"));
   return lane;
 }
 
@@ -1084,13 +1207,105 @@ let draft = null;
 
 const draftInputs = (card) => Object.fromEntries(card.fields.filter((f) => f.edit).map((f) =>
   [f.name, f.edit.control === "rows" ? f.edit.rows.map((row) => [...row]) : f.edit.text]));
+// A step of the draft keeps the card it is drawn from: its title, its
+// inputs and how each is edited, its outputs.
 const draftSteps = (cards) => cards.map((card) =>
-  ({ id: card.id, block: card.block, inputs: draftInputs(card), steps: draftSteps(card.steps || []) }));
+  ({ id: card.id, block: card.block, inputs: draftInputs(card), steps: draftSteps(card.steps || []), card }));
 
-function startEditing(d) {
+async function startEditing(d) {
+  // The blocks that a step can be added from.
+  await loadCatalog();
   draft = { id: d.id, shown: d, changed: false, problems: [], name: d.name, command_name: d.command_name || "",
-            trigger: { block: d.trigger.block, params: draftInputs(d.trigger) }, steps: draftSteps(d.steps) };
+            trigger: { block: d.trigger.block, params: draftInputs(d.trigger), card: d.trigger },
+            steps: draftSteps(d.steps) };
   renderWorkflow(d);
+}
+
+// Draw the editor again after the steps changed, where it was scrolled to.
+function redrawEditor() {
+  const left = document.querySelector(".lane.editing")?.scrollLeft || 0;
+  renderWorkflow(draft.shown);
+  const lane = document.querySelector(".lane.editing");
+  if (lane) lane.scrollLeft = left;
+}
+
+function draftStep(id, steps = draft.steps) {
+  for (const step of steps) {
+    if (step.id === id) return step;
+    const inside = draftStep(id, step.steps);
+    if (inside) return inside;
+  }
+  return null;
+}
+
+// An id for a new step, after its block: write_note, then write_note_2.
+function newStepId(block) {
+  const base = block.split(".").pop().replace(/[^a-z0-9]+/g, "_").replace(/^[^a-z]+/, "") || "step";
+  const used = new Set(["trigger", "run", ...allSteps(draft.steps).map((step) => step.id)]);
+  let id = base;
+  for (let n = 2; used.has(id); n++) id = base + "_" + n;
+  return id;
+}
+
+// The + on the line between two cards: a new step at this place of a list.
+function addStepButton(list, index, cls) {
+  const join = el("span", cls), b = el("button", "addb", "+");
+  b.type = "button"; b.title = "Add a step here"; b.setAttribute("aria-label", "Add a step here");
+  b.onclick = () => openBlockPicker((entry) => {
+    const card = structuredClone(entry.card);
+    list.splice(index, 0, { id: newStepId(entry.block), block: entry.block, inputs: draftInputs(card), steps: [], card });
+    draft.changed = true;
+    redrawEditor();
+  });
+  join.append(b);
+  return join;
+}
+
+// Earlier, later and remove, for a step in its list.
+function stepTools(card, edit) {
+  const tools = el("div", "wc-tools"), list = edit.list, i = edit.index;
+  const tool = (cls, label, parts, enabled, act) => {
+    const b = el("button", cls);
+    b.type = "button"; b.title = label; b.setAttribute("aria-label", label + ": " + card.title);
+    for (const [partClass, text] of parts) b.append(el("span", partClass, text));
+    b.disabled = !enabled;
+    b.onclick = () => { act(); draft.changed = true; redrawEditor(); };
+    return b;
+  };
+  const swap = (a, b) => { [list[a], list[b]] = [list[b], list[a]]; };
+  tools.append(
+    tool("", "Move earlier", [["h", "←"], ["v", "↑"]], i > 0, () => swap(i, i - 1)),
+    tool("", "Move later", [["h", "→"], ["v", "↓"]], i < list.length - 1, () => swap(i, i + 1)),
+    tool("rm", "Remove", [["", "Remove"]], true, () => list.splice(i, 1)));
+  return tools;
+}
+
+// The blocks a step can be made of, by plugin, with a box to search them.
+function openBlockPicker(onPick) {
+  if (!catalog) return;
+  const sheet = openSheet("Add a step", (sheet, close) => {
+    const search = el("input"), results = el("div", "grp");
+    search.type = "search"; search.placeholder = "Search: “property”, “message”, “todoist”…";
+    search.setAttribute("aria-label", "Search the blocks");
+    const draw = () => {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      results.replaceChildren();
+      let app = null;
+      for (const block of catalog.blocks) {
+        if (block.kind === "trigger") continue;
+        const text = (block.title + " " + block.app + " " + block.description).toLowerCase();
+        if (!words.every((word) => text.includes(word))) continue;
+        if (block.app !== app) { app = block.app; results.append(el("h4", "", app)); }
+        results.append(option(block.title, block.description, block.connected ? "" : setUpFirst([block.app]),
+                              () => { close(); onPick(block); }));
+      }
+      if (!results.children.length) results.append(el("div", "foot", "No block matches."));
+    };
+    search.oninput = draw;
+    draw();
+    sheet.append(search, results);
+  });
+  sheet.querySelector("input").focus();
 }
 
 // Leaving the editor drops what was changed, so ask first.
@@ -1105,9 +1320,7 @@ window.addEventListener("beforeunload", (e) => { if (draft && draft.changed) e.p
 
 // The inputs of a card in the draft.
 function inputsOf(card) {
-  if (card.id === "trigger") return draft.trigger.params;
-  const find = (steps) => { for (const s of steps) { if (s.id === card.id) return s; const f = find(s.steps); if (f) return f; } };
-  return find(draft.steps).inputs;
+  return card.id === "trigger" ? draft.trigger.params : draftStep(card.id).inputs;
 }
 
 // What a card gives to the cards after it, for the list of values to insert.
@@ -1233,7 +1446,9 @@ function openValueSheet(box, offers) {
 
 async function saveDraft() {
   const d = draft.shown;
-  const body = { name: draft.name, command_name: draft.command_name, trigger: draft.trigger, steps: draft.steps };
+  const bare = (steps) => steps.map((step) => ({ id: step.id, block: step.block, inputs: step.inputs, steps: bare(step.steps) }));
+  const body = { name: draft.name, command_name: draft.command_name,
+                 trigger: { block: draft.trigger.block, params: draft.trigger.params }, steps: bare(draft.steps) };
   const res = await api("workflows/" + encodeURIComponent(d.id), { method: "PUT", headers: HEADERS, body: JSON.stringify(body) });
   if (!draft || draft.id !== d.id) return;
   if (!res.ok) {
@@ -1273,9 +1488,20 @@ function renderEditor(d) {
   const row = el("div", "save-row"), save = el("button", "primary", "Save"), cancel = el("button", "small", "Cancel");
   save.onclick = async () => { save.disabled = true; try { await saveDraft(); } finally { save.disabled = false; } };
   cancel.onclick = () => { if (mayLeaveEditor()) renderWorkflow(d); };
-  row.append(save, cancel);
-  parts.push(renderLane(d, true), row);
+  const remove = el("button", "link danger", "Delete this workflow");
+  remove.onclick = () => deleteWorkflow(d);
+  row.append(save, cancel, remove);
+  parts.push(renderDraftLane(), row);
   $("workflow-main").replaceChildren(...parts);
+}
+
+async function deleteWorkflow(d) {
+  if (!confirm("Delete “" + d.name + "” and the history of its runs? This cannot be undone.")) return;
+  const res = await api("workflows/" + encodeURIComponent(d.id), { method: "DELETE", headers: HEADERS });
+  if (!res.ok) { $("workflow-main").prepend(el("p", "sys err", "Could not delete the workflow.")); return; }
+  draft = null;
+  currentWorkflow = null;
+  loadWorkflows();
 }
 
 function traceLines(row, label, data) {

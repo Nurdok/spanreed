@@ -8,12 +8,12 @@ This replaces behavior that used to be written into a plugin. A plugin decided
 when it ran, what it did and whether it told you. A workflow keeps those apart,
 so that each can be changed without code.
 
-Workflows come from recipes. The web UI shows a workflow's steps and the
-history of its runs, turns it on and off, runs it, and edits what its cards
-hold (see [web-ui.md](web-ui.md#workflows)). It cannot add, remove or move a
-card yet. The chat command **Manage workflows** lists, switches and runs
-workflows, and also adds one from a recipe and deletes one. Editing is in the
-web UI only.
+A workflow comes from a recipe, or is built in the web UI from a trigger and
+the blocks of the user's plugins. The web UI shows a workflow's steps and the
+history of its runs, turns it on and off, runs it and edits it (see
+[web-ui.md](web-ui.md#workflows)). The chat command **Manage workflows**
+lists, switches and runs workflows, and also adds one from a recipe and
+deletes one. Editing is in the web UI only.
 
 ## The parts
 
@@ -342,15 +342,15 @@ surfaces check a command with `get_command_for_user` before they run it.
   ended. A step's inputs and outputs are kept only in the run's trace.
 - **Turning a workflow on or off takes effect at once.**
 
-Not there yet: branches, blocks that ask the user a question, and adding,
-removing and moving cards in the editor. A question a run is waiting on would
-not survive a restart.
+Not there yet: branches, and blocks that ask the user a question. A question
+a run is waiting on would not survive a restart.
 
 ## Editing
 
-The page edits a workflow's name, the text of its command, and the inputs of
-its trigger and steps. `spanreed/workflows/editing.py` moves a workflow
-between what is stored and what the forms hold.
+The page edits a workflow's name, the text of its command, the inputs of its
+trigger and steps, and which steps there are and in what order.
+`spanreed/workflows/editing.py` moves a workflow between what is stored and
+what the forms hold.
 
 Every input is edited as text, because any input can hold a template where
 its type asks for a number or a list. There are three controls:
@@ -374,6 +374,23 @@ the new values and keeps what it remembers.
 A card gets the list of values it can use from the cards before it. A step
 inside a loop is also offered the fields of the loop's items, when the loop
 goes over an output whose items are known, such as the sets of a workout.
+
+What a workflow can be made of comes from `GET /app/api/workflows/catalog`:
+every block with the card of a new step of it, and every recipe. A block of a
+plugin that the user is not registered to is listed and cannot be picked, and
+so is a recipe that needs such a plugin.
+
+- **A new step** gets an id after its block: `write_note`, then
+  `write_note_2`. Ids are not shown and cannot be changed. A step that is
+  removed or moved while a later step still refers to it is a problem that
+  Save reports.
+- **A new workflow** is made with `POST /app/api/workflows`, from a recipe or
+  with only a trigger. One that starts with only a trigger is off, so that
+  its trigger does not start to count things as done before there are steps.
+- **The trigger of a workflow cannot be changed.** What a trigger remembers
+  (a cursor, the things it ran for) belongs to that trigger.
+- **Deleting** a workflow (`DELETE /app/api/workflows/<id>`) deletes its
+  history and what its trigger remembers.
 
 ## Redis
 
