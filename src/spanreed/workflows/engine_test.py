@@ -8,7 +8,9 @@ from spanreed.workflows.blocks import BlockRegistry
 from spanreed.workflows.builtin import ContinueIf
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Step, Workflow
+from spanreed.workflows.recipes import Recipe
 from spanreed.workflows.testing import (
+    Pushed,
     Record,
     drain,
     fake_storage,
@@ -138,9 +140,52 @@ def test_the_user_is_told_once_that_a_workflow_keeps_failing(
 ) -> None:
     record = Record()
     attempts = WorkflowEngine.MAX_ATTEMPTS
-    # The first two events fail every time. The third works at once.
-    record.failures = [RuntimeError("down")] * (2 * attempts)
+    # The first event fails every time it is tried, and so does the second.
+    # The third works.
+    record.failures = [RuntimeError("down")] * (attempts + 1)
     workflow = workflow_of(_record("one", "hello"), events=["a", "b", "c"])
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record)
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage(), _sleeps() as sleep:
+        runs = asyncio.run(scenario())
+
+    # A workflow that fails gets one try for each event after the first.
+    assert [run["trigger"]["outputs"]["value"] for run in runs] == (
+        ["a"] * attempts + ["b", "c"]
+    )
+    assert [run["status"] for run in runs] == ["failed"] * (attempts + 1) + ["finished"]
+    mock_bot.notify.assert_awaited_once()
+    message = mock_bot.notify.call_args.args[0]
+    assert "“Test workflow” failed at step 1, Fake record: down" in message
+    assert record.texts == ["hello"]
+    # And no sooner than half an hour after its last failure: the pauses
+    # between the tries of "a", then one before "b" and one before "c".
+    waits = [call.args[0] for call in sleep.await_args_list]
+    assert waits[: attempts - 1] == [60, 120, 240, 480]
+    assert len(waits) == attempts + 1
+    assert all(1700 < wait <= 1800 for wait in waits[attempts - 1 :])
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_workflow_that_works_again_is_tried_in_full_the_next_time_it_fails(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    attempts = WorkflowEngine.MAX_ATTEMPTS
+    # "a" fails every time, "b" works, "c" fails twice and then works.
+    record.failures = [
+        *([RuntimeError("down")] * attempts),
+        None,
+        *([RuntimeError("down again")] * 2),
+    ]
+    workflow = workflow_of(
+        _record("one", "{{ trigger.value }}"), events=["a", "b", "c"]
+    )
 
     async def scenario() -> list[dict[str, Any]]:
         engine = _engine(record)
@@ -151,11 +196,9 @@ def test_the_user_is_told_once_that_a_workflow_keeps_failing(
     with fake_storage(), _sleeps():
         runs = asyncio.run(scenario())
 
-    assert len(runs) == 2 * attempts + 1
+    assert [run["attempt"] for run in runs][-3:] == [1, 2, 3]
+    assert record.texts == ["b", "c"]
     mock_bot.notify.assert_awaited_once()
-    message = mock_bot.notify.call_args.args[0]
-    assert "“Test workflow” failed at step 1, Fake record: down" in message
-    assert record.texts == ["hello"]
 
 
 @patch_user_interaction("spanreed.workflows.engine")
@@ -254,6 +297,131 @@ def test_a_trigger_that_fails_is_started_again_after_a_pause(
 
     assert record.texts == ["a"]
     assert [call.args[0] for call in sleep.await_args_list] == [60]
+
+
+# -- triggers that a plugin feeds --------------------------------------------
+
+
+async def _until(predicate: Any) -> None:
+    async with asyncio.timeout(2):
+        while not predicate():
+            await asyncio.sleep(0)
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_pushed_key_is_a_run_and_leaves_the_queue_when_the_run_worked(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.pushed")
+
+    async def scenario() -> None:
+        engine = _engine(record)
+        await engine.save(workflow)
+        queue = engine.store.queue(workflow.id)
+
+        await Pushed.emit(mock_user_find_by_id(4), ["monday", "nothing", "tuesday"])
+        await _until(lambda: len(record.texts) == 2)
+        await _until_empty(queue)
+
+        # A key with no event is taken out without a run.
+        assert record.texts == ["monday", "tuesday"]
+        assert len(await _runs(engine, workflow)) == 2
+        await engine.stop()
+
+    with fake_storage():
+        asyncio.run(scenario())
+
+
+async def _until_empty(queue: Any) -> None:
+    async with asyncio.timeout(2):
+        while await queue.keys():
+            await asyncio.sleep(0)
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_key_whose_run_keeps_failing_stays_queued_and_is_tried_again(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    attempts = WorkflowEngine.MAX_ATTEMPTS
+    # Obsidian is closed for all the tries of "monday", then it is back.
+    record.failures = [RuntimeError("Obsidian did not answer")] * attempts
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.pushed")
+
+    async def scenario() -> None:
+        engine = _engine(record)
+        await engine.save(workflow)
+        queue = engine.store.queue(workflow.id)
+
+        await Pushed.emit(mock_user_find_by_id(4), ["monday", "tuesday"])
+        await _until_empty(queue)
+
+        # "tuesday" ran while "monday" waited behind it, then "monday" worked.
+        assert record.texts == ["tuesday", "monday"]
+        runs = await _runs(engine, workflow)
+        assert [run["status"] for run in runs] == ["failed"] * attempts + [
+            "finished",
+            "finished",
+        ]
+        mock_bot.notify.assert_awaited_once()
+        await engine.stop()
+
+    with fake_storage(), _sleeps():
+        asyncio.run(scenario())
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_keys_put_while_the_engine_was_down_run_when_it_starts(
+    mock_bot: AsyncMock,
+) -> None:
+    record = Record()
+    workflow = workflow_of(_record("one", "{{ trigger.value }}"), trigger="fake.pushed")
+
+    async def scenario(registry: BlockRegistry) -> None:
+        store = WorkflowEngine(registry).store
+        await store.save(workflow)
+        await Pushed.emit(mock_user_find_by_id(4), ["monday"])
+
+        engine = WorkflowEngine(registry)
+        await engine.start([4])
+        await _until_empty(engine.store.queue(workflow.id))
+        await engine.stop()
+
+    with fake_storage():
+        asyncio.run(scenario(registry_of(record)))
+
+    assert record.texts == ["monday"]
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_install_can_change_the_workflow_before_it_is_stored(
+    mock_bot: AsyncMock,
+) -> None:
+    recipe = Recipe(
+        id="demo",
+        name="Demo",
+        description="",
+        trigger={"block": "fake.pushed", "params": {}},
+        steps=[{"id": "one", "block": "fake.record", "inputs": {"text": "a"}}],
+    )
+
+    def customize(workflow: Workflow) -> None:
+        workflow.steps[0].inputs["text"] = "from the old settings"
+        workflow.enabled = False
+
+    async def scenario() -> None:
+        engine = _engine(Record())
+        workflow = await engine.install(mock_user_find_by_id(4), recipe, customize)
+        stored = await engine.store.get(workflow.id)
+        assert stored is not None
+        assert stored.steps[0].inputs == {"text": "from the old settings"}
+        assert not stored.enabled
+        # The recipe itself is as it was.
+        assert recipe.steps[0]["inputs"] == {"text": "a"}
+
+    with fake_storage():
+        asyncio.run(scenario())
 
 
 # -- what runs ---------------------------------------------------------------

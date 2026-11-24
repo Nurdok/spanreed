@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Literal
 
@@ -77,7 +77,7 @@ class Schedule(Trigger[ScheduleParams, Tick]):
 
     async def events(
         self, ctx: TriggerContext, params: ScheduleParams
-    ) -> AsyncIterator[Tick]:
+    ) -> AsyncGenerator[Tick, bool | None]:
         """Yield an event each time the interval has passed."""
         while True:
             last = await self._last_fired(ctx)

@@ -13,6 +13,7 @@ from spanreed.plugin import Plugin
 from spanreed.user import User
 from spanreed.storage import redis_api
 from spanreed.interaction import UserInteractionApi
+from spanreed.workflows.blocks import Block
 
 from typing import Any
 
@@ -25,6 +26,13 @@ class ObsidianPlugin(Plugin):
     @classmethod
     def name(cls) -> str:
         return "Obsidian"
+
+    def blocks(self) -> list[Block]:
+        """Return the Obsidian blocks for workflows."""
+        # Imported here: the blocks import this module for ``ObsidianApi``.
+        from spanreed.apis.obsidian_blocks import obsidian_blocks
+
+        return obsidian_blocks()
 
 
 class ObsidianApi:

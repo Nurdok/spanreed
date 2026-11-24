@@ -26,6 +26,7 @@ from spanreed.workflows.builtin import (
 )
 from spanreed.workflows.testing import fake_plugin
 from spanreed.workflows.blocks import BlockRegistry
+from spanreed.workflows.store import WorkflowQueue
 from spanreed.workflows.values import from_data
 
 NOON = datetime.datetime(2026, 5, 9, 12, 0, tzinfo=datetime.timezone.utc)
@@ -45,7 +46,12 @@ class _State:
 
 
 def _trigger_context(state: _State) -> TriggerContext:
-    return TriggerContext(user=mock_user_find_by_id(4), workflow_id="wf_1", state=state)
+    return TriggerContext(
+        user=mock_user_find_by_id(4),
+        workflow_id="wf_1",
+        state=state,
+        queue=WorkflowQueue("wf_1"),
+    )
 
 
 def _step_context() -> StepContext:
@@ -142,7 +148,9 @@ def test_the_time_of_an_event_is_kept_when_its_run_is_over() -> None:
 def test_an_event_is_in_the_timezone_of_the_user() -> None:
     user = mock_user_find_by_id(4)
     user.tzinfo = datetime.timezone(datetime.timedelta(hours=13))
-    ctx = TriggerContext(user=user, workflow_id="wf_1", state=_State())
+    ctx = TriggerContext(
+        user=user, workflow_id="wf_1", state=_State(), queue=WorkflowQueue("wf_1")
+    )
 
     with patch("spanreed.workflows.builtin._now", new=lambda: NOON):
         events = asyncio.run(

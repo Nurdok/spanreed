@@ -9,8 +9,9 @@ The HTTP handler must answer fast, because the bridge app retries only a few
 times. It only checks the token and pushes the raw body onto a Redis inbox
 for the user. ``HealthConnectPlugin`` reads the inbox, parses each payload
 and stores every record by local date in ``HealthConnectStore``, exactly as
-the phone sent it. Daily metrics and the raw data files in the vault are
-both built from that store.
+the phone sent it. The workflow triggers in
+``spanreed.apis.health_connect_blocks`` build the daily metrics and the raw
+records of a day from that store, for workflows to write into the vault.
 
 The bridge app sends this payload shape (see its ``docs/webhook.md``)::
 
@@ -805,27 +806,6 @@ class HealthConnectStore:
         )
 
     @property
-    def _export_pending_key(self) -> str:
-        return f"health-connect:export-pending:{self._user.id}"
-
-    async def mark_export_pending(
-        self, days: Iterable[tuple[str, datetime.date]]
-    ) -> None:
-        """Remember that the raw data files of these days are out of date.
-
-        Each day is a record type of the store and a local date.
-        """
-        members = [f"{record_type}|{date.isoformat()}" for record_type, date in days]
-        if members:
-            await redis_api.sadd(self._export_pending_key, *members)
-
-    async def clear_export_pending(self, record_type: str, date: datetime.date) -> None:
-        """Forget that the raw data file of this day is out of date."""
-        await redis_api.srem(
-            self._export_pending_key, f"{record_type}|{date.isoformat()}"
-        )
-
-    @property
     def _export_emptied_key(self) -> str:
         return f"health-connect:export-emptied:{self._user.id}"
 
@@ -834,8 +814,9 @@ class HealthConnectStore:
     ) -> None:
         """Remember that deletions on the phone left these days with no records.
 
-        The raw data file of such a day is deleted when the day is exported.
-        A day that has no records for another reason keeps its file.
+        The "Raw records changed" trigger gives such a day as an event with
+        no records, so that a workflow can delete its file. A day that has
+        no records for another reason gives no event, and keeps its file.
         """
         members = [f"{record_type}|{date.isoformat()}" for record_type, date in days]
         if members:
@@ -854,20 +835,6 @@ class HealthConnectStore:
         await redis_api.srem(
             self._export_emptied_key, f"{record_type}|{date.isoformat()}"
         )
-
-    async def get_export_pending(self) -> list[tuple[str, datetime.date]]:
-        """Return the days whose raw data files are out of date.
-
-        Sort the pairs by record type, then by date.
-        """
-        days: set[tuple[str, datetime.date]] = set()
-        for member in await redis_api.smembers(self._export_pending_key):
-            record_type, _, day = _decode(member).rpartition("|")
-            try:
-                days.add((record_type, datetime.date.fromisoformat(day)))
-            except ValueError:
-                continue
-        return sorted(days)
 
     async def get_stored_days(self) -> list[tuple[str, datetime.date]]:
         """Return every record type and local date that has stored records.

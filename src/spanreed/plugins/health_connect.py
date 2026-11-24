@@ -1,84 +1,55 @@
-"""Move Health Connect payloads from the webhook inbox into the vault.
+"""Receive Health Connect payloads and say which days changed.
 
 See ``spanreed.apis.health_connect`` for how the data arrives. This plugin
-stores every record of each payload by local date. For the dates that
-changed, it writes the step total and the heart rate metrics into the daily
-note, and it rewrites the raw data files, which hold every stored record.
+stores every record of each payload by local date. Then it tells the
+workflow triggers what changed: the days whose metrics changed, and the days
+of each record type whose raw records changed.
+
+What is written into the vault, and where, is up to the user's workflows.
+Two recipes do what this plugin used to do itself: "Health data → daily
+note" and "Health raw data → vault files". ``convert_to_workflows`` gives
+them to a user who had the plugin before, with the settings they had.
 """
 
 import asyncio
-import dataclasses
 import datetime
 import html
 import json
 import logging
 from dataclasses import dataclass, field
 
-from spanreed.daily_note_fields import (
-    DailyNoteFieldsBase,
-    ask_for_daily_note_fields,
-)
 from spanreed.plugin import Plugin
+from spanreed.storage import redis_api
 from spanreed.user import User
 from spanreed.interaction import UserInteractionApi, PluginCommand
 from spanreed.plugins.user_profile import ask_for_birth_date, ask_for_timezone
-from spanreed.apis.obsidian import ObsidianApi, ObsidianPlugin
+from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.apis.health_connect import (
     HealthConnectApi,
     HealthConnectPayload,
     HealthConnectStore,
     WEBHOOK_URL,
-    HR_MODERATE_MINUTES,
-    HR_VIGOROUS_MINUTES,
-    daily_heart_rate_metrics,
-    VO2_MAX_RECORD_TYPE,
-    daily_step_total,
-    daily_vo2_max,
-    dump_record,
-    max_heart_rate,
     parse_payload,
-    type_name_of,
 )
+from spanreed.apis.health_connect_blocks import (
+    METRIC_RECORD_TYPES,
+    DayChanged,
+    RawRecordsChanged,
+    health_connect_blocks,
+    raw_records_key,
+)
+from spanreed.workflows.blocks import Block
+from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.model import Workflow
+from spanreed.workflows.recipes import all_recipes
+from spanreed.workflows.store import WorkflowStore
 
-# Frontmatter properties written into the daily note.
-STEPS_PROPERTY = "steps"
-# Keys of daily_heart_rate_metrics, written in this order.
-HEART_RATE_PROPERTIES = (
-    "resting-heart-rate",
-    "heart-rate-p5",
-    "heart-rate-avg",
-    "heart-rate-p95",
-    "heart-rate-p98",
-    "heart-rate-p99",
-    HR_MODERATE_MINUTES,
-    HR_VIGOROUS_MINUTES,
-)
-VO2_MAX_PROPERTY = "vo2-max"
-# Folder holding the daily notes (matches the other daily-note plugins).
-DAILY_NOTE_FOLDER = "Daily"
-# Default vault folder of the raw data files. It holds one JSON Lines file for
-# each record type and local date: ``Health/raw/heart_rate/2026-05-09.jsonl``.
+# The recipes that do what this plugin used to do itself.
+DAILY_NOTE_RECIPE = "health-connect-daily-note"
+RAW_FILES_RECIPE = "health-connect-raw-files"
+# Vault folder of the raw data files, unless the user chose another one
+# while the folder was a setting of this plugin.
 DEFAULT_RAW_DATA_FOLDER = "Health/raw"
-
-
-@dataclass
-class DailyNoteFields(DailyNoteFieldsBase):
-    """Which properties are written into the daily note.
-
-    Each field is one property; its name is the property name with ``_``
-    for ``-``.
-    """
-
-    steps: bool = True
-    resting_heart_rate: bool = True
-    heart_rate_p5: bool = True
-    heart_rate_avg: bool = True
-    heart_rate_p95: bool = True
-    heart_rate_p98: bool = True
-    heart_rate_p99: bool = True
-    hr_moderate_minutes: bool = True
-    hr_vigorous_minutes: bool = True
-    vo2_max: bool = True
 
 
 @dataclass
@@ -89,33 +60,6 @@ class UserConfig:
     # Hidden in the settings form: a new token must also be registered, which
     # only the setup flow does.
     token: str = field(default="", metadata={"config_form": "hidden"})
-    # Vault folder that the raw data files are written under.
-    raw_data_folder: str = field(
-        default=DEFAULT_RAW_DATA_FOLDER,
-        metadata={
-            "config_help": "Vault folder for the raw data files. Files "
-            "already written to another folder are not moved."
-        },
-    )
-
-    # The daily note properties to write. All of them by default.
-    daily_note_fields: DailyNoteFields = field(
-        default_factory=DailyNoteFields,
-        metadata={
-            "config_help": "The checked properties are written to the daily "
-            "note. Unchecking one does not remove values already written."
-        },
-    )
-
-    def __post_init__(self) -> None:
-        """Clean up the folder, and raise ``ValueError`` if it is not valid.
-
-        Build ``daily_note_fields`` from the saved JSON data, ignoring a
-        property that no longer exists.
-        """
-        self.raw_data_folder = normalize_vault_folder(self.raw_data_folder)
-        if isinstance(self.daily_note_fields, dict):
-            self.daily_note_fields = DailyNoteFields.from_saved(self.daily_note_fields)
 
 
 @dataclass
@@ -126,12 +70,10 @@ class IngestSummary:
     resting_heart_rate_samples: int = 0
     steps_records: int = 0
     skipped_records: int = 0
-    # Local dates that got new or changed records, for all types together
-    # and per daily-note section (those are the dates to rewrite).
+    # Local dates that got new or changed records: of any type, and of the
+    # types that a day's metrics are computed from.
     touched_dates: set[datetime.date] = field(default_factory=set)
-    steps_dates: set[datetime.date] = field(default_factory=set)
-    heart_rate_dates: set[datetime.date] = field(default_factory=set)
-    vo2_max_dates: set[datetime.date] = field(default_factory=set)
+    metric_dates: set[datetime.date] = field(default_factory=set)
     # Changed local dates for each record type of the store, including the
     # types that no metric is computed from.
     stored_dates: dict[str, set[datetime.date]] = field(default_factory=dict)
@@ -139,11 +81,6 @@ class IngestSummary:
     # deleted ids that matched no stored record.
     deleted_records: int = 0
     unmatched_deletions: int = 0
-
-
-def raw_file_path(folder: str, record_type: str, date: datetime.date) -> str:
-    """Return the vault path of the raw data file of one type and date."""
-    return f"{folder}/{type_name_of(record_type)}/{date.isoformat()}.jsonl"
 
 
 def normalize_vault_folder(text: str) -> str:
@@ -194,8 +131,23 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         return UserConfig
 
     @classmethod
+    async def get_config(cls, user: User) -> UserConfig:
+        """Return the user's config.
+
+        A config saved while this plugin wrote to the vault itself also
+        holds the folder and the properties it wrote. They are settings of
+        the user's workflows now, and are left out here.
+        """
+        saved = await cls.get_saved_config_data(user) or {}
+        return UserConfig(token=str(saved.get("token") or ""))
+
+    @classmethod
     def get_prerequisites(cls) -> list[type[Plugin]]:
         return [ObsidianPlugin]
+
+    def blocks(self) -> list[Block]:
+        """Return the Health Connect triggers for workflows."""
+        return health_connect_blocks()
 
     @classmethod
     async def ask_for_user_config(cls, user: User) -> None:
@@ -233,65 +185,32 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         if not config.token:
             config.token = HealthConnectApi.generate_token()
 
-        config.raw_data_folder = await cls._ask_for_raw_data_folder(
-            bot, config.raw_data_folder
-        )
-
-        await ask_for_daily_note_fields(bot, config.daily_note_fields)
-
         await HealthConnectApi.register_token(user, config.token)
         await cls.set_config(user, config)
         if config.token != old_token:
             if old_token:
                 await HealthConnectApi.unregister_token(old_token)
             await bot.send_message(setup_instructions(config.token), parse_html=True)
+        if not await cls._has_workflows(user):
+            await bot.send_message(
+                "The data is stored, and workflows put it in your vault. Add "
+                "“Health data → daily note” and “Health raw data → vault "
+                "files” from the recipes of “Manage workflows”."
+            )
 
     @staticmethod
-    async def _ask_for_raw_data_folder(bot: UserInteractionApi, current: str) -> str:
-        """Ask where in the vault the raw data files go, and return the folder.
-
-        Return ``current`` if the user keeps it, or gives a folder that is
-        not valid. Files that are already in the vault are not moved.
-        """
-        choice = await bot.request_user_choice(
-            f"Raw Health Connect data files are written to the vault folder "
-            f"{current}.",
-            ["Keep this folder", "Change folder"],
+    async def _has_workflows(user: User) -> bool:
+        """Return whether a workflow of the user uses a Health Connect trigger."""
+        triggers = {block.id for block in health_connect_blocks()}
+        return any(
+            workflow.trigger.block in triggers
+            for workflow in await WorkflowStore().list_for_user(user.id)
         )
-        if choice != 1:  # Keep this folder
-            return current
-        answer = await bot.request_user_input(
-            f"Send the vault folder for the raw data files, for example "
-            f"{DEFAULT_RAW_DATA_FOLDER}. Files already in {current} are not moved."
-        )
-        try:
-            return normalize_vault_folder(answer)
-        except ValueError as e:
-            await bot.send_message(f"Folder not changed. {e}")
-            return current
 
     async def run(self) -> None:
         await UserInteractionApi.register_command(
             self,
             PluginCommand(text="Show Health Connect setup", callback=self._show_setup),
-        )
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(text="Sync steps", callback=self._sync_steps_now),
-        )
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(text="Sync heart rate", callback=self._sync_heart_rate_now),
-        )
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(text="Sync VO2 max", callback=self._sync_vo2_max_now),
-        )
-        await UserInteractionApi.register_command(
-            self,
-            PluginCommand(
-                text="Export Health Connect raw data", callback=self._export_raw_now
-            ),
         )
         await UserInteractionApi.register_command(
             self,
@@ -318,17 +237,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
                 continue  # poll timeout; loop so cancellation is noticed
             try:
                 summary = await self._ingest(user, raw)
-                # Silent: the background path must never message the user.
-                # If Obsidian is offline the records are already stored, and
-                # the next payload or a manual sync writes them.
-                await self._write_steps(user, sorted(summary.steps_dates), notify=False)
-                await self._write_heart_rate(
-                    user, sorted(summary.heart_rate_dates), notify=False
-                )
-                await self._write_vo2_max(
-                    user, sorted(summary.vo2_max_dates), notify=False
-                )
-                await self._write_raw_files(user)
+                await self._announce(user, summary)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -340,8 +249,7 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         """Store the records of one raw payload and return a summary.
 
         Store every record, of every type. Then remove the stored records
-        that the payload reports as deleted on the phone. Mark the raw data
-        files of the changed days as out of date.
+        that the payload reports as deleted on the phone.
         """
         data = json.loads(raw)
         payload: HealthConnectPayload = parse_payload(data)
@@ -361,19 +269,10 @@ class HealthConnectPlugin(Plugin[UserConfig]):
         for record_type, dates in deletions.touched.items():
             summary.stored_dates.setdefault(record_type, set()).update(dates)
         await store.mark_export_emptied(deletions.emptied)
-        await store.mark_export_pending(
-            (record_type, date)
-            for record_type, dates in summary.stored_dates.items()
-            for date in dates
-        )
         for record_type, dates in summary.stored_dates.items():
             summary.touched_dates |= dates
-            if record_type == "steps":
-                summary.steps_dates |= dates
-            elif record_type in ("heart-rate", "resting-heart-rate"):
-                summary.heart_rate_dates |= dates
-            elif record_type == VO2_MAX_RECORD_TYPE:
-                summary.vo2_max_dates |= dates
+            if record_type in METRIC_RECORD_TYPES:
+                summary.metric_dates |= dates
 
         self._logger.info(
             f"Ingested Health Connect payload for user {user.id} "
@@ -392,163 +291,24 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             )
         return summary
 
-    async def _write_raw_files(self, user: User) -> int:
-        """Bring the raw data file of every out-of-date day up to date.
+    @staticmethod
+    async def _announce(user: User, summary: IngestSummary) -> None:
+        """Tell the user's workflows what a payload changed.
 
-        Rewrite each file from the stored records, one JSON record on each
-        line. Delete the file of a day that deletions on the phone left with
-        no records. Keep a day marked as out of date if its file cannot be
-        written or deleted, so that the next run does it. Return the number
-        of files written.
+        The records are stored already. A workflow that cannot write them
+        now, because Obsidian is closed, keeps the day in its queue.
         """
-        store = HealthConnectStore(user)
-        pending = await store.get_export_pending()
-        if not pending:
-            return 0
-        config: UserConfig = await self.get_config(user)
-        obsidian = await ObsidianApi.for_user(user)
-
-        written = 0
-        for record_type, date in pending:
-            # Clear the mark before reading, so that records which arrive
-            # during the write mark the day again.
-            await store.clear_export_pending(record_type, date)
-            try:
-                records = await store.get_raw_records(record_type, date)
-                path = raw_file_path(config.raw_data_folder, record_type, date)
-                if not records:
-                    # Leave the file alone if the stored records expired or
-                    # the user deleted them here. Delete it only if the
-                    # phone deleted every record of the day.
-                    if await store.is_export_emptied(record_type, date):
-                        try:
-                            await obsidian.delete_file(path)
-                        except FileNotFoundError:
-                            pass  # never written
-                        await store.clear_export_emptied(record_type, date)
-                        self._logger.info(
-                            f"Deleted the {record_type} file of {date.isoformat()}"
-                        )
-                    continue
-                content = "".join(f"{dump_record(record)}\n" for record in records)
-                await obsidian.write_binary_file(
-                    path, content.encode("utf-8"), overwrite=True
-                )
-                await store.clear_export_emptied(record_type, date)
-            except BaseException:
-                await store.mark_export_pending([(record_type, date)])
-                raise
-            written += 1
-            self._logger.info(
-                f"Wrote {len(records)} {record_type} records for {date.isoformat()}"
-            )
-        return written
-
-    async def _export_raw_now(self, user: User) -> None:
-        """Rewrite the raw data file of every stored day, on request."""
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        config: UserConfig = await self.get_config(user)
-        store = HealthConnectStore(user)
-        await store.mark_export_pending(await store.get_stored_days())
-        await bot.notify("Exporting raw Health Connect data…")
-        written = await self._write_raw_files(user)
-        if written == 0:
-            await bot.notify("No stored Health Connect data to export.")
-        else:
-            await bot.notify(
-                f"Wrote {written} raw data {'file' if written == 1 else 'files'} "
-                f"to {config.raw_data_folder}."
-            )
-
-    async def _sync_steps_now(self, user: User) -> None:
-        """Write step totals for recent days, on request from the user.
-
-        Compute them from the stored records and write them even when the
-        note already holds the same value.
-        """
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        config: UserConfig = await self.get_config(user)
-        if not config.daily_note_fields.writes(STEPS_PROPERTY):
-            await bot.send_message(
-                "The steps property is turned off in the Health Connect settings."
-            )
-            return
-        choice = await bot.request_user_choice(
-            "Sync steps for…",
-            ["Today", "The last week", "Cancel"],
+        await DayChanged.emit(
+            user, [date.isoformat() for date in sorted(summary.metric_dates)]
         )
-        if choice == 0:  # Today
-            days = 1
-        elif choice == 1:  # The last week
-            days = 7
-        else:  # Cancel
-            return
-
-        today = datetime.datetime.now(tz=user.tzinfo).date()
-        dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
-        await bot.notify("Syncing steps…")
-        if await self._write_steps(user, dates, notify=True, force=True) == 0:
-            await bot.notify("No stored steps for those days.")
-
-    async def _sync_heart_rate_now(self, user: User) -> None:
-        """Write heart rate metrics into daily notes, on request from the user.
-
-        Offer today, the last week, or all time. All time covers every date
-        that still has stored records, and reports one total instead of a
-        message for each day. Write the values even when the note already
-        holds the same ones.
-        """
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        fields = (await self.get_config(user)).daily_note_fields
-        if not any(fields.writes(prop) for prop in HEART_RATE_PROPERTIES):
-            await bot.send_message(
-                "Every heart rate property is turned off in the Health "
-                "Connect settings."
-            )
-            return
-        choice = await bot.request_user_choice(
-            "Sync heart rate for…",
-            ["Today", "The last week", "All time", "Cancel"],
+        await RawRecordsChanged.emit(
+            user,
+            [
+                raw_records_key(record_type, date)
+                for record_type, dates in sorted(summary.stored_dates.items())
+                for date in sorted(dates)
+            ],
         )
-        zone_minutes = fields.writes(HR_MODERATE_MINUTES) or fields.writes(
-            HR_VIGOROUS_MINUTES
-        )
-        if (
-            choice in (0, 1, 2)
-            and zone_minutes
-            and await User.get_user_birth_date(user.id) is None
-        ):
-            await bot.notify(
-                "Heart rate zone minutes are skipped until you set your "
-                "date of birth with “Set date of birth”."
-            )
-        if choice == 2:  # All time
-            dates = await HealthConnectStore(user).get_heart_rate_dates()
-            await bot.notify("Syncing heart rate…")
-            written = await self._write_heart_rate(
-                user, dates, notify=False, force=True
-            )
-            if written == 0:
-                await bot.notify("No stored heart rate to write.")
-            else:
-                await bot.notify(
-                    f"Logged heart rate in {written} daily "
-                    f"{'note' if written == 1 else 'notes'}, out of "
-                    f"{len(dates)} stored {'day' if len(dates) == 1 else 'days'}."
-                )
-            return
-        if choice == 0:  # Today
-            days = 1
-        elif choice == 1:  # The last week
-            days = 7
-        else:  # Cancel
-            return
-
-        today = datetime.datetime.now(tz=user.tzinfo).date()
-        dates = [today - datetime.timedelta(days=i) for i in reversed(range(days))]
-        await bot.notify("Syncing heart rate…")
-        if await self._write_heart_rate(user, dates, notify=True, force=True) == 0:
-            await bot.notify("No stored heart rate for those days.")
 
     async def _delete_data(self, user: User) -> None:
         """Delete stored records of recent days, on request from the user.
@@ -589,231 +349,86 @@ class HealthConnectPlugin(Plugin[UserConfig]):
             "covers those days."
         )
 
-    async def _write_steps(
-        self,
-        user: User,
-        dates: list[datetime.date],
-        *,
-        notify: bool,
-        force: bool = False,
-    ) -> int:
-        """Write the step total of each date into its daily note.
 
-        Do nothing if the user turned the steps property off. Compute each
-        total from the stored records. Skip a date that has no records.
-        Overwrite the property when the total changed, because today's total
-        grows through the day. Leave it alone when it is the same, unless
-        ``force`` is true: then write it without reading the note first.
-        Send Telegram messages only when ``notify`` is true. Return the
-        number of notes written.
-        """
-        if not dates:
-            return 0
-        config: UserConfig = await self.get_config(user)
-        if not config.daily_note_fields.writes(STEPS_PROPERTY):
-            return 0
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        store = HealthConnectStore(user)
-        obsidian = await ObsidianApi.for_user(user)
+# -- from a plugin that writes to the vault to workflows that do ---------------
 
-        # Only today's daily note is generated on demand; past dates are
-        # expected to already have their notes.
-        await obsidian.safe_generate_today_note()
 
-        written = 0
-        for date in dates:
-            records = await store.get_steps(date)
-            if not records:
+def _legacy_pending_key(user: User) -> str:
+    # Where the plugin kept the days whose raw data files were out of date.
+    return f"health-connect:export-pending:{user.id}"
+
+
+async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workflow]:
+    """Give a user of the old plugin the workflows that do what it did.
+
+    Install the two recipes with the settings the user had: the raw data
+    folder, and without the daily note properties that were turned off.
+    Queue what the plugin still had to write, and the last two days, so
+    that nothing is missed in between. Return the workflows that were
+    installed. Doing this again installs nothing.
+    """
+    saved = await HealthConnectPlugin.get_saved_config_data(user) or {}
+    workflows = {w.recipe: w for w in await engine.store.list_for_user(user.id)}
+    installed = []
+
+    def keep_properties(workflow: Workflow) -> None:
+        fields = saved.get("daily_note_fields") or {}
+        turned_off = {name.replace("_", "-") for name, on in fields.items() if not on}
+        for step in workflow.steps:
+            properties = step.inputs.get("properties")
+            if not isinstance(properties, dict):
                 continue
-            total = daily_step_total(records)
-            daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
-            try:
-                if (
-                    not force
-                    and await obsidian.get_property(daily_note, STEPS_PROPERTY) == total
-                ):
-                    continue
-                await obsidian.set_value_of_property(daily_note, STEPS_PROPERTY, total)
-            except FileNotFoundError:
-                if notify:
-                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
-                continue
+            if turned_off >= set(properties):
+                # Nothing was written, so the workflow starts off.
+                workflow.enabled = False
+            else:
+                for name in turned_off:
+                    properties.pop(name, None)
 
-            written += 1
-            self._logger.info(f"Wrote {STEPS_PROPERTY}={total} for {date.isoformat()}")
-            if notify:
-                await bot.notify(f"Logged steps for {date.isoformat()}: {total}.")
-        return written
-
-    async def _sync_vo2_max_now(self, user: User) -> None:
-        """Write VO2 max into daily notes, on request from the user.
-
-        Cover every date that still has stored measurements, and report one
-        total. There is no choice of range, because a watch gives a VO2 max
-        only now and then.
-        """
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        config: UserConfig = await self.get_config(user)
-        if not config.daily_note_fields.writes(VO2_MAX_PROPERTY):
-            await bot.send_message(
-                "The VO2 max property is turned off in the Health Connect settings."
-            )
-            return
-        dates = [
-            date
-            for record_type, date in await HealthConnectStore(user).get_stored_days()
-            if record_type == VO2_MAX_RECORD_TYPE
-        ]
-        if not dates:
-            await bot.send_message(
-                "No VO2 max measurements are stored. Check that VO2 max is "
-                "turned on in the phone app and allowed in Health Connect."
-            )
-            return
-        await bot.notify("Syncing VO2 max…")
-        written = await self._write_vo2_max(user, dates, notify=False, force=True)
-        if written == 0:
-            await bot.notify("No VO2 max could be written.")
-        else:
-            await bot.notify(
-                f"Logged VO2 max in {written} daily "
-                f"{'note' if written == 1 else 'notes'}, out of "
-                f"{len(dates)} stored {'day' if len(dates) == 1 else 'days'}."
-            )
-
-    async def _write_vo2_max(
-        self,
-        user: User,
-        dates: list[datetime.date],
-        *,
-        notify: bool,
-        force: bool = False,
-    ) -> int:
-        """Write the VO2 max of each date into its daily note.
-
-        Do nothing if the user turned the property off. Take the last
-        measurement of each date from the stored records, and skip a date
-        that has none. Set the property only when the value changed, or
-        always if ``force`` is true. Send
-        Telegram messages only when ``notify`` is true. Return the number
-        of notes written.
-        """
-        if not dates:
-            return 0
-        config: UserConfig = await self.get_config(user)
-        if not config.daily_note_fields.writes(VO2_MAX_PROPERTY):
-            return 0
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        store = HealthConnectStore(user)
-        obsidian = await ObsidianApi.for_user(user)
-        await obsidian.safe_generate_today_note()
-
-        written = 0
-        for date in dates:
-            value = daily_vo2_max(
-                await store.get_raw_records(VO2_MAX_RECORD_TYPE, date)
-            )
-            if value is None:
-                continue
-            daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
-            try:
-                if (
-                    not force
-                    and await obsidian.get_property(daily_note, VO2_MAX_PROPERTY)
-                    == value
-                ):
-                    continue
-                await obsidian.set_value_of_property(
-                    daily_note, VO2_MAX_PROPERTY, value
+    def keep_folder(workflow: Workflow) -> None:
+        try:
+            folder = normalize_vault_folder(str(saved.get("raw_data_folder") or ""))
+        except ValueError:
+            folder = DEFAULT_RAW_DATA_FOLDER
+        for step in workflow.steps:
+            if "path" in step.inputs:
+                step.inputs["path"] = step.inputs["path"].replace(
+                    DEFAULT_RAW_DATA_FOLDER, folder, 1
                 )
-            except FileNotFoundError:
-                if notify:
-                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
-                continue
 
-            written += 1
-            self._logger.info(
-                f"Wrote {VO2_MAX_PROPERTY}={value} for {date.isoformat()}"
+    for recipe_id, keep in (
+        (DAILY_NOTE_RECIPE, keep_properties),
+        (RAW_FILES_RECIPE, keep_folder),
+    ):
+        if recipe_id not in workflows:
+            workflows[recipe_id] = await engine.install(
+                user, all_recipes()[recipe_id], keep
             )
-            if notify:
-                await bot.notify(f"Logged VO2 max for {date.isoformat()}: {value}.")
-        return written
+            installed.append(workflows[recipe_id])
 
-    async def _write_heart_rate(
-        self,
-        user: User,
-        dates: list[datetime.date],
-        *,
-        notify: bool,
-        force: bool = False,
-    ) -> int:
-        """Write heart rate metrics of each date into its daily note.
+    # Payloads that arrived while the workflows were not there yet changed
+    # days that nothing wrote. They are recent, so queue the last two days.
+    store = HealthConnectStore(user)
+    today = datetime.datetime.now(tz=user.tzinfo).date()
+    recent = {today, today - datetime.timedelta(days=1)}
+    stored = await store.get_stored_days()
+    days = engine.store.queue(workflows[DAILY_NOTE_RECIPE].id)
+    for date in sorted(
+        {d for t, d in stored if d in recent and t in METRIC_RECORD_TYPES}
+    ):
+        await days.put(date.isoformat())
+    raw = engine.store.queue(workflows[RAW_FILES_RECIPE].id)
+    for record_type, date in stored:
+        if date in recent:
+            await raw.put(raw_records_key(record_type, date))
+    # What the plugin still had to write. Its marks have the form of the
+    # trigger's keys.
+    for member in await redis_api.smembers(_legacy_pending_key(user)):
+        await raw.put(member.decode("utf-8") if isinstance(member, bytes) else member)
+    await redis_api.delete(_legacy_pending_key(user))
 
-        Compute ``resting-heart-rate``, ``heart-rate-p5``, ``heart-rate-avg``,
-        ``heart-rate-p95``, ``heart-rate-p98`` and ``heart-rate-p99`` from the
-        stored records. If the user's date of birth is set, also compute
-        ``hr-moderate-minutes`` and ``hr-vigorous-minutes`` from the maximum
-        heart rate at the user's age on that date. Write only the properties
-        that the user has turned on. Skip a date with no records and leave
-        out a metric the day has no data for. Set only the properties whose value changed, or
-        every one of them if ``force`` is true. Send Telegram messages only
-        when ``notify`` is true. Return
-        the number of notes written.
-        """
-        if not dates:
-            return 0
-        config: UserConfig = await self.get_config(user)
-        properties = [
-            prop
-            for prop in HEART_RATE_PROPERTIES
-            if config.daily_note_fields.writes(prop)
-        ]
-        if not properties:
-            return 0
-        bot: UserInteractionApi = await UserInteractionApi.for_user(user)
-        store = HealthConnectStore(user)
-        obsidian = await ObsidianApi.for_user(user)
-        await obsidian.safe_generate_today_note()
-        # Read the date of birth now: ``user`` may have been loaded before the
-        # user set it.
-        user.birth_date = await User.get_user_birth_date(user.id)
-
-        written = 0
-        for date in dates:
-            age = user.age_on(date)
-            metrics = daily_heart_rate_metrics(
-                await store.get_heart_rate(date),
-                await store.get_resting_heart_rate(date),
-                max_hr=max_heart_rate(age) if age is not None else None,
-            )
-            if not any(prop in metrics for prop in properties):
-                continue
-            daily_note: str = await obsidian.get_daily_note(DAILY_NOTE_FOLDER, date)
-            changed: dict[str, int] = {}
-            try:
-                for prop in properties:
-                    if prop not in metrics:
-                        continue
-                    if (
-                        not force
-                        and await obsidian.get_property(daily_note, prop)
-                        == metrics[prop]
-                    ):
-                        continue
-                    await obsidian.set_value_of_property(
-                        daily_note, prop, metrics[prop]
-                    )
-                    changed[prop] = metrics[prop]
-            except FileNotFoundError:
-                if notify:
-                    await bot.notify(f"No daily note for {date.isoformat()}; skipping.")
-                continue
-            if not changed:
-                continue
-
-            written += 1
-            values = ", ".join(f"{k}={v}" for k, v in changed.items())
-            self._logger.info(f"Wrote {values} for {date.isoformat()}")
-            if notify:
-                await bot.notify(f"Logged heart rate for {date.isoformat()}: {values}.")
-        return written
+    # Last: the saved config loses the settings that the workflows now hold.
+    await HealthConnectPlugin.set_config(
+        user, await HealthConnectPlugin.get_config(user)
+    )
+    return installed

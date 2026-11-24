@@ -63,6 +63,7 @@ class WorkflowsPlugin(Plugin):
             # After the start, so that a workflow installed here is started
             # once.
             await migrations.retire_plugins(self._engine)
+            await migrations.convert_plugins(self._engine)
             # The engine's work is in its own tasks.
             await asyncio.Event().wait()
         finally:

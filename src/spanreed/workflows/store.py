@@ -6,6 +6,10 @@ Keys:
 - ``workflows:workflow:{id}``           the workflow, as JSON
 - ``workflows:workflow:{id}:state``     hash of what its trigger remembers
 - ``workflows:workflow:{id}:runs``      list of run traces, newest first
+- ``workflows:workflow:{id}:queue``     list of the keys it still has to run
+  for, oldest first
+- ``workflows:workflow:{id}:queued``    hash of those keys, each with a
+  token that changes when the key is put again
 
 A workflow keeps the traces of its last ``RUNS_KEPT`` runs. They are dropped
 ``RUNS_TTL`` after the last run.
@@ -13,8 +17,11 @@ A workflow keeps the traces of its last ``RUNS_KEPT`` runs. They are dropped
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
+import secrets
+from collections.abc import Iterable
 from typing import Any
 
 from spanreed.storage import redis_api
@@ -53,6 +60,84 @@ class StoredTriggerState:
         await redis_api.hset(self._key, name, value)
 
 
+# Spanreed is one process, so a lock and an event here are enough to keep
+# the two Redis keys of a queue in step and to wake the workflow that waits
+# for a key.
+_queue_locks: dict[str, asyncio.Lock] = {}
+_queue_wakeups: dict[str, asyncio.Event] = {}
+
+
+def reset_queues_for_tests() -> None:
+    """Forget the locks and wake-ups, which belong to an event loop."""
+    _queue_locks.clear()
+    _queue_wakeups.clear()
+
+
+class WorkflowQueue:
+    """The keys of what one workflow still has to run for, oldest first.
+
+    See ``spanreed.workflows.blocks.EventQueue``.
+    """
+
+    def __init__(self, workflow_id: str) -> None:
+        """Create the queue of the workflow with this id."""
+        self._id = workflow_id
+        self._order_key = f"{_workflow_key(workflow_id)}:queue"
+        self._tokens_key = f"{_workflow_key(workflow_id)}:queued"
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        return _queue_locks.setdefault(self._id, asyncio.Lock())
+
+    @property
+    def _wakeup(self) -> asyncio.Event:
+        return _queue_wakeups.setdefault(self._id, asyncio.Event())
+
+    async def put(self, key: str) -> None:
+        """Add a key, or note that a key that waits changed again."""
+        async with self._lock:
+            waiting = await redis_api.hget(self._tokens_key, key)
+            await redis_api.hset(self._tokens_key, key, secrets.token_hex(4))
+            if waiting is None:
+                await redis_api.rpush(self._order_key, key)
+        self._wakeup.set()
+
+    async def keys(self) -> list[str]:
+        """Return the keys that wait, oldest first."""
+        return [_text(key) for key in await redis_api.lrange(self._order_key, 0, -1)]
+
+    async def next(self) -> tuple[str, str]:
+        """Wait for the oldest key. Return it with a token for ``done``."""
+        while True:
+            self._wakeup.clear()
+            async with self._lock:
+                first = await redis_api.lrange(self._order_key, 0, 0)
+                if first:
+                    key = _text(first[0])
+                    token = await redis_api.hget(self._tokens_key, key)
+                    return key, "" if token is None else _text(token)
+            await self._wakeup.wait()
+
+    async def done(self, key: str, token: str) -> None:
+        """Take a key out, unless it was put again since ``next`` gave it.
+
+        A key that was put again stays, and goes behind the others.
+        """
+        async with self._lock:
+            current = await redis_api.hget(self._tokens_key, key)
+            await redis_api.lrem(self._order_key, 1, key)
+            if current is not None and _text(current) != token:
+                await redis_api.rpush(self._order_key, key)
+            else:
+                await redis_api.hdel(self._tokens_key, key)
+
+    async def later(self, key: str) -> None:
+        """Move a key behind the others, to run for it again later."""
+        async with self._lock:
+            if await redis_api.lrem(self._order_key, 1, key):
+                await redis_api.rpush(self._order_key, key)
+
+
 class WorkflowStore:
     """The workflows of every user, and the traces of their runs."""
 
@@ -80,12 +165,18 @@ class WorkflowStore:
     async def delete(self, workflow: Workflow) -> None:
         """Delete a workflow, its trigger's state and its runs' traces."""
         key = _workflow_key(workflow.id)
-        await redis_api.delete(key, f"{key}:state", f"{key}:runs")
+        await redis_api.delete(
+            key, f"{key}:state", f"{key}:runs", f"{key}:queue", f"{key}:queued"
+        )
         await redis_api.srem(_user_key(workflow.user_id), workflow.id)
 
     def trigger_state(self, workflow_id: str) -> StoredTriggerState:
         """Return what the trigger of a workflow remembers."""
         return StoredTriggerState(workflow_id)
+
+    def queue(self, workflow_id: str) -> WorkflowQueue:
+        """Return the keys that a workflow still has to run for."""
+        return WorkflowQueue(workflow_id)
 
     async def add_run(self, workflow_id: str, trace: dict[str, Any]) -> None:
         """Keep the trace of a run that is over."""
@@ -100,3 +191,20 @@ class WorkflowStore:
         return [
             json.loads(_text(raw)) for raw in await redis_api.lrange(key, 0, limit - 1)
         ]
+
+
+async def emit(user_id: int, block_id: str, keys: Iterable[str]) -> None:
+    """Queue keys for each workflow of a user that has this trigger.
+
+    Only a workflow that is on gets them: one that is off does not collect
+    what it missed.
+    """
+    keys = list(keys)
+    if not keys:
+        return
+    store = WorkflowStore()
+    for workflow in await store.list_for_user(user_id):
+        if workflow.enabled and workflow.trigger.block == block_id:
+            queue = store.queue(workflow.id)
+            for key in keys:
+                await queue.put(key)

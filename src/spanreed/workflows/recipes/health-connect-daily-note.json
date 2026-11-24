@@ -1,0 +1,49 @@
+{
+  "id": "health-connect-daily-note",
+  "name": "Health data → daily note",
+  "description": "Writes each day's steps, heart rate and VO2 max from Health Connect into its daily note.",
+  "requires": ["health-connect", "obsidian"],
+  "command_name": "Sync health data",
+  "trigger": {
+    "block": "health-connect.day-changed",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "today",
+      "block": "obsidian.create-daily-note",
+      "inputs": {}
+    },
+    {
+      "id": "write",
+      "block": "obsidian.set-note-properties",
+      "inputs": {
+        "note": "Daily/{{ trigger.date }}.md",
+        "properties": {
+          "steps": "{{ trigger.steps }}",
+          "resting-heart-rate": "{{ trigger.resting_heart_rate }}",
+          "heart-rate-p5": "{{ trigger.heart_rate_p5 }}",
+          "heart-rate-avg": "{{ trigger.heart_rate_avg }}",
+          "heart-rate-p95": "{{ trigger.heart_rate_p95 }}",
+          "heart-rate-p98": "{{ trigger.heart_rate_p98 }}",
+          "heart-rate-p99": "{{ trigger.heart_rate_p99 }}",
+          "hr-moderate-minutes": "{{ trigger.hr_moderate_minutes }}",
+          "hr-vigorous-minutes": "{{ trigger.hr_vigorous_minutes }}",
+          "vo2-max": "{{ trigger.vo2_max }}"
+        },
+        "write_when": "changed",
+        "if_note_missing": "skip"
+      }
+    },
+    {
+      "id": "by_hand",
+      "block": "core.continue-if",
+      "inputs": {"condition": "{{ run.manual and write.count > 0 }}"}
+    },
+    {
+      "id": "tell",
+      "block": "core.send-message",
+      "inputs": {"message": "Logged {{ write.summary }} for {{ trigger.date }}."}
+    }
+  ]
+}
