@@ -440,6 +440,10 @@ def test_where_and_what_the_workflow_writes() -> None:
     # No folder: the note goes to the top of the vault.
     assert note_inputs("", "T", "")["path"] == OLD_NAMES + "T.md"
     assert note_inputs("/a/b/", "T", "")["path"] == OLD_NAMES + "a/b/T.md"
+    # A title template that was written with ".md" has it once.
+    assert note_inputs("Books", "{{ book.title }}.md", "")["path"] == (
+        OLD_NAMES + "Books/{{ book.title }}.md"
+    )
 
 
 def test_a_template_is_tried_on_a_book() -> None:

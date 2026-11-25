@@ -2,7 +2,9 @@ import asyncio
 import base64
 from unittest.mock import AsyncMock
 
-from spanreed.apis.obsidian import ObsidianApi
+import pytest
+
+from spanreed.apis.obsidian import ObsidianApi, note_path, once_md
 from spanreed.test_utils import mock_user_find_by_id
 
 
@@ -69,3 +71,35 @@ def test_delete_file_sends_delete_request() -> None:
     api._send_request.assert_awaited_once_with(
         "delete-file", {"filepath": "Assets/scans/2026-01-01 Scan.pdf"}
     )
+
+
+@pytest.mark.parametrize(
+    "folder, title, path",
+    [
+        ("Books", "Neverwhere", "Books/Neverwhere.md"),
+        # The whole title is the name, whatever dots it has.
+        ("Books", "Mr. Mercedes", "Books/Mr. Mercedes.md"),
+        ("Books", "Dr. Jekyll and Mr. Hyde", "Books/Dr. Jekyll and Mr. Hyde.md"),
+        ("Books", "Notes v1.2", "Books/Notes v1.2.md"),
+        # A title that was written with its extension has it once.
+        ("Health", "Therapy.md", "Health/Therapy.md"),
+        ("Health", "Therapy.MD", "Health/Therapy.md"),
+        ("Books", "{{ book.title }}.md", "Books/{{ book.title }}.md"),
+        # The folder, with or without its slashes, or none.
+        ("/a/b/", "T", "a/b/T.md"),
+        ("", "T", "T.md"),
+    ],
+)
+def test_a_note_is_named_by_its_whole_title(folder: str, title: str, path: str) -> None:
+    assert note_path(folder, title) == path
+
+
+def test_a_path_that_ends_in_md_twice_gets_one() -> None:
+    assert once_md("Health/Therapy.md.md") == "Health/Therapy.md"
+    assert once_md("Health/Therapy.MD.md") == "Health/Therapy.md"
+    assert once_md("{% set x = 1 %}Books/{{ book.title }}.md.md") == (
+        "{% set x = 1 %}Books/{{ book.title }}.md"
+    )
+    # A path that is right is left alone.
+    for path in ("Health/Therapy.md", "Books/Mr. Mercedes.md", "a.md.txt", ""):
+        assert once_md(path) is None

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,7 +28,7 @@ from spanreed.interaction import UserInteractionApi
 from spanreed.storage import redis_api
 from spanreed.user import User
 from spanreed.workflows.engine import WorkflowEngine
-from spanreed.workflows.model import Workflow
+from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import all_recipes
 from spanreed.workflows.store import MOVED_MARKER
 
@@ -408,5 +408,96 @@ async def _tell_about_conversion(
         text += f" “{off[0]}” is off, because it had nothing to write."
     if conversion.note:
         text += f" {conversion.note}"
+    bot = await UserInteractionApi.for_user(user)
+    await bot.notify(text, parse_html=False)
+
+
+# -- putting right what a move got wrong ---------------------------------------
+
+# Set once every user's workflows were looked at.
+_NOTE_PATHS_MENDED = "workflows:mended:note-paths"
+
+
+def _moved_with_a_note(workflow: Workflow) -> bool:
+    """Return whether a workflow took the place of a plugin that named a note."""
+    # Imported here: the plugins import this module.
+    from spanreed.plugins import litnotes, recurring_payments
+
+    recipe = workflow.recipe or ""
+    return recipe == litnotes.ADD_BOOK_NOTE_RECIPE or recipe.startswith(
+        f"{recurring_payments.PAYMENT_RECIPE}-"
+    )
+
+
+def _mend_paths(steps: list[Step]) -> list[str]:
+    """Put right the paths that end in ``.md.md``. Return them as they are now."""
+    # Imported here: the Obsidian plugin imports the engine, as this does.
+    from spanreed.apis.obsidian import once_md
+
+    mended = []
+    for step in steps:
+        path = step.inputs.get("path")
+        if step.block == "obsidian.append-to-note" and isinstance(path, str):
+            right = once_md(path)
+            if right is not None:
+                step.inputs["path"] = right
+                mended.append(right)
+        mended += _mend_paths(step.steps) + _mend_paths(step.otherwise)
+    return mended
+
+
+async def mend_note_paths(engine: WorkflowEngine, user_ids: Iterable[int]) -> None:
+    """Give the notes of two moved plugins their one ``.md`` back, once.
+
+    Lit Notes and Recurring Payments named a note by a title, and put
+    ``.md`` in place of whatever followed the last dot of it. The workflows
+    that took their place put ``.md`` after the whole title, so that a
+    title with a dot keeps all of it. For a title that was written with
+    ``.md`` at its end, that gave ``.md.md``: a user who was moved before
+    this was noticed has a workflow that writes to a note of that name.
+
+    Put those paths right, and tell the user. A workflow that the user
+    made is left as it is.
+    """
+    if await redis_api.get(_NOTE_PATHS_MENDED) is not None:
+        return
+    every_user_done = True
+    for user_id in user_ids:
+        try:
+            names = []
+            for workflow in await engine.store.list_for_user(user_id):
+                if _moved_with_a_note(workflow) and _mend_paths(workflow.steps):
+                    await engine.save(workflow)
+                    names.append(workflow.name)
+            if names:
+                _logger.info(
+                    f"Mended the note paths of {len(names)} workflows of"
+                    f" user {user_id}."
+                )
+                await _tell_about_mended_paths(user_id, names)
+        except Exception:
+            every_user_done = False
+            _logger.exception(f"Could not mend the note paths of user {user_id}.")
+    if every_user_done:
+        await redis_api.set(_NOTE_PATHS_MENDED, "1")
+
+
+async def _tell_about_mended_paths(user_id: int, names: list[str]) -> None:
+    quoted = [f"“{name}”" for name in names]
+    which = (
+        " and ".join(quoted)
+        if len(quoted) < 3
+        else ", ".join(quoted[:-1]) + " and " + quoted[-1]
+    )
+    one = len(names) == 1
+    text = (
+        f"{which} wrote to {'a note' if one else 'notes'} whose name ends in "
+        "“.md.md” since the plugin became a workflow: the title in your "
+        "settings ended in “.md”, and the workflow added one more. That is "
+        f"put right, and {'it writes' if one else 'they write'} to the note "
+        "the plugin wrote to. What was written in between is in your vault "
+        "under the name with “.md.md”."
+    )
+    user = await User.find_by_id(user_id)
     bot = await UserInteractionApi.for_user(user)
     await bot.notify(text, parse_html=False)

@@ -959,6 +959,12 @@ them itself (`RetiredPlugin.move`).
 A workflow that waits for what a plugin remembered is off until it has it,
 and a move that stopped halfway is finished at the next start.
 
+The first versions of the two moves that name a note, Lit Notes and
+Recurring Payments, put `.md` after a title that had it already, which gave
+`.md.md`. `mend_note_paths` puts such a path right in a workflow that came
+from one of them, once, at a start, and tells the user. A workflow that the
+user made is left as it is.
+
 The schedule of "Daily chores never overdue" differs from the plugin in one
 way: the plugin ran at every start of Spanreed and then every 4 hours, and
 the recipe runs every 4 hours whether or not Spanreed was restarted in
@@ -1100,6 +1106,11 @@ Where the parts of a payment went:
   plugin missed it, and the date with it.
 - **Text after the dates in the task's comment keeps its place.** The plugin
   put one more empty line before it each week.
+- **The title of the note keeps all of it.** The plugin cut the name of the
+  note at the last dot of the title: a note called "Dr. Cohen" was written
+  as `Dr.md`. A payment with such a title writes to a new note from now on,
+  and what the plugin wrote stays in the old one. A title that was written
+  with `.md` at its end still gives a name with one `.md`.
 - **The question is asked with high priority**, as the plugin asked it.
 - **The workflows have no command**, as the plugin had none. Run now on the
   page adds today's date.
@@ -1378,7 +1389,8 @@ Where the parts of the plugin went:
   (`{{ today }}`) keeps the workflow from running at all: it is stored as it
   is, says why on its page, and has no command until the template is changed.
 - **A title with a dot keeps all of it.** The plugin cut the name of the note
-  at the last dot of the title: "Mr. Fox" became `Mr.md`.
+  at the last dot of the title: "Mr. Fox" became `Mr.md`. A title template
+  that was written with `.md` at its end still gives a name with one `.md`.
 - **"Show more" is offered while there is more.** The plugin offered it under
   the last books too, and then showed none.
 - **A line of authors has its spaces.** "Terry Pratchett and Neil Gaiman",

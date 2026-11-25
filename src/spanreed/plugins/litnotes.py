@@ -12,6 +12,7 @@ import logging
 
 from spanreed.apis.google_books import Book
 from spanreed.apis.google_books_blocks import google_books_blocks
+from spanreed.apis.obsidian import note_path
 from spanreed.interaction import UserInteractionApi
 from spanreed.plugin import Plugin
 from spanreed.user import User
@@ -63,11 +64,10 @@ def note_inputs(
     """Return where and what the workflow writes, from the plugin's settings.
 
     The plugin wrote the note to the folder ``file_location``, under the
-    title that ``title_template`` gave, with ``.md`` after it.
+    title that ``title_template`` gave, as a ``.md`` file.
     """
-    folder = file_location.strip("/")
     return {
-        "path": f"{OLD_NAMES}{folder + '/' if folder else ''}{title_template}.md",
+        "path": OLD_NAMES + note_path(file_location, title_template),
         "text": f"{OLD_NAMES}{content_template}",
     }
 

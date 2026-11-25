@@ -120,6 +120,9 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         "spanreed.plugins.workflows.migrations.convert_plugins",
         new=AsyncMock(side_effect=lambda engine: order.append("converted")),
     ) as convert, patch(
+        "spanreed.plugins.workflows.migrations.mend_note_paths",
+        new=AsyncMock(side_effect=lambda engine, ids: order.append("mended")),
+    ) as mend, patch(
         "spanreed.plugins.workflows.system.say_started",
         new=AsyncMock(side_effect=lambda users: order.append("said it started")),
     ) as say_started, patch(
@@ -130,7 +133,8 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
     convert.assert_awaited_once()
     # After the plugins were moved, so that what came from one runs too.
     say_started.assert_awaited_once_with([user])
-    assert order == ["converted", "said it started", "passes errors on"]
+    assert order == ["converted", "mended", "said it started", "passes errors on"]
+    assert [call.args[1] for call in mend.await_args_list] == [[4]]
 
     register.assert_awaited_once()
     mock_bot.register_command.assert_awaited_once()
