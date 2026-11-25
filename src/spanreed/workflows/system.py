@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from spanreed import errors
 from spanreed.user import User
 from spanreed.workflows.blocks import Block, NoParams, PushTrigger, TriggerContext
+from spanreed.config_form import described
 
 _logger = logging.getLogger(__name__)
 
@@ -51,10 +52,10 @@ def _local(ctx: TriggerContext, at: str) -> tuple[str, str] | None:
 class Start:
     """The event of ``Started``: when Spanreed started, in the user's timezone."""
 
-    # YYYY-MM-DD
-    date: str
-    # HH:MM
-    time: str
+    date: str = described(
+        "The day Spanreed started, as 2026-05-09, in your timezone",
+    )
+    time: str = described("The time it started at, as 18:30")
 
 
 class Started(PushTrigger[NoParams, Start]):
@@ -82,11 +83,13 @@ class Started(PushTrigger[NoParams, Start]):
 class Trouble:
     """The event of ``ErrorReported``."""
 
-    # What went wrong: the error, with the last lines of where it came from.
-    text: str
-    # When it was passed on, in the user's timezone: YYYY-MM-DD and HH:MM.
-    date: str
-    time: str
+    text: str = described(
+        "What went wrong: the error, with the last lines of where it came " "from",
+    )
+    date: str = described(
+        "The day the error was passed on, as 2026-05-09, in your timezone",
+    )
+    time: str = described("The time it was passed on, as 18:30")
 
 
 class ErrorReported(PushTrigger[NoParams, Trouble]):

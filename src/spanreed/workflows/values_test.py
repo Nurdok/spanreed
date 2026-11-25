@@ -14,6 +14,7 @@ from spanreed.workflows.values import (
     make_again,
     plain_data,
     to_data,
+    type_in_words,
     whole_data,
 )
 
@@ -253,6 +254,32 @@ def test_a_long_text_is_quoted_by_its_start() -> None:
     assert "came to the text “Daily/2026-11-25.mdDaily/" in said
     assert "…”, which is neither yes nor no." in said
     assert len(said) < 400
+
+
+@pytest.mark.parametrize(
+    ("tp", "words"),
+    [
+        (str, "text"),
+        (int, "whole number"),
+        (float, "number"),
+        (bool, "yes or no"),
+        (bytes, "file content"),
+        (Any, "any value"),
+        (datetime.date, "date"),
+        (datetime.datetime, "date and time"),
+        (int | None, "whole number, or nothing"),
+        (float | int, "number or whole number"),
+        (list[str], "list of texts"),
+        (list[int], "list of whole numbers"),
+        (list[Any], "list"),
+        (list, "list"),
+        (list[_Set], "list of items"),
+        (dict[str, Any], "group of values"),
+        (_Set, "group of values"),
+    ],
+)
+def test_a_type_is_named_as_a_user_would_name_it(tp: Any, words: str) -> None:
+    assert type_in_words(tp) == words
 
 
 def test_a_value_is_named_as_a_user_would_name_it() -> None:

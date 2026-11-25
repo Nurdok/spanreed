@@ -27,6 +27,7 @@ from spanreed.workflows.blocks import (
     TriggerContext,
 )
 from spanreed.workflows.files import File, file_of, safe_name
+from spanreed.config_form import described
 
 _logger = logging.getLogger(__name__)
 
@@ -115,23 +116,28 @@ class EmailFilter(Repeat):
 class Email:
     """An email."""
 
-    # The id that Gmail gives the email. "Get attachments" takes it.
-    id: str
-    # As the email names its sender: Shop <shop@example.com>.
-    sender: str
-    # The sender up to the @, and the subject, without what a file name
-    # cannot hold. The subject is cut at 50 characters.
-    sender_name: str
-    subject: str
-    subject_name: str
-    # The day and the time the email carries: YYYY-MM-DD, and
-    # YYYY-MM-DD HH:MM:SS.
-    date: str
-    received: str
-    # The first words of the email, as Gmail shows them in a list.
-    snippet: str
-    body: str
-    has_attachments: bool
+    id: str = described(
+        "The id that Gmail gives the email. “Get attachments” takes it",
+    )
+    sender: str = described(
+        "Who sent it, as the email says: Shop <shop@example.com>",
+    )
+    sender_name: str = described(
+        "The sender up to the @, without what a file name cannot hold",
+    )
+    subject: str = described("The subject of the email")
+    subject_name: str = described(
+        "The subject without what a file name cannot hold, cut at 50 " "characters",
+    )
+    date: str = described("The day the email carries, as 2026-05-09")
+    received: str = described(
+        "The day and the time the email carries, as 2026-05-09 18:30:00",
+    )
+    snippet: str = described(
+        "The first words of the email, as Gmail shows them in a list",
+    )
+    body: str = described("The text of the email")
+    has_attachments: bool = described("Whether the email has attachments")
 
 
 def email_event(email: EmailMessage) -> Email:
@@ -245,8 +251,10 @@ class GetAttachmentsInput:
 class GetAttachmentsOutput:
     """The attachments, as files."""
 
-    files: list[File]
-    count: int
+    files: list[File] = described(
+        "The attachments, as files. A loop over them writes or sends each",
+    )
+    count: int = described("How many attachments there are")
 
 
 class GetAttachments(Action[GetAttachmentsInput, GetAttachmentsOutput]):
@@ -295,8 +303,10 @@ class FindLinksInput:
 class FindLinksOutput:
     """The links that were found, in the order of the text."""
 
-    links: list[str]
-    count: int
+    links: list[str] = described(
+        "The links that were found, in the order of the text",
+    )
+    count: int = described("How many links were found")
 
 
 class FindLinks(Action[FindLinksInput, FindLinksOutput]):

@@ -156,10 +156,14 @@ workflows, not the one that was open.
 
 - **Steps** draws the workflow as cards: the trigger, marked T, then the
   steps, numbered as the engine numbers them in its messages. A card shows
-  the block, the plugin it comes from, its inputs as they are stored and the
-  names of its outputs. A value that comes from an earlier card is drawn as
-  a chip with that card's mark. The cards go left to right, and top to
-  bottom on a phone.
+  the block, the plugin it comes from, its inputs as they are stored and its
+  outputs. A value that comes from an earlier card is drawn as a chip with
+  that card's mark. The cards go left to right, and top to bottom on a
+  phone.
+- **Outputs** are what a card gives to the cards after it. Each has its
+  name, as a template writes it, its type in words ("text", "whole number",
+  "yes or no", "list of texts"), and a line that says what it holds. "Or
+  nothing" after a type means that the value can be missing.
 - **A loop**, such as "For each", holds the cards of the steps inside it, top
   to bottom, numbered 1.1, 1.2.
 - **A branch**, "If", holds two lists of cards: the steps for when its
@@ -278,8 +282,9 @@ its command can be changed there too.
 
 - **A text box** holds text and the values of earlier cards, written as
   `{{ trigger.date }}`. **+ value** lists what the cards before this one
-  give, and puts the one you pick where the cursor was. A box that wants a
-  number or yes/no says so under it.
+  give, each with its type and what it holds, and puts the one you pick
+  where the cursor was. A box that wants a number or yes/no says so under
+  it.
 - **A choice** is a list to pick from.
 - **Rows**, such as the properties to set, have a name and a value each.
   **Add a row** adds one, and × removes one.

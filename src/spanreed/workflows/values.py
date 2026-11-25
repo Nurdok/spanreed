@@ -86,6 +86,44 @@ def in_words(value: Any) -> str:
     return _quoted(str(value))
 
 
+def type_in_words(tp: Any) -> str:
+    """Return a type as a user would call it: ``whole number``.
+
+    For what a block gives: the type of an output, shown next to its name.
+    """
+    if tp is Any:
+        return "any value"
+    origin, args = typing.get_origin(tp), typing.get_args(tp)
+    if origin in (typing.Union, types.UnionType):
+        kinds = [type_in_words(arg) for arg in args if arg is not type(None)]
+        words = " or ".join(dict.fromkeys(kinds))
+        return f"{words}, or nothing" if len(kinds) < len(args) else words
+    if origin in (list, tuple, set, frozenset) or tp in (list, tuple, set, frozenset):
+        item = args[0] if args else Any
+        if item is Any:
+            return "list"
+        if isinstance(item, type) and dataclasses.is_dataclass(item):
+            return "list of items"
+        return f"list of {type_in_words(item)}s"
+    if tp is bool:
+        return "yes or no"
+    if tp is int:
+        return "whole number"
+    if tp is float:
+        return "number"
+    if tp is str:
+        return "text"
+    if tp is bytes:
+        return "file content"
+    if tp is datetime.datetime:
+        return "date and time"
+    if tp is datetime.date:
+        return "date"
+    if tp is type(None):
+        return "nothing"
+    return "group of values"
+
+
 def _question_of(value: Any, asked: str) -> str:
     """Return a template that asks something of a value, as an example."""
     if value is None:

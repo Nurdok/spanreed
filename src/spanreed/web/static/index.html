@@ -210,7 +210,13 @@
   .pill.plain { padding-left: 7px; }
   .pill b { display: inline-grid; place-items: center; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px;
             background: var(--k); color: var(--card); font-size: 10px; font-weight: 700; }
-  .outs { display: flex; flex-wrap: wrap; gap: 2px; }
+  /* What a card gives: each output with its type, and what it holds. */
+  .outs { display: flex; flex-direction: column; gap: 7px; }
+  .out { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .out-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1px 6px; }
+  .out-h .pill { margin-left: 0; }
+  .out-t { font-size: 11.5px; color: var(--muted); }
+  .out-d { font-size: 12px; line-height: 1.35; color: var(--muted); overflow-wrap: anywhere; }
   .runs { display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
   details.run { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
   details.run summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 9px 12px; cursor: pointer; list-style: none; }
@@ -298,9 +304,12 @@
   .sheet h3 { margin: 0; font-size: 15px; }
   .sheet .grp { display: flex; flex-direction: column; gap: 5px; }
   .sheet .grp-h { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
-  .sheet .picks { display: flex; flex-wrap: wrap; gap: 5px; }
-  .sheet button.pill { border: 0; cursor: pointer; font-size: 13px; line-height: 26px; padding: 0 11px; margin: 0; }
-  .sheet button.pill:hover, .sheet button.pill:focus-visible { outline: 2px solid var(--k); }
+  .sheet .picks { display: flex; flex-direction: column; gap: 5px; }
+  .sheet button.pick { display: flex; flex-direction: column; gap: 1px; padding: 6px 9px; border: 1px solid var(--line);
+                       border-radius: 9px; background: var(--bg); color: var(--fg); font: inherit; text-align: left;
+                       cursor: pointer; }
+  .sheet button.pick .pill { font-size: 13px; line-height: 22px; }
+  .sheet button.pick:hover, .sheet button.pick:focus-visible { border-color: var(--k); outline: 1px solid var(--k); }
   .sheet .foot { font-size: 12px; color: var(--muted); }
   .rounds { grid-column: 2; display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
   details.round { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
@@ -1276,6 +1285,14 @@ function richValue(value, sources, pairs) {
   return box;
 }
 
+// The name of something that a card gives, as templates write it, and its
+// type in words.
+function outputHead(out, kind) {
+  const head = el("span", "out-h");
+  head.append(el("span", "pill plain " + (kind || ""), out.name), el("span", "out-t", out.type));
+  return head;
+}
+
 function renderCard(card, badge, sources, edit) {
   // The lists of steps that the card holds: one for a loop, two for a branch.
   // While it is edited, a list shows where its steps go, also while it has none.
@@ -1297,9 +1314,14 @@ function renderCard(card, badge, sources, edit) {
     c.append(sec);
   }
   if (card.outputs.length) {
-    const sec = el("div", "wc-sec"), chips = el("div", "outs");
-    for (const name of card.outputs) chips.append(el("span", "pill plain k-" + card.kind, name));
-    sec.append(el("div", "outs-l", "Outputs"), chips);
+    const sec = el("div", "wc-sec"), outs = el("div", "outs");
+    for (const out of card.outputs) {
+      const row = el("div", "out");
+      row.append(outputHead(out, "k-" + card.kind));
+      if (out.help) row.append(el("div", "out-d", out.help));
+      outs.append(row);
+    }
+    sec.append(el("div", "outs-l", "Outputs"), outs);
     c.append(sec);
   }
   for (const lane of lanes) {
@@ -1363,8 +1385,8 @@ function renderDraftLane() {
   const lane = el("div", "lane editing");
   // The trigger starts the run, so there is nothing before it to offer.
   lane.append(renderCard(trigger, "T", sources, { cards, offers: [] }));
-  let offers = [{ id: "trigger", badge: "T", kind: "trigger", title: trigger.title, names: trigger.outputs },
-                { id: "run", badge: "run", kind: "logic", title: "This run", names: draft.shown.run_outputs }];
+  let offers = [{ id: "trigger", badge: "T", kind: "trigger", title: trigger.title, outputs: trigger.outputs },
+                { id: "run", badge: "run", kind: "logic", title: "This run", outputs: draft.shown.run_outputs }];
   shown.steps.forEach((card, i) => {
     lane.append(addStepButton(draft.steps, i, "join"), renderCard(card, card.number, sources, { cards, offers, list: draft.steps, index: i }));
     offers = [...offers, offerOf(card)];
@@ -1503,17 +1525,17 @@ function inputsOf(card) {
 }
 
 // What a card gives to the cards after it, for the list of values to insert.
-const offerOf = (card) => ({ id: card.id, badge: card.number, kind: card.kind, title: card.title, names: card.outputs });
+const offerOf = (card) => ({ id: card.id, badge: card.number, kind: card.kind, title: card.title, outputs: card.outputs });
 
 // What a card that holds steps gives to them. A loop gives the item of the
 // round. If it loops over a list whose items are known, such as the sets of
 // a workout, it gives their fields too.
 function holderOffer(card, cards) {
-  const names = [...card.outputs];
+  const outputs = [...card.outputs];
   const over = /^\s*\{\{\s*([a-z][a-z0-9_]*)\.([A-Za-z_]\w*)\s*\}\}\s*$/.exec(inputsOf(card).items || "");
   const fields = over && cards[over[1]] && (cards[over[1]].item_outputs || {})[over[2]];
-  for (const field of fields || []) names.push("item." + field);
-  return { ...offerOf(card), names };
+  for (const field of fields || []) outputs.push({ ...field, name: "item." + field.name });
+  return { ...offerOf(card), outputs };
 }
 
 function grow(box) { box.style.height = "auto"; box.style.height = box.scrollHeight + 2 + "px"; }
@@ -1604,13 +1626,16 @@ function openValueSheet(box, offers) {
   };
   sheet.append(el("h3", "", "Insert a value"));
   for (const offer of offers) {
-    if (!offer.names.length) continue;
+    if (!offer.outputs.length) continue;
     const group = el("div", "grp k-" + offer.kind), head = el("div", "grp-h"), picks = el("div", "picks");
     head.append(el("span", "num", offer.badge), offer.title);
-    for (const name of offer.names) {
-      const b = el("button", "pill plain", name);
+    for (const out of offer.outputs) {
+      // What it is, so that the one that is meant can be told from the rest.
+      const b = el("button", "pick");
       b.type = "button";
-      b.onclick = () => pick(offer.id + "." + name);
+      b.append(outputHead(out));
+      if (out.help) b.append(el("span", "out-d", out.help));
+      b.onclick = () => pick(offer.id + "." + out.name);
       picks.append(b);
     }
     group.append(head, picks);
@@ -1621,7 +1646,7 @@ function openValueSheet(box, offers) {
   back.onclick = (e) => { if (e.target === back) close(); };
   document.addEventListener("keydown", onKey, true);
   document.body.append(back);
-  sheet.querySelector("button.pill")?.focus();
+  sheet.querySelector("button.pick")?.focus();
 }
 
 // The draft as the server takes it: without the cards it is drawn from.

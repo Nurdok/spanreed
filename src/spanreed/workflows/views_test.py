@@ -1,3 +1,4 @@
+import dataclasses
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -7,9 +8,11 @@ from spanreed.apis.obsidian_blocks import (
     SetNoteProperties,
     WriteNote,
 )
+from spanreed.__main__ import load_plugins
+from spanreed.config_form import described
 from spanreed.plugin import Plugin
 from spanreed.workflows import views
-from spanreed.workflows.blocks import BlockRegistry
+from spanreed.workflows.blocks import Action, BlockRegistry, RunInfo, Trigger
 from spanreed.workflows.builtin import ForEach, If
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Step, Workflow
@@ -47,7 +50,81 @@ def test_a_mapping_is_shown_in_the_order_it_is_stored() -> None:
     assert "pairs" not in fields["note"]
     # The inputs that are not stored show their defaults.
     assert fields["write_when"]["value"] == "changed"
-    assert card["outputs"] == ["note", "written", "count", "summary", "note_missing"]
+    assert [out["name"] for out in card["outputs"]] == [
+        "note",
+        "written",
+        "count",
+        "summary",
+        "note_missing",
+    ]
+
+
+# -- what a block gives --------------------------------------------------------
+
+
+@dataclasses.dataclass
+class _Item:
+    name: str = described("What it is called")
+    size: int | None = None
+
+
+@dataclasses.dataclass
+class _Given:
+    path: str = described("Where the note is in the vault")
+    count: int = described("How many there are", default=0)
+    weight: float | None = None
+    found: bool = False
+    tags: list[str] = dataclasses.field(default_factory=list)
+    items: list[_Item] = dataclasses.field(default_factory=list)
+    anything: Any = None
+
+
+def test_an_output_is_told_with_its_type_and_what_it_holds() -> None:
+    assert views.outputs_of(_Given) == [
+        {"name": "path", "type": "text", "help": "Where the note is in the vault"},
+        {"name": "count", "type": "whole number", "help": "How many there are"},
+        # One that nobody described has its name and its type all the same.
+        {"name": "weight", "type": "number, or nothing", "help": ""},
+        {"name": "found", "type": "yes or no", "help": ""},
+        {"name": "tags", "type": "list of texts", "help": ""},
+        {"name": "items", "type": "list of items", "help": ""},
+        {"name": "anything", "type": "any value", "help": ""},
+    ]
+
+
+def test_the_items_of_a_list_are_told_as_outputs_are() -> None:
+    # A loop over the list offers them, as "item.name".
+    assert views._item_outputs(_Given) == {
+        "items": [
+            {"name": "name", "type": "text", "help": "What it is called"},
+            {"name": "size", "type": "whole number, or nothing", "help": ""},
+        ]
+    }
+
+
+def test_every_output_of_every_block_says_what_it_is() -> None:
+    Plugin.reset_registry()
+    registry = BlockRegistry.from_plugins(load_plugins())
+
+    told = [("the run", "", views.outputs_of(RunInfo))]
+    for block in registry.all():
+        assert isinstance(block, (Trigger, Action))
+        cls = block.Event if isinstance(block, Trigger) else block.Output
+        told.append((block.id, "", views.outputs_of(cls)))
+        for name, fields in views._item_outputs(cls).items():
+            told.append((block.id, f"{name}[].", fields))
+
+    assert len(told) > 50
+    unclear = [
+        f"{block}: {inside}{out['name']}"
+        for block, inside, outputs in told
+        for out in outputs
+        # Written for the user, as the help of an input is: a sentence
+        # without the period at its end.
+        if not out["help"] or out["help"].endswith(".") or len(out["help"]) < 10
+    ]
+    assert unclear == []
+    assert all(out["type"] for _, _, outputs in told for out in outputs)
 
 
 # -- two workflows that write the same thing -----------------------------------
