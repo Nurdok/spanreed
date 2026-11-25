@@ -11,7 +11,7 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Literal
 
-from spanreed.apis.withings import MeasurementType, WithingsApi
+from spanreed.apis.withings import MeasurementType, WithingsApi, today_of
 from spanreed.user import User
 from spanreed.workflows.blocks import (
     Block,
@@ -78,12 +78,6 @@ async def measurements_of(
     ]
 
 
-def _today() -> datetime.date:
-    # The date as ``WithingsApi`` counts it, so that a poll and the dates
-    # of the measurements agree.
-    return datetime.date.today()
-
-
 @dataclass
 class MeasurementRange:
     """Which days a manual run covers."""
@@ -110,8 +104,12 @@ class NewMeasurements(PollTrigger[Repeat, DayMeasurements]):
     async def poll(
         self, ctx: TriggerContext, params: Repeat, cursor: str | None
     ) -> Poll[DayMeasurements]:
-        """Return the measurements of today and of the days just before it."""
-        today = _today()
+        """Return the measurements of today and of the days just before it.
+
+        Today is the date where the user is, as ``WithingsApi`` counts the
+        dates of the measurements.
+        """
+        today = today_of(ctx.user)
         start = today - datetime.timedelta(days=LOOK_BACK_DAYS)
         return Poll(events=await measurements_of(ctx.user, start, today))
 
@@ -128,7 +126,7 @@ class NewMeasurements(PollTrigger[Repeat, DayMeasurements]):
     ) -> list[DayMeasurements]:
         """Return the measurements of each day in the range that has any."""
         count = 1 if answer.days == "Today" else 7
-        today = _today()
+        today = today_of(ctx.user)
         start = today - datetime.timedelta(days=count - 1)
         return await measurements_of(ctx.user, start, today)
 

@@ -54,7 +54,7 @@ def withings() -> Iterator[AsyncMock]:
             "spanreed.apis.withings_blocks.WithingsApi.for_user",
             new=AsyncMock(return_value=api),
         ),
-        patch("spanreed.apis.withings_blocks._today", new=lambda: TODAY),
+        patch("spanreed.apis.withings_blocks.today_of", new=lambda user: TODAY),
     ):
         yield api
 

@@ -167,6 +167,19 @@ def summarize_measurements(data: Any) -> str:
     )
 
 
+def today_of(user: User) -> datetime.date:
+    """Return today's date where the user is.
+
+    A user who has set no timezone gets the date of the server.
+    """
+    return _now(user.tzinfo).date()
+
+
+def _now(timezone: datetime.tzinfo) -> datetime.datetime:
+    # Indirection so that tests can set the clock.
+    return datetime.datetime.now(tz=timezone)
+
+
 class MeasurementType(IntEnum):
     WEIGHT = 1
     FAT_PERCENTAGE = 6
@@ -216,11 +229,15 @@ class WithingsApi:
         Defaults to today only. Pass ``start_date``/``end_date`` to fetch a
         wider range (used by the manual "last week" sync). Both bounds are
         inclusive.
+
+        Every date is one of the user: a day starts at midnight in the
+        user's timezone, and a measurement belongs to the date it was
+        taken on there, wherever the server is.
         """
         if start_date is None:
-            start_date = datetime.date.today()
+            start_date = today_of(self._user)
         if end_date is None:
-            end_date = datetime.date.today()
+            end_date = today_of(self._user)
 
         url = "https://wbsapi.withings.net/measure"
         headers = {
@@ -232,11 +249,14 @@ class WithingsApi:
             MeasurementType.FAT_MASS,
             MeasurementType.HEART_PULSE,
         ]
-        start_dt = datetime.datetime.combine(start_date, datetime.time.min)
+        timezone = self._user.tzinfo
+        start_dt = datetime.datetime.combine(
+            start_date, datetime.time.min, tzinfo=timezone
+        )
         # `enddate` filters by measurement date; advance to the start of the
         # day after `end_date` so the whole of `end_date` is included.
         end_dt = datetime.datetime.combine(
-            end_date + datetime.timedelta(days=1), datetime.time.min
+            end_date + datetime.timedelta(days=1), datetime.time.min, tzinfo=timezone
         )
         data = {
             "action": "getmeas",
@@ -275,13 +295,21 @@ class WithingsApi:
     def extract_measurements_from_json(
         self, data: dict
     ) -> dict[datetime.date, dict[MeasurementType, float]]:
+        """Return the measurements of a ``getmeas`` response, by date.
+
+        The date of a measurement is the one it was taken on in the user's
+        timezone.
+        """
         result: dict[datetime.date, dict[MeasurementType, float]] = {}
+        timezone = self._user.tzinfo
         # Process groups oldest-first so that, when a day has more than one
         # reading of the same measurement type, the latest one wins.
         for measure_group in sorted(
             data["body"]["measuregrps"], key=lambda g: g["date"]
         ):
-            group_date = datetime.date.fromtimestamp(measure_group["date"])
+            group_date = datetime.datetime.fromtimestamp(
+                measure_group["date"], tz=timezone
+            ).date()
             day = result.setdefault(group_date, {})
             for measure in measure_group["measures"]:
                 day[MeasurementType(int(measure["type"]))] = int(
