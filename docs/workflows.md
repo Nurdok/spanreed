@@ -97,6 +97,18 @@ block must exist, the inputs must fit the block, and a template can only refer
 to the trigger, the run or an earlier step. A workflow with a problem is not
 started, and **Manage workflows** says what the problem is.
 
+What a template gives is known only in a run. A value that does not fit the
+input then fails the step, and the failure says what was written, what it
+came to, and for a condition what to write instead:
+
+> failed at step 3, Only continue if: Condition: “{{ find.count }}” came to
+> the number 3, which is neither yes nor no. Ask something of it that is true
+> or false, such as “{{ find.count > 0 }}”.
+
+A condition has to be yes or no. A number or a text is neither, also where
+it reads like one: `{{ find.count }} > 0` is the text "3 > 0", because only
+what is inside the braces is worked out.
+
 A user's own workflow goes out in the same JSON (**Export** on its page),
 and comes in again as a new workflow (**New workflow → From a file**):
 `spanreed/workflows/sharing.py`. The file is a recipe, so a workflow that

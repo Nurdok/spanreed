@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import re
 import types
+import typing
 from typing import Any, TypeVar
 
 from spanreed.config_form import ConfigFormError, config_data_from_form
@@ -16,18 +18,143 @@ TRACE_MAX_TEXT = 2000
 TRACE_MAX_ITEMS = 50
 
 
-def from_data(cls: type[T], data: Any) -> T:
+def from_data(cls: type[T], data: Any, written: Any = None) -> T:
     """Build the dataclass ``cls`` from JSON data, checking each value.
 
     The check is the one that the settings form applies to a plugin config.
     Raise ``ValueError`` if a value does not fit, or if ``cls`` rejects the
     values in its ``__post_init__``.
+
+    ``written`` is the data as it is stored, before its templates were
+    filled in. With it, the error says what was written and what that came
+    to: "Expected yes or no" does not tell a user which value was neither,
+    or what to do about it.
     """
     try:
         checked = config_data_from_form(cls, data, None)
     except ConfigFormError as e:
-        raise ValueError(str(e)) from e
+        raise ValueError(_explained(cls, e, data, written)) from e
     return cls(**checked)
+
+
+# What stands for a value that is not there, where ``None`` is a value.
+_MISSING = object()
+# How much of a text an error quotes.
+_QUOTED_MAX = 80
+# A text that is one template and nothing else: its value keeps its type.
+_ONE_TEMPLATE_RE = re.compile(r"\s*\{\{(?P<asked>(?:(?!\{\{|\}\}).)+)\}\}\s*", re.S)
+
+
+def _at(data: Any, path: list[str | int]) -> Any:
+    """Return the value at a path of names and positions, if there is one."""
+    for part in path:
+        if isinstance(data, dict) and part in data:
+            data = data[part]
+        elif isinstance(data, list) and isinstance(part, int) and part < len(data):
+            data = data[part]
+        else:
+            return _MISSING
+    return data
+
+
+def _quoted(text: str) -> str:
+    """Return a text in quotes, and only its start if it is long."""
+    if len(text) > _QUOTED_MAX:
+        text = text[: _QUOTED_MAX - 1] + "…"
+    return f"“{text}”"
+
+
+def in_words(value: Any) -> str:
+    """Return a value as a user would call it: ``the number 3``."""
+    if value is None:
+        return "nothing"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int, float)):
+        return f"the number {value}"
+    if isinstance(value, str):
+        return f"the text {_quoted(value)}" if value else "an empty text"
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return f"a list of {len(value)}" if value else "an empty list"
+    if (
+        isinstance(value, (dict, types.SimpleNamespace))
+        or dataclasses.is_dataclass(value)
+        and not isinstance(value, type)
+    ):
+        # All that a step or a trigger gives, where one of its values is meant.
+        return "a group of values"
+    return _quoted(str(value))
+
+
+def _question_of(value: Any, asked: str) -> str:
+    """Return a template that asks something of a value, as an example."""
+    if value is None:
+        return f"{{{{ {asked} is not none }}}}"
+    if isinstance(value, (int, float)):
+        return f"{{{{ {asked} > 0 }}}}"
+    if isinstance(value, str):
+        return f"{{{{ {asked} != '' }}}}"
+    return f"{{{{ {asked} | length > 0 }}}}"
+
+
+def _asks_yes_or_no(cls: type[Any], error: ConfigFormError) -> bool:
+    """Return whether the value that does not fit has to be yes or no."""
+    if error.message == "Expected yes or no.":
+        return True
+    # Nothing where a value is needed: the message does not say of which
+    # kind. The type of the field does, for a field of the class itself.
+    if error.message != "A value is required." or len(error.path) != 1:
+        return False
+    try:
+        return typing.get_type_hints(cls).get(str(error.path[0])) is bool
+    except Exception:
+        return False
+
+
+def _explained(cls: type[Any], error: ConfigFormError, data: Any, written: Any) -> str:
+    """Return what a value that does not fit is, and how to put it right."""
+    value = _at(data, error.path)
+    if value is _MISSING:
+        return str(error)
+    where = str(error).removesuffix(error.message).removesuffix(": ")
+    start = f"{where}: " if where else ""
+    # What was written, if it is a template: its value is known in a run.
+    text: str | None = None
+    if written is not None:
+        stored = _at(written, error.path)
+        if isinstance(stored, str) and ("{{" in stored or "{%" in stored):
+            text = stored
+    if not _asks_yes_or_no(cls, error):
+        if text is None:
+            return str(error)
+        return f"{start}{_quoted(text)} came to {in_words(value)}. {error.message}"
+
+    if text is None:
+        # Not from a template: the value itself is neither.
+        return f"{start}{in_words(value)} is neither yes nor no."
+    one = _ONE_TEMPLATE_RE.fullmatch(text)
+    if one is not None:
+        advice = (
+            "Ask something of it that is true or false, such as "
+            f"{_quoted(_question_of(value, one['asked'].strip()))}."
+        )
+    elif text.count("{{") == 1 and "{%" not in text:
+        # ``{{ count }} > 0``: what is outside the braces is not worked
+        # out. It is text, and so is the whole.
+        inside = " ".join(text.replace("{{", " ").replace("}}", " ").split())
+        advice = (
+            "Only what is inside the braces is worked out. Put all of it "
+            f"inside: {_quoted('{{ ' + inside + ' }}')}."
+        )
+    else:
+        advice = (
+            "A text is never yes or no. Put all of what is asked inside one "
+            "pair of braces, such as “{{ step.count > 0 and step.found }}”."
+        )
+    return (
+        f"{start}{_quoted(text)} came to {in_words(value)}, which is neither "
+        f"yes nor no. {advice}"
+    )
 
 
 def to_data(value: Any) -> Any:

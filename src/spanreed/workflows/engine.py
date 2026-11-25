@@ -1069,7 +1069,9 @@ class WorkflowEngine:
                     f"{plugin.name()} is not set up. Register to it with "
                     "“Manage plugins”."
                 )
-            inputs = from_data(block.Input, expressions.render(step.inputs, context))
+            inputs = from_data(
+                block.Input, expressions.render(step.inputs, context), step.inputs
+            )
             entry["inputs"] = to_data(inputs)
             said: list[dict[str, str]] = []
             try:
