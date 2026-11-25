@@ -18,6 +18,8 @@ from spanreed.apis.obsidian import ObsidianApi, ObsidianPluginTooOld
 from spanreed.apis.obsidian_watch import StoppedAnswering
 from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, StepContext
+from spanreed.workflows.editing import typed_rows
+from spanreed.workflows.values import in_words
 from spanreed.workflows.files import as_bytes
 from spanreed.config_form import described
 
@@ -142,6 +144,76 @@ class FindDailyNote(Action[DailyNoteInput, FindDailyNoteOutput]):
         return FindDailyNoteOutput(path=note.path, exists=note.exists)
 
 
+# The types a property can be given, as Obsidian has them. "any" leaves
+# the value as it comes.
+PROPERTY_TYPES = ("any", "text", "number", "checkbox", "date", "list")
+_YES = ("yes", "true", "on")
+_NO = ("no", "false", "off")
+
+
+def typed_property(name: str, value: Any, kind: str) -> Any:
+    """Return the value of a property as its type has it.
+
+    Raise ``ValueError``, with the name of the property, for a value that
+    is not of the type and cannot be read as one. Nothing stays nothing:
+    such a property is not written.
+    """
+    if value is None or kind in ("any", ""):
+        return value
+    wrong = ValueError(
+        f"The property “{name}” is a {kind}, and {in_words(value)} is none."
+    )
+    if kind == "text":
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        if isinstance(value, (str, int, float)):
+            return str(value)
+        raise wrong
+    if kind == "number":
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            for number in (int, float):
+                try:
+                    return number(value.strip())
+                except ValueError:
+                    continue
+        raise wrong
+    if kind == "checkbox":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in _YES + _NO:
+            return value.strip().lower() in _YES
+        raise wrong
+    if kind == "date":
+        if isinstance(value, datetime.datetime):
+            return value.date().isoformat()
+        if isinstance(value, datetime.date):
+            return value.isoformat()
+        if isinstance(value, str):
+            try:
+                # The day of a date with a time too.
+                return datetime.date.fromisoformat(value.strip()[:10]).isoformat()
+            except ValueError:
+                raise wrong from None
+        raise wrong
+    if kind == "list":
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return [value]
+    raise ValueError(f"The property “{name}” has the type “{kind}”, which is none.")
+
+
+def _typed(properties: dict[str, Any], types: dict[str, str]) -> dict[str, Any]:
+    """Return every property as its type has it."""
+    return {
+        name: typed_property(name, value, types.get(name, "any"))
+        for name, value in properties.items()
+    }
+
+
 @dataclass
 class SetNotePropertiesInput:
     """Which properties of which note to set."""
@@ -150,7 +222,7 @@ class SetNotePropertiesInput:
     note: str
     # The value of each property, by its name. A property whose value is
     # empty (``None``) is left alone.
-    properties: dict[str, Any]
+    properties: dict[str, Any] = typed_rows("types", PROPERTY_TYPES)
     # ``changed``: set a property unless the note has this value already.
     # ``empty``: set a property only if the note has no value for it.
     # ``always``: set every property, without reading the note first.
@@ -158,6 +230,9 @@ class SetNotePropertiesInput:
     # ``skip and tell me``: go on without writing, and send the user a
     # message that names the note.
     if_note_missing: Literal["skip", "skip and tell me", "fail"] = "skip"
+    # The type of a property, by its name: one of ``PROPERTY_TYPES``. A
+    # property that is not named is written as its value comes.
+    types: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -196,7 +271,7 @@ class SetNoteProperties(Action[SetNotePropertiesInput, SetNotePropertiesOutput])
         written: dict[str, Any] = {}
         note_missing = False
         try:
-            for name, value in inputs.properties.items():
+            for name, value in _typed(inputs.properties, inputs.types).items():
                 if value is None:
                     continue
                 if inputs.write_when != "always":
@@ -297,10 +372,14 @@ class WriteNoteInput:
     path: str
     # The value of each property, by its name, in the order they are
     # written. A property whose value is empty (``None``) is left out.
-    properties: dict[str, Any] = field(default_factory=dict)
+    properties: dict[str, Any] = typed_rows(
+        "types", PROPERTY_TYPES, default_factory=dict
+    )
     # The text under the properties.
     body: str = ""
     if_exists: Literal["overwrite", "fail"] = "overwrite"
+    # The type of a property, by its name, as for "Set note properties".
+    types: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -360,7 +439,9 @@ class WriteNote(Action[WriteNoteInput, WriteNoteOutput]):
         obsidian = await ObsidianApi.for_user(ctx.user)
         await obsidian.write_binary_file(
             inputs.path,
-            note_text(inputs.properties, inputs.body).encode("utf-8"),
+            note_text(_typed(inputs.properties, inputs.types), inputs.body).encode(
+                "utf-8"
+            ),
             overwrite=inputs.if_exists == "overwrite",
         )
         return WriteNoteOutput(path=inputs.path)

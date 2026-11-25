@@ -37,6 +37,21 @@ TEXT = "text"
 CHOICE = "choice"
 ROWS = "rows"
 CONDITION = "condition"
+# An input that the editor does not show by itself: another input edits it.
+HIDDEN = "hidden"
+
+# The key of the field metadata of a mapping whose rows have a type each.
+# Its value: {"input": the name of the input that holds the type of each
+# row by the row's name, "types": the types to choose from}. The first
+# type is the one of a row that has none, and is not stored.
+ROW_TYPES_KEY = "workflow_row_types"
+
+
+def typed_rows(types_input: str, types: tuple[str, ...], **how: Any) -> Any:
+    """Return the field of a mapping whose rows have a type each."""
+    metadata = {ROW_TYPES_KEY: {"input": types_input, "types": list(types)}}
+    return dataclasses.field(metadata=metadata, **how)
+
 
 _YES = ("yes", "true", "on")
 _NO = ("no", "false", "off")
@@ -173,6 +188,14 @@ def fields(cls: type[Any], stored: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if control == ROWS:
             rows = value if isinstance(value, dict) else {}
             edit["rows"] = [[str(key), _any_text(item)] for key, item in rows.items()]
+            typed = default.metadata.get(ROW_TYPES_KEY)
+            if typed:
+                held = stored.get(typed["input"])
+                held = held if isinstance(held, dict) else {}
+                edit["types"] = list(typed["types"])
+                for row in edit["rows"]:
+                    kind = held.get(row[0])
+                    row.append(kind if kind in typed["types"] else typed["types"][0])
         else:
             edit["text"] = _text(node, value)
         if conditions.is_condition(default):
@@ -186,6 +209,12 @@ def fields(cls: type[Any], stored: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if control == CHOICE:
             edit["choices"] = list(node["choices"])
         described[name] = edit
+    for default in defaults.values():
+        typed = default.metadata.get(ROW_TYPES_KEY)
+        if typed and typed["input"] in described:
+            # Its rows carry the types: the input of the types has no
+            # control of its own.
+            described[typed["input"]] = {"control": HIDDEN}
     return described
 
 
@@ -201,8 +230,16 @@ def _inputs(cls: type[Any], submitted: Any, where: str, found: list[str]) -> dic
         return {}
     inputs: dict[str, Any] = {}
     of_class = {field.name: field for field in dataclasses.fields(cls)}
+    partners = {
+        field.metadata[ROW_TYPES_KEY]["input"]
+        for field in of_class.values()
+        if field.metadata.get(ROW_TYPES_KEY)
+    }
     for node in config_form.form_schema(cls)["fields"]:
         name, label = node["name"], node["label"]
+        if name in partners:
+            # Stored with the rows that it types, above or below.
+            continue
         if name not in submitted:
             continue
         sent = submitted[name]
@@ -217,11 +254,13 @@ def _inputs(cls: type[Any], submitted: Any, where: str, found: list[str]) -> dic
             if not isinstance(sent, list):
                 found.append(f"{where}: {label}: rows are expected.")
                 continue
+            typed = of_class[name].metadata.get(ROW_TYPES_KEY)
             rows: dict[str, Any] = {}
+            types: dict[str, str] = {}
             for row in sent:
                 if not (
                     isinstance(row, list)
-                    and len(row) == 2
+                    and len(row) in ((2, 3) if typed else (2,))
                     and all(isinstance(part, str) for part in row)
                 ):
                     found.append(f"{where}: {label}: a row is a name and a text.")
@@ -233,7 +272,16 @@ def _inputs(cls: type[Any], submitted: Any, where: str, found: list[str]) -> dic
                     found.append(f"{where}: {label}: “{key}” is there twice.")
                 else:
                     rows[key] = _any_value(row[1])
+                    if typed and len(row) == 3 and row[2] != typed["types"][0]:
+                        if row[2] not in typed["types"]:
+                            found.append(
+                                f"{where}: {label}: “{row[2]}” is no type of “{key}”."
+                            )
+                        else:
+                            types[key] = row[2]
             inputs[name] = rows
+            if typed and types:
+                inputs[typed["input"]] = types
             continue
         if not isinstance(sent, str):
             found.append(f"{where}: {label}: a text is expected.")

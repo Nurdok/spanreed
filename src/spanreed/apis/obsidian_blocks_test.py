@@ -30,6 +30,7 @@ from spanreed.apis.obsidian_blocks import (
     WriteNoteInput,
     WriteNoteOutput,
     obsidian_blocks,
+    typed_property,
 )
 from spanreed.test_utils import (
     mock_user_find_by_id,
@@ -680,3 +681,107 @@ def test_query_dataview_fails_for_what_is_no_table_or_list(
 
     with pytest.raises(ValueError, match="neither a table nor a list"):
         asyncio.run(QueryDataview().run(_context(), QueryDataviewInput(query="task")))
+
+
+# -- the type of a property ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "value", "written"),
+    [
+        ("any", "5", "5"),
+        ("text", 5, "5"),
+        ("text", 1.5, "1.5"),
+        ("text", True, "yes"),
+        ("number", "5", 5),
+        ("number", " 80.5 ", 80.5),
+        ("number", 3, 3),
+        ("checkbox", "yes", True),
+        ("checkbox", "False", False),
+        ("checkbox", True, True),
+        ("date", "2026-05-09", "2026-05-09"),
+        ("date", "2026-05-09 18:30:00", "2026-05-09"),
+        ("date", datetime.date(2026, 5, 9), "2026-05-09"),
+        ("list", ["a", "b"], ["a", "b"]),
+        ("list", "a, b ,, c", ["a", "b", "c"]),
+        ("list", 5, [5]),
+        # Nothing stays nothing, whatever the type: it is not written.
+        ("number", None, None),
+    ],
+)
+def test_a_property_is_written_as_its_type_has_it(
+    kind: str, value: Any, written: Any
+) -> None:
+    result = typed_property("steps", value, kind)
+
+    assert result == written and type(result) is type(written)
+
+
+@pytest.mark.parametrize(
+    ("kind", "value", "said"),
+    [
+        ("number", "many", "a number, and the text “many” is none."),
+        ("number", True, "a number, and yes is none."),
+        ("checkbox", "maybe", "a checkbox, and the text “maybe” is none."),
+        ("checkbox", 1, "a checkbox, and the number 1 is none."),
+        ("date", "tomorrow", "a date, and the text “tomorrow” is none."),
+        ("date", 5, "a date, and the number 5 is none."),
+        ("text", ["a"], "a text, and a list of 1 is none."),
+    ],
+)
+def test_a_value_that_is_not_of_the_type_says_so(
+    kind: str, value: Any, said: str
+) -> None:
+    with pytest.raises(ValueError) as error:
+        typed_property("steps", value, kind)
+
+    assert str(error.value) == f"The property “steps” is {said}"
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_set_note_properties_writes_each_property_as_its_type(
+    mock_obsidian: AsyncMock,
+) -> None:
+    mock_obsidian.get_property.return_value = None
+
+    output = _set(
+        mock_obsidian,
+        properties={"steps": "6227", "done": "yes", "note": "7", "gone": None},
+        types={"steps": "number", "done": "checkbox"},
+    )
+
+    # A property without a type is written as it comes.
+    assert _sets(mock_obsidian) == [
+        (NOTE, "steps", 6227),
+        (NOTE, "done", True),
+        (NOTE, "note", "7"),
+    ]
+    assert output.written == ["steps", "done", "note"]
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_a_property_of_the_wrong_type_fails_the_step_before_anything_is_written(
+    mock_obsidian: AsyncMock,
+) -> None:
+    with pytest.raises(ValueError, match="The property “steps” is a number"):
+        _set(
+            mock_obsidian,
+            properties={"done": "yes", "steps": "many"},
+            types={"steps": "number"},
+        )
+
+    mock_obsidian.set_value_of_property.assert_not_awaited()
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_write_note_writes_each_property_as_its_type(mock_obsidian: AsyncMock) -> None:
+    inputs = WriteNoteInput(
+        path="Sets/a.md",
+        properties={"reps": "5", "warmup": "no", "tags": "a, b"},
+        types={"reps": "number", "warmup": "checkbox", "tags": "list"},
+    )
+
+    asyncio.run(WriteNote().run(_context(), inputs))
+
+    text = mock_obsidian.write_binary_file.await_args.args[1].decode("utf-8")
+    assert text == "---\nreps: 5\nwarmup: false\ntags:\n- a\n- b\n---\n\n"

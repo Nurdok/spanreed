@@ -469,3 +469,58 @@ def test_rows_that_lack_a_value_are_refused_with_the_name_of_the_step() -> None:
     assert refused.value.problems == [
         "Step 1, If: Condition: the value after “is bigger than” is missing."
     ]
+
+
+# -- rows that have a type each ------------------------------------------------
+
+
+@dataclass
+class _Typed:
+    properties: dict[str, Any] = editing.typed_rows(
+        "types", ("any", "number", "checkbox")
+    )
+    types: dict[str, str] = field(default_factory=dict)
+
+
+def test_the_rows_of_a_typed_mapping_carry_their_types() -> None:
+    stored = {
+        "properties": {"steps": "{{ a.b }}", "done": True},
+        "types": {"done": "checkbox", "gone": "number", "steps": "odd"},
+    }
+
+    edit = editing.fields(_Typed, stored)
+
+    assert edit["properties"]["types"] == ["any", "number", "checkbox"]
+    # A row without a type, or with one that is none, has the first.
+    assert edit["properties"]["rows"] == [
+        ["steps", "{{ a.b }}", "any"],
+        ["done", "true", "checkbox"],
+    ]
+    # The types have no control of their own.
+    assert edit["types"] == {"control": "hidden"}
+
+
+def test_the_types_of_the_rows_are_stored_by_the_name_of_the_row() -> None:
+    def stored(rows: list[list[str]]) -> dict[str, Any]:
+        found: list[str] = []
+        inputs = editing._inputs(_Typed, {"properties": rows}, "Step 1", found)
+        assert found == []
+        return inputs
+
+    assert stored(
+        [["steps", "5", "number"], ["done", "yes", "checkbox"], ["x", "y", "any"]]
+    ) == {
+        "properties": {"steps": 5, "done": "yes", "x": "y"},
+        "types": {"steps": "number", "done": "checkbox"},
+    }
+    # No type anywhere: nothing more is stored than before.
+    assert stored([["steps", "5", "any"], ["x", "y"]]) == {
+        "properties": {"steps": 5, "x": "y"}
+    }
+
+
+def test_a_type_that_is_none_is_refused() -> None:
+    found: list[str] = []
+    editing._inputs(_Typed, {"properties": [["steps", "5", "colour"]]}, "Step 1", found)
+
+    assert found == ["Step 1: Properties: “colour” is no type of “steps”."]
