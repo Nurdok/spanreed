@@ -133,11 +133,27 @@ or while the app is on screen.
 [workflows.md](workflows.md)). It reads, controls and edits them, and makes
 new ones.
 
+It opens on a screen with all of them. There is no list on the left here,
+and on a phone no drawer: the workflows have the whole width.
+
+![All the workflows](images/web-ui-workflow-list-desktop.png)
+
+- **A tile** for each workflow has its name, how its last run went, and a
+  chip for each plugin it touches: "Obsidian", "Health Connect". Each plugin
+  is there once, the plugin of the trigger first. Spanreed's own blocks are
+  in every workflow, so they get no chip, and a workflow made of nothing
+  else has none.
+- **Filter workflows** narrows the tiles by a name or by a plugin.
+- **New workflow** and **Recipes** are at the top (see below).
+
+<img src="images/web-ui-workflow-list-phone.png" alt="All the workflows on a phone" width="390">
+
+A tile opens its workflow, at its steps. **‹ Workflows** above the name
+leads back. Going to the conversation and coming again shows all the
+workflows, not the one that was open.
+
 ![A workflow's steps on desktop](images/web-ui-workflow-steps-desktop.png)
 
-- **The list** has one row for each workflow: its name, a mark for each
-  block it uses, and how its last run went. On a phone the list is the
-  drawer, as the commands are.
 - **Steps** draws the workflow as cards: the trigger, marked T, then the
   steps, numbered as the engine numbers them in its messages. A card shows
   the block, the plugin it comes from, its inputs as they are stored and the
@@ -331,7 +347,8 @@ differently and come to the same note are not noticed.
 
 ### A new workflow
 
-**New workflow**, under the list, offers three ways to start.
+**New workflow**, at the top of the screen with all the workflows, offers
+three ways to start.
 
 ![A new workflow](images/web-ui-workflow-new-desktop.png)
 
@@ -346,8 +363,8 @@ differently and come to the same note are not noticed.
 ### The recipes
 
 **Recipes**, next to New workflow, shows the workflows that ship with
-Spanreed: what each does, and a mark for each block it uses. The ones you
-can add come first. One that you have already, or that needs a plugin you
+Spanreed: what each does, and a chip for each plugin it touches. The ones
+you can add come first. One that you have already, or that needs a plugin you
 have not set up, says so.
 
 ![The recipes](images/web-ui-workflow-recipes-desktop.png)
