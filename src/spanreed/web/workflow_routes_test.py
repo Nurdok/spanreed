@@ -122,14 +122,8 @@ def test_the_list_has_only_the_workflows_of_the_user() -> None:
             assert workflow["enabled"] is True
             assert workflow["problem"] is None
             assert workflow["last_run"] is None
-            # The trigger, then the four steps.
-            assert workflow["apps"] == [
-                {"app": "Spanreed", "kind": "trigger"},
-                {"app": "Todoist", "kind": "action"},
-                {"app": "Spanreed", "kind": "logic"},
-                {"app": "Todoist", "kind": "action"},
-                {"app": "Spanreed", "kind": "ask"},
-            ]
+            # The plugins it touches, each once, and not Spanreed itself.
+            assert workflow["plugins"] == ["Todoist"]
 
     asyncio.run(run())
 
@@ -804,13 +798,7 @@ def test_the_catalog_lists_the_recipes_and_which_the_user_has() -> None:
             )
             assert chores["description"]
             # What it touches, as the list of workflows shows it.
-            assert chores["apps"] == [
-                {"app": "Spanreed", "kind": "trigger"},
-                {"app": "Todoist", "kind": "action"},
-                {"app": "Spanreed", "kind": "logic"},
-                {"app": "Todoist", "kind": "action"},
-                {"app": "Spanreed", "kind": "ask"},
-            ]
+            assert chores["plugins"] == ["Todoist"]
             # A recipe whose plugins are not loaded here cannot be added.
             hevy = recipes["hevy-set-notes"]
             assert hevy["installed"] is False

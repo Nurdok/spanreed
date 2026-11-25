@@ -345,16 +345,22 @@ def detail(
     }
 
 
-def _marks(
-    trigger: dict[str, Any], steps: list[dict[str, Any]]
-) -> list[dict[str, str]]:
-    """Return the plugin and the kind of each card, in the order they run.
+def _plugins(trigger: dict[str, Any], steps: list[dict[str, Any]]) -> list[str]:
+    """Return the names of the plugins whose blocks some cards use.
 
-    For the row of marks that shows at a glance what a workflow touches.
+    Each once, in the order that the cards first use them: the plugin of
+    the trigger comes first. Spanreed's own blocks are in every workflow,
+    so they say nothing about it and are left out. So is a block that no
+    plugin publishes any more.
+
+    For the chips that show at a glance what a workflow touches.
     """
-    return [
-        {"app": card["app"], "kind": card["kind"]} for card in [trigger, *_flat(steps)]
-    ]
+    names: list[str] = []
+    for card in [trigger, *_flat(steps)]:
+        app = card["app"]
+        if app and app != CORE_APP and app not in names:
+            names.append(app)
+    return names
 
 
 def recipe_view(engine: WorkflowEngine, recipe: Recipe) -> dict[str, Any]:
@@ -372,7 +378,7 @@ def recipe_view(engine: WorkflowEngine, recipe: Recipe) -> dict[str, Any]:
         "id": recipe.id,
         "name": recipe.name,
         "description": recipe.description,
-        "apps": _marks(trigger, steps),
+        "plugins": _plugins(trigger, steps),
         "trigger": trigger,
         "steps": steps,
     }
@@ -389,5 +395,5 @@ def summary(
         "enabled": full["enabled"],
         "problem": full["problems"][0] if full["problems"] else None,
         "last_run": full["last_run"],
-        "apps": _marks(full["trigger"], full["steps"]),
+        "plugins": _plugins(full["trigger"], full["steps"]),
     }
