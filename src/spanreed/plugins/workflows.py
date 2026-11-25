@@ -75,6 +75,9 @@ class WorkflowsPlugin(Plugin):
             # once.
             await migrations.retire_plugins(self._engine)
             await migrations.convert_plugins(self._engine)
+            await migrations.mend_note_paths(
+                self._engine, [user.id for user in await self.get_users()]
+            )
             await self._say_started()
             # The engine's work is in its own tasks. This goes on until
             # the plugin is stopped.
