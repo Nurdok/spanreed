@@ -3,20 +3,21 @@
 import copy
 import json
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from spanreed.apis.audible import AudiblePlugin
+from spanreed.apis.google_books import GoogleBooksPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.plugin import Plugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.hevy import HevyPlugin
-from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.timekiller import TimekillerPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.plugins.withings import WithingsPlugin
 from spanreed.plugins.workflows import WorkflowsPlugin
-from spanreed.workflows import sharing
+from spanreed.workflows import migrations, sharing
 from spanreed.workflows.blocks import BlockRegistry
 from spanreed.workflows.builtin import builtin_blocks
 from spanreed.workflows.model import Step
@@ -36,7 +37,7 @@ def _real_registry() -> BlockRegistry:
             HealthConnectPlugin(),
             WithingsPlugin(),
             HevyPlugin(),
-            LitNotesPlugin(),
+            GoogleBooksPlugin(),
             AudiblePlugin(),
             TimekillerPlugin(),
         ]
@@ -225,6 +226,52 @@ def test_a_workflow_that_this_spanreed_cannot_run_does_not_come_in() -> None:
     assert "Step 2: there is no block “elsewhere.block”." in problems
     assert any("the id “one” is already in use" in problem for problem in problems)
     assert any(problem.startswith("Step 3, Fake record:") for problem in problems)
+
+
+def test_a_file_from_before_a_plugin_was_renamed_comes_in_with_the_ids_of_now() -> None:
+    registry = _real_registry()
+    workflow = all_recipes()["lit-notes-add-book-note"].workflow_for(4)
+    # As "Add book note" went out while Lit Notes published the search.
+    file = json.loads(
+        json.dumps(exported(workflow, registry))
+        .replace('"google-books.search-books"', '"lit-notes.search-books"')
+        .replace('"google-books"', '"lit-notes"')
+    )
+    assert file["requires"] == ["lit-notes", "obsidian"]
+    assert "lit-notes.search-books" in json.dumps(file["steps"])
+
+    again = imported(file, 7, registry, taken=set())
+
+    assert again.steps == workflow.steps
+    # What goes out again names the plugin that publishes the search now.
+    assert exported(again, registry)["requires"] == ["google-books", "obsidian"]
+
+
+def test_a_trigger_from_before_a_plugin_was_renamed_comes_in_too() -> None:
+    renamed = migrations.RenamedPlugin(
+        canonical_name="old",
+        name="Old",
+        new_canonical_name="fake",
+        new_name="Fake",
+        blocks={"old.events": "fake.events", "old.record": "fake.record"},
+    )
+    data = _file()
+    data["trigger"]["block"] = "old.events"
+    data["steps"] = [
+        {
+            "id": "each",
+            "block": "core.for-each",
+            "inputs": {"items": "{{ [1] }}"},
+            "steps": [{"id": "one", "block": "old.record", "inputs": {"text": "x"}}],
+        }
+    ]
+    registry = registry_of(Record(), *builtin_blocks())
+
+    with patch.object(migrations, "RENAMED_PLUGINS", [renamed]):
+        workflow = imported(data, 4, registry, taken=set())
+
+    assert workflow.trigger.block == "fake.events"
+    assert workflow.steps[0].steps[0].block == "fake.record"
 
 
 def test_a_file_with_too_many_steps_does_not_come_in() -> None:

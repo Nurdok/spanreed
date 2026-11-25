@@ -1,11 +1,18 @@
+"""Google Books: the search for a book, and the plugin that publishes it."""
+
 import datetime
 import logging
 
 import aiohttp
-from typing import Optional, Any
+from typing import TYPE_CHECKING, Optional, Any
 from dataclasses import dataclass
 import re
 import dateutil.parser
+
+from spanreed.plugin import Plugin
+
+if TYPE_CHECKING:
+    from spanreed.workflows.blocks import Block
 
 
 @dataclass
@@ -66,6 +73,27 @@ def parse_date(date_str: Optional[str]) -> Optional[datetime.date]:
         return dateutil.parser.parse(date_str).date()
     except (ValueError, dateutil.parser.ParserError):
         return None
+
+
+class GoogleBooksPlugin(Plugin):
+    """The connection to Google Books: its search, as a block for workflows.
+
+    It has no settings and runs nothing. It took the place of Lit Notes,
+    which wrote a note for a book. The recipe "Add book note" does that
+    now, and this search was what was left of the plugin (see
+    ``spanreed.workflows.migrations``).
+    """
+
+    @classmethod
+    def name(cls) -> str:
+        return "Google Books"
+
+    def blocks(self) -> list["Block"]:
+        """Return the book search for workflows."""
+        # Imported here: the blocks import this module for ``GoogleBooks``.
+        from spanreed.apis.google_books_blocks import google_books_blocks
+
+        return google_books_blocks()
 
 
 class GoogleBooks:

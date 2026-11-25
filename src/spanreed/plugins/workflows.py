@@ -70,6 +70,12 @@ class WorkflowsPlugin(Plugin):
         registry = BlockRegistry.from_plugins(await Plugin.get_all_plugins())
         self._engine = WorkflowEngine(registry, command_plugin=self.canonical_name())
         try:
+            # Before the start: the engine starts the workflows as they are
+            # stored, and one that names a block by an id that the block no
+            # longer has would not start.
+            renamed = await migrations.rename_plugins(
+                self._engine, [user.id for user in await self.get_users()]
+            )
             await self._engine.start(user.id for user in await self.get_users())
             # After the start, so that a workflow installed here is started
             # once.
@@ -78,6 +84,7 @@ class WorkflowsPlugin(Plugin):
             await migrations.mend_note_paths(
                 self._engine, [user.id for user in await self.get_users()]
             )
+            await migrations.tell_about_renames(renamed)
             await self._say_started()
             # The engine's work is in its own tasks. This goes on until
             # the plugin is stopped.

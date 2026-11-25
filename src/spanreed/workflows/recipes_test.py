@@ -8,10 +8,10 @@ from spanreed.apis.todoist import Task
 from spanreed.interaction import commands
 from spanreed.plugin import Plugin
 from spanreed.apis.audible import AudiblePlugin
+from spanreed.apis.google_books import GoogleBooksPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.hevy import HevyPlugin
-from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.timekiller import TimekillerPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.plugins.withings import WithingsPlugin
@@ -43,7 +43,7 @@ def _real_registry() -> BlockRegistry:
             HealthConnectPlugin(),
             WithingsPlugin(),
             HevyPlugin(),
-            LitNotesPlugin(),
+            GoogleBooksPlugin(),
             AudiblePlugin(),
             TimekillerPlugin(),
         ]

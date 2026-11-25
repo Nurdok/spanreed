@@ -12,8 +12,14 @@ plugin had at that moment, install them with the settings the user had, and
 remember that it was done. A user who joins the plugin later never had the
 old behavior, and adds the recipes they want.
 
-A user never has the old behavior and the new one, and doing either again
-changes nothing.
+A plugin that another plugin took the place of is renamed: what was left
+of it, its blocks, is published under the new name. Its users are
+registered to the new plugin, and their workflows name the blocks by the
+ids they have there. This runs before the engine starts, and the users
+are told after it has.
+
+A user never has the old behavior and the new one, and doing any of these
+again changes nothing.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ from typing import Any
 from spanreed.interaction import UserInteractionApi
 from spanreed.storage import redis_api
 from spanreed.user import User
-from spanreed.workflows.engine import WorkflowEngine
+from spanreed.workflows.engine import WorkflowEngine, digest
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import all_recipes
 from spanreed.workflows.store import MOVED_MARKER
@@ -410,6 +416,203 @@ async def _tell_about_conversion(
         text += f" {conversion.note}"
     bot = await UserInteractionApi.for_user(user)
     await bot.notify(text, parse_html=False)
+
+
+# -- a plugin that another plugin took the place of ----------------------------
+
+
+@dataclass(frozen=True)
+class RenamedPlugin:
+    """A plugin that is gone, whose blocks another plugin publishes now."""
+
+    canonical_name: str
+    name: str
+    # The plugin that took its place.
+    new_canonical_name: str
+    new_name: str
+    # The id that each of its blocks had, and the id that it has now.
+    blocks: dict[str, str]
+    # Added to what the user is told: why the name changed.
+    note: str = ""
+
+
+RENAMED_PLUGINS = [
+    RenamedPlugin(
+        canonical_name="lit-notes",
+        name="Lit Notes",
+        new_canonical_name="google-books",
+        new_name="Google Books",
+        blocks={"lit-notes.search-books": "google-books.search-books"},
+        note=(
+            "Searching Google Books is all it did since “Add book note” "
+            "became a workflow."
+        ),
+    ),
+]
+
+
+def current_block(block_id: str) -> str:
+    """Return the id that a block has now, given one that it has or had.
+
+    For what comes from outside: the file of a workflow that was exported
+    before a plugin was renamed names its blocks by the ids they had.
+    """
+    for plugin in RENAMED_PLUGINS:
+        block_id = plugin.blocks.get(block_id, block_id)
+    return block_id
+
+
+async def rename_plugins(
+    engine: WorkflowEngine, user_ids: Iterable[int]
+) -> list[tuple[RenamedPlugin, int]]:
+    """Move the users and the workflows of every renamed plugin to the new one.
+
+    ``user_ids`` are the users whose workflows are looked at. Call this
+    before the engine starts: it starts the workflows as they are stored,
+    and one that names a block by an id that is gone does not start.
+
+    Return who was moved from which plugin, for ``tell_about_renames``.
+    """
+    user_ids = list(user_ids)
+    moved: list[tuple[RenamedPlugin, int]] = []
+    for plugin in RENAMED_PLUGINS:
+        # The engine starts whatever happens here. What was not moved stays
+        # as it was, so the next start tries again. One of the two does not
+        # wait for the other: each leaves the user nearer to a workflow
+        # that runs.
+        try:
+            await _move_registrations(plugin, moved)
+        except Exception:
+            _logger.exception(
+                f"Could not move the users of plugin {plugin.canonical_name}"
+                f" to {plugin.new_canonical_name}."
+            )
+        try:
+            await _rename_blocks(engine, plugin, user_ids)
+        except Exception:
+            _logger.exception(
+                f"Could not rename the blocks of plugin {plugin.canonical_name}."
+            )
+    return moved
+
+
+async def _move_registrations(
+    plugin: RenamedPlugin, moved: list[tuple[RenamedPlugin, int]]
+) -> None:
+    """Register the users of a renamed plugin to the one that took its place.
+
+    Add each user who was moved to ``moved``.
+    """
+    # The conversion of the old plugin reads its users from these
+    # registrations, the first time it looks. Let it look before they go.
+    for conversion in _conversions():
+        if conversion.canonical_name == plugin.canonical_name:
+            await _users_to_convert(conversion)
+    # The keys that ``Plugin`` keeps registrations under.
+    old_key = f"config:plugin:name={plugin.canonical_name}:users"
+    new_key = f"config:plugin:name={plugin.new_canonical_name}:users"
+    for raw_user_id in await redis_api.smembers(old_key):
+        user_id = int(raw_user_id)
+        # The new registration first: if this stops halfway, the old one
+        # is still there, and the next start does the rest.
+        await redis_api.sadd(f"user:{user_id}:plugins", plugin.new_canonical_name)
+        await redis_api.sadd(new_key, user_id)
+        await redis_api.srem(f"user:{user_id}:plugins", plugin.canonical_name)
+        await redis_api.srem(old_key, user_id)
+        moved.append((plugin, user_id))
+        _logger.info(
+            f"Moved user {user_id} from plugin {plugin.canonical_name} to"
+            f" {plugin.new_canonical_name}."
+        )
+
+
+async def tell_about_renames(moved: list[tuple[RenamedPlugin, int]]) -> None:
+    """Tell the users whom ``rename_plugins`` moved that the name changed.
+
+    Call this after the engine has started. Telling waits until a surface
+    can carry it, and the workflows must not wait for that.
+    """
+    for plugin, user_id in moved:
+        text = f"The plugin “{plugin.name}” is called “{plugin.new_name}” now. "
+        if plugin.note:
+            text += f"{plugin.note} "
+        text += (
+            "Your workflows go on as they were, and “Manage plugins” has it "
+            "under the new name."
+        )
+        try:
+            user = await User.find_by_id(user_id)
+            bot = await UserInteractionApi.for_user(user)
+            await bot.notify(text, parse_html=False)
+        except Exception:
+            # The user is moved, and is not moved again: there is no next
+            # start to tell them at.
+            _logger.exception(
+                f"Could not tell user {user_id} that plugin"
+                f" {plugin.canonical_name} has another name."
+            )
+
+
+async def _rename_blocks(
+    engine: WorkflowEngine, plugin: RenamedPlugin, user_ids: list[int]
+) -> None:
+    """Give the blocks of a renamed plugin their new ids in the workflows, once."""
+    done_key = f"workflows:renamed:{plugin.canonical_name}"
+    if await redis_api.get(done_key) is not None:
+        return
+    every_user_done = True
+    for user_id in user_ids:
+        try:
+            for workflow in await engine.store.list_for_user(user_id):
+                await _rename_in_workflow(engine, plugin, workflow)
+        except Exception:
+            every_user_done = False
+            _logger.exception(
+                f"Could not rename the blocks of plugin {plugin.canonical_name}"
+                f" in the workflows of user {user_id}."
+            )
+    if every_user_done:
+        await redis_api.set(done_key, "1")
+
+
+async def _rename_in_workflow(
+    engine: WorkflowEngine, plugin: RenamedPlugin, workflow: Workflow
+) -> None:
+    """Store a workflow with the ids that the blocks of a renamed plugin have now."""
+    before = digest(workflow)
+    renamed = _rename_steps(workflow.steps, plugin.blocks)
+    if workflow.trigger.block in plugin.blocks:
+        workflow.trigger.block = plugin.blocks[workflow.trigger.block]
+        renamed += 1
+    if not renamed:
+        return
+    # Not ``engine.save``: the engine has not started, and starts the
+    # workflow as it is stored now.
+    await engine.store.save(workflow)
+    # A run that the last process did not get to the end of goes on only
+    # in the workflow it started in, which this still is.
+    after = digest(workflow)
+    for run_id, place in (await engine.store.places(workflow.id)).items():
+        if place.get("workflow") == before:
+            await engine.store.keep_place(
+                workflow.id, run_id, {**place, "workflow": after}
+            )
+    _logger.info(
+        f"Renamed {renamed} blocks of plugin {plugin.canonical_name} in"
+        f" workflow {workflow.id}."
+    )
+
+
+def _rename_steps(steps: list[Step], blocks: dict[str, str]) -> int:
+    """Give some steps, and the steps inside them, the new ids. Return how many."""
+    renamed = 0
+    for step in steps:
+        if step.block in blocks:
+            step.block = blocks[step.block]
+            renamed += 1
+        renamed += _rename_steps(step.steps, blocks)
+        renamed += _rename_steps(step.otherwise, blocks)
+    return renamed
 
 
 # -- putting right what a move got wrong ---------------------------------------
