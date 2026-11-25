@@ -51,6 +51,7 @@ from spanreed.interaction import UserInteractionApi
 from spanreed.interaction.surface import MessageHandle
 from spanreed.user import User
 from spanreed.workflows.values import from_whole_data, whole_data
+from spanreed.config_form import described
 
 if TYPE_CHECKING:
     from spanreed.plugin import Plugin
@@ -172,9 +173,8 @@ class RunInfo:
     Step inputs can refer to it as ``run``: ``{{ run.manual }}``.
     """
 
-    id: str
-    # True if the user started the run by hand.
-    manual: bool
+    id: str = described("The id of the run")
+    manual: bool = described("Whether you started the run by hand")
 
 
 # How much of one text of a conversation the trace keeps, and how many

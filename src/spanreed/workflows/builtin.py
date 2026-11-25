@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import dateutil.tz
 
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 
 from spanreed.workflows.blocks import (
     Action,
@@ -47,10 +47,10 @@ def _now() -> datetime.datetime:
 class Tick:
     """One event of a schedule, in the user's timezone."""
 
-    # YYYY-MM-DD
-    date: str
-    # HH:MM
-    time: str
+    date: str = described(
+        "The day the run started on, as 2026-05-09, in your timezone",
+    )
+    time: str = described("The time it started at, as 18:30")
 
 
 class Schedule(Trigger[Repeat, Tick]):
@@ -393,8 +393,7 @@ class IfInput:
 class IfOutput:
     """What ``If`` gives: which way it went."""
 
-    # Whether the condition held.
-    yes: bool
+    yes: bool = described("Whether the condition held")
 
 
 class If(Branch[IfInput, IfOutput]):
@@ -425,12 +424,18 @@ class ForEachInput:
 class ForEachOutput:
     """What ``ForEach`` gives: inside, the item of the round; after, the count."""
 
-    # The item that the steps inside run for. Empty after the loop.
-    item: Any = None
-    # The place of the item, from 1. After the loop, 0.
-    index: int = 0
-    # How many items there are.
-    count: int = 0
+    item: Any = described(
+        "The item that the steps inside run for. Nothing after the loop",
+        default=None,
+    )
+    index: int = described(
+        "The place of the item in the list, from 1. 0 after the loop",
+        default=0,
+    )
+    count: int = described(
+        "How many items the list has",
+        default=0,
+    )
 
 
 class ForEach(Loop[ForEachInput, ForEachOutput]):

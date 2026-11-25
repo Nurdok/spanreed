@@ -596,8 +596,8 @@ class FindTasksInput:
 
 @dataclass
 class FindTasksOutput:
-    tasks: list[Any]
-    count: int
+    tasks: list[Any] = described("The tasks that were found. “Set due date” takes them")
+    count: int = described("How many tasks were found")
 
 class FindTasks(Action[FindTasksInput, FindTasksOutput]):
     id = "todoist.find-tasks"      # stable: stored workflows refer to it
@@ -618,6 +618,13 @@ class TodoistPlugin(Plugin[UserConfig]):
 
 - The input values are checked against the dataclass with
   `spanreed.config_form`, the check that the settings form uses.
+- **Every output says what it is**, with `described` from
+  `spanreed.config_form`. The page shows the text next to the output's name
+  and its type, on the card and in the list of values to insert. It is
+  written for the user, as the help of an input is, and has no period at its
+  end. The type is put into words from the annotation: `int | None` is "whole
+  number, or nothing". A test fails for an output of a published block that
+  has no text.
 - A user's workflow can use a plugin's blocks while the user is registered to
   that plugin. Otherwise the step fails and says which plugin to set up.
 - Raise `StopRun` to end the run at this step without failing it. Any other

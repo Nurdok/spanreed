@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from spanreed.apis.google_books import Book, GoogleBooks
 from spanreed.workflows.blocks import Action, Block, StepContext
+from spanreed.config_form import described
 
 
 @dataclass
@@ -20,13 +21,11 @@ class SearchBooksInput:
 class SearchBooksOutput:
     """What the search found, best match first."""
 
-    # Each has a ``label``, a line to choose it by, so the list can be the
-    # options of "Ask me to choose". A book also has what a note template
-    # can use: ``short_title``, ``full_title``, ``formatted_authors``,
-    # ``formatted_authors_dataview``, ``publication_year`` and
-    # ``cover_image_url``.
-    books: list[Book]
-    count: int
+    books: list[Book] = described(
+        "The books that were found, best match first. Each has a “label” to "
+        "choose it by, so the list can be the options of “Ask me to choose”",
+    )
+    count: int = described("How many books were found")
 
 
 class SearchBooks(Action[SearchBooksInput, SearchBooksOutput]):

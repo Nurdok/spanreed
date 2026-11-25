@@ -16,7 +16,7 @@ from typing import Any
 
 from spanreed.apis.audible import AudibleApi, AudibleBook
 from spanreed.apis.obsidian import ObsidianApi
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 from spanreed.workflows.asking import Priority, give_up_field, priority_field
 from spanreed.workflows.blocks import Action, Block, NoInput, StepContext
 
@@ -59,9 +59,11 @@ class Library:
 class GetLibraryOutput:
     """The user's Audible library."""
 
-    # Give this to "Link a note to a book". Its books are ``library.books``.
-    library: Any
-    count: int
+    library: Any = described(
+        "Your Audible library. “Link a note to a book” takes it. Its books "
+        "are library.books",
+    )
+    count: int = described("How many books the library has")
 
 
 class GetLibrary(Action[NoInput, GetLibraryOutput]):
@@ -133,20 +135,32 @@ class LinkNoteInput:
 class LinkNoteOutput:
     """The book of the note, if there is one."""
 
-    # False if the note has no book: look at ``outcome`` for why.
-    linked: bool
-    # ``known``: the note had the ASIN. ``chosen``: the user chose the book
-    # just now. ``not in library``: the note's ASIN is not in the library.
-    # ``not on audible``: the user said so, now or before. ``later``: the
-    # user said to ask later, less than a day ago. ``no match``: no title in
-    # the library is close, which also waits a day.
-    outcome: str
-    asin: str = ""
-    # The title Audible has for the book.
-    title: str = ""
-    # How much of it was listened to, as a whole number.
-    percent: int = 0
-    finished: bool = False
+    linked: bool = described(
+        "Whether the note has a book. If not, “outcome” says why",
+    )
+    outcome: str = described(
+        "known: the note had the ASIN. chosen: you chose the book just now. "
+        "not in library: the note’s ASIN is not in the library. not on "
+        "audible: you said so, now or before. later: you said to ask later, "
+        "less than a day ago. no match: no title in the library is close, "
+        "which also waits a day",
+    )
+    asin: str = described(
+        "The ASIN of the book: the id that Audible gives it",
+        default="",
+    )
+    title: str = described(
+        "The title Audible has for the book",
+        default="",
+    )
+    percent: int = described(
+        "How much of it was listened to, in percent, as a whole number",
+        default=0,
+    )
+    finished: bool = described(
+        "Whether Audible has the book as finished",
+        default=False,
+    )
 
 
 class LinkNote(Action[LinkNoteInput, LinkNoteOutput]):

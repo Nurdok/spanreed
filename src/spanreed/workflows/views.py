@@ -27,7 +27,7 @@ from spanreed.workflows.blocks import (
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
-from spanreed.workflows.values import to_data
+from spanreed.workflows.values import to_data, type_in_words
 
 # What the blocks that Spanreed itself publishes are shown as coming from.
 CORE_APP = "Spanreed"
@@ -120,17 +120,37 @@ def _card(
         "app": _app(engine, block),
         "kind": block.kind.value,
         "fields": _fields(inputs, stored),
-        "outputs": [field.name for field in dataclasses.fields(outputs)],
+        "outputs": outputs_of(outputs),
         "item_outputs": _item_outputs(outputs),
         "missing": False,
     }
 
 
-def _item_outputs(outputs: type[Any]) -> dict[str, list[str]]:
+def outputs_of(cls: type[Any]) -> list[dict[str, str]]:
+    """Return what a block gives, for the page: each output with what it is.
+
+    ``name`` is how a template refers to it, ``type`` is its type in words
+    (``whole number``), and ``help`` says what it holds. ``help`` is the
+    text the field was described with (``config_form.described``), and
+    empty for a field that was not.
+    """
+    hints = typing.get_type_hints(cls)
+    return [
+        {
+            "name": field.name,
+            "type": type_in_words(hints[field.name]),
+            "help": str(field.metadata.get(config_form.HELP_KEY, "")),
+        }
+        for field in dataclasses.fields(cls)
+    ]
+
+
+def _item_outputs(outputs: type[Any]) -> dict[str, list[dict[str, str]]]:
     """Return the fields of the items of each output that is a list of them.
 
     The editor offers them inside a loop over such an output: a loop over
-    a workout's ``sets`` can use ``item.reps``.
+    a workout's ``sets`` can use ``item.reps``. Each is told as an output
+    is (see ``outputs_of``).
     """
     described = {}
     hints = typing.get_type_hints(outputs)
@@ -143,7 +163,7 @@ def _item_outputs(outputs: type[Any]) -> dict[str, list[str]]:
             and isinstance(items[0], type)
             and dataclasses.is_dataclass(items[0])
         ):
-            described[field.name] = [f.name for f in dataclasses.fields(items[0])]
+            described[field.name] = outputs_of(items[0])
     return described
 
 
@@ -371,7 +391,7 @@ def detail(
         # the first of them.
         "remembers": {"count": len(names), "names": names[:MEMORY_SHOWN]},
         # What ``{{ run.… }}`` offers.
-        "run_outputs": [field.name for field in dataclasses.fields(RunInfo)],
+        "run_outputs": outputs_of(RunInfo),
         "trigger": trigger,
         "steps": steps,
     }

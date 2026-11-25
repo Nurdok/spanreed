@@ -23,6 +23,7 @@ from spanreed.apis.health_connect import (
     type_name_of,
 )
 from spanreed.user import User
+from spanreed.config_form import described
 from spanreed.workflows.blocks import (
     Block,
     NoParams,
@@ -39,19 +40,51 @@ METRIC_RECORD_TYPES = ("steps", "heart-rate", "resting-heart-rate", VO2_MAX_RECO
 class DayMetrics:
     """The metrics of one local date. A metric with no data is ``None``."""
 
-    # YYYY-MM-DD
-    date: str
-    steps: int | None = None
-    resting_heart_rate: int | None = None
-    heart_rate_p5: int | None = None
-    heart_rate_avg: int | None = None
-    heart_rate_p95: int | None = None
-    heart_rate_p98: int | None = None
-    heart_rate_p99: int | None = None
-    # Minutes in each heart rate zone. They need the user's date of birth.
-    hr_moderate_minutes: int | None = None
-    hr_vigorous_minutes: int | None = None
-    vo2_max: float | None = None
+    date: str = described("The day the data is of, as 2026-05-09")
+    steps: int | None = described(
+        "The steps of the day. Nothing if there is no data",
+        default=None,
+    )
+    resting_heart_rate: int | None = described(
+        "The resting heart rate, in beats per minute. Nothing if there is " "no data",
+        default=None,
+    )
+    heart_rate_p5: int | None = described(
+        "The heart rate that 5% of the day’s readings are below, in beats "
+        "per minute",
+        default=None,
+    )
+    heart_rate_avg: int | None = described(
+        "The average heart rate of the day, in beats per minute",
+        default=None,
+    )
+    heart_rate_p95: int | None = described(
+        "The heart rate that 95% of the day’s readings are below, in beats "
+        "per minute",
+        default=None,
+    )
+    heart_rate_p98: int | None = described(
+        "The heart rate that 98% of the day’s readings are below, in beats "
+        "per minute",
+        default=None,
+    )
+    heart_rate_p99: int | None = described(
+        "The heart rate that 99% of the day’s readings are below, in beats "
+        "per minute",
+        default=None,
+    )
+    hr_moderate_minutes: int | None = described(
+        "Minutes with a moderate heart rate. It needs your date of birth",
+        default=None,
+    )
+    hr_vigorous_minutes: int | None = described(
+        "Minutes with a vigorous heart rate. It needs your date of birth",
+        default=None,
+    )
+    vo2_max: float | None = described(
+        "The VO2 max of the day. Nothing if there is no data",
+        default=None,
+    )
 
 
 async def day_metrics(user: User, date: datetime.date) -> DayMetrics | None:
@@ -140,14 +173,15 @@ class DayChanged(PushTrigger[NoParams, DayMetrics]):
 class RawRecords:
     """The stored records of one record type and local date."""
 
-    # The name of the record type as the phone sends it: heart_rate.
-    type: str
-    # YYYY-MM-DD
-    date: str
-    # One record as JSON on each line. Empty if the phone deleted every
-    # record of the day.
-    records: str
-    count: int
+    type: str = described(
+        "The name of the record type as the phone sends it: heart_rate",
+    )
+    date: str = described("The day the records are of, as 2026-05-09")
+    records: str = described(
+        "One record as JSON on each line. Empty if the phone deleted every "
+        "record of the day",
+    )
+    count: int = described("How many records there are")
 
 
 def raw_records_key(record_type: str, date: datetime.date) -> str:

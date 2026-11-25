@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spanreed import errors
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 from spanreed.storage import redis_api
 from spanreed.user import User
 from spanreed.workflows.blocks import Trigger, TriggerContext
@@ -187,11 +187,13 @@ class Patience:
 class Silence:
     """The event of ``StoppedAnswering``."""
 
-    # When Obsidian last gave a sign of life, in the user's timezone:
-    # YYYY-MM-DD HH:MM. Empty if it gave none since Spanreed started.
-    last_seen: str
-    # The whole minutes since then, or since Spanreed started.
-    minutes: int
+    last_seen: str = described(
+        "When Obsidian last gave a sign of life, as 2026-05-09 18:30, in "
+        "your timezone. Empty if it gave none since Spanreed started",
+    )
+    minutes: int = described(
+        "The whole minutes since then, or since Spanreed started",
+    )
 
 
 class StoppedAnswering(Trigger[Patience, Silence]):

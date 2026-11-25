@@ -19,6 +19,7 @@ from spanreed.apis.obsidian_watch import StoppedAnswering
 from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, StepContext
 from spanreed.workflows.files import as_bytes
+from spanreed.config_form import described
 
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -64,12 +65,14 @@ def _daily_note_in_words(inputs: dict[str, Any]) -> str:
 class CreateDailyNoteOutput:
     """Where the note is."""
 
-    # The path of the note in the vault, such as ``Daily/2026-05-09.md``:
-    # where the Daily notes settings of Obsidian put it. Empty if the
-    # Spanreed plugin for Obsidian is too old to say.
-    path: str
-    # Whether the note was made now. False if it was there already.
-    created: bool
+    path: str = described(
+        "The path of the note in the vault, such as Daily/2026-05-09.md: "
+        "where the Daily notes settings of Obsidian put it. Empty if the "
+        "Spanreed plugin for Obsidian is too old to say",
+    )
+    created: bool = described(
+        "Whether the note was made now. No if it was there already",
+    )
 
 
 class CreateDailyNote(Action[DailyNoteInput, CreateDailyNoteOutput]):
@@ -107,12 +110,12 @@ class CreateDailyNote(Action[DailyNoteInput, CreateDailyNoteOutput]):
 class FindDailyNoteOutput:
     """Where the note is, or would be."""
 
-    # The path of the note in the vault, such as ``Daily/2026-05-09.md``:
-    # where it is, or where the Daily notes settings of Obsidian would put
-    # it.
-    path: str
-    # Whether the note is there.
-    exists: bool
+    path: str = described(
+        "The path of the note in the vault, such as Daily/2026-05-09.md: "
+        "where it is, or where the Daily notes settings of Obsidian would "
+        "put it",
+    )
+    exists: bool = described("Whether the note is there")
 
 
 class FindDailyNote(Action[DailyNoteInput, FindDailyNoteOutput]):
@@ -161,13 +164,15 @@ class SetNotePropertiesInput:
 class SetNotePropertiesOutput:
     """What was written."""
 
-    note: str
-    # The names of the properties that were set.
-    written: list[str]
-    count: int
-    # The properties that were set with their values, as one line of text.
-    summary: str
-    note_missing: bool
+    note: str = described("The path of the note")
+    written: list[str] = described("The names of the properties that were set")
+    count: int = described("How many properties were set")
+    summary: str = described(
+        "The properties that were set with their values, in one line: " "steps=6227",
+    )
+    note_missing: bool = described(
+        "Whether the note is not there, so that nothing was set",
+    )
 
 
 class SetNoteProperties(Action[SetNotePropertiesInput, SetNotePropertiesOutput]):
@@ -239,11 +244,15 @@ class WriteFileInput:
 class WriteFileOutput:
     """What happened to the file."""
 
-    path: str
-    written: bool
-    deleted: bool
-    # Whether the file was there already and was left as it is.
-    skipped: bool = False
+    path: str = described("The path of the file in the vault")
+    written: bool = described("Whether the file was written")
+    deleted: bool = described(
+        "Whether the file was deleted, because it would have been empty",
+    )
+    skipped: bool = described(
+        "Whether the file was there already and was left as it is",
+        default=False,
+    )
 
 
 class WriteFile(Action[WriteFileInput, WriteFileOutput]):
@@ -298,7 +307,7 @@ class WriteNoteInput:
 class WriteNoteOutput:
     """What was written."""
 
-    path: str
+    path: str = described("The path of the note in the vault")
 
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -373,7 +382,7 @@ class AppendToNoteInput:
 class AppendToNoteOutput:
     """Where the text went."""
 
-    path: str
+    path: str = described("The path of the note in the vault")
 
 
 class AppendToNote(Action[AppendToNoteInput, AppendToNoteOutput]):
@@ -410,14 +419,15 @@ class GetNotePropertyInput:
 class GetNotePropertyOutput:
     """What the note holds."""
 
-    # ``None`` if the note has no such property.
-    value: Any
-    # The value if it is a list, and an empty list if it is anything else.
-    # So a step that needs a list has one, whatever the note holds.
-    items: list[Any]
-    # Whether the note has the property.
-    found: bool
-    note_missing: bool
+    value: Any = described(
+        "The value of the property. Nothing if the note has no such " "property",
+    )
+    items: list[Any] = described(
+        "The value if it is a list, and an empty list if it is anything "
+        "else: a step that needs a list always has one",
+    )
+    found: bool = described("Whether the note has the property")
+    note_missing: bool = described("Whether the note is not there")
 
 
 class GetNoteProperty(Action[GetNotePropertyInput, GetNotePropertyOutput]):
@@ -459,7 +469,7 @@ class AddToListPropertyInput:
 class AddToListPropertyOutput:
     """Where the value went."""
 
-    note: str
+    note: str = described("The path of the note")
 
 
 class AddToListProperty(Action[AddToListPropertyInput, AddToListPropertyOutput]):
@@ -500,12 +510,12 @@ class QueryDataviewInput:
 class QueryDataviewOutput:
     """What Dataview found."""
 
-    # For a table: one thing for each row, with a value for each column
-    # under the column's name in small letters. The first column of a
-    # table is the note: ``{{ each.item.file.path }}`` is its path. For a
-    # list: the values.
-    rows: list[Any]
-    count: int
+    rows: list[Any] = described(
+        "For a table: one item for each row, with each column under its "
+        "name in small letters. The first column is the note, so {{ "
+        "each.item.file.path }} is its path. For a list: the values",
+    )
+    count: int = described("How many rows there are")
 
 
 class QueryDataview(Action[QueryDataviewInput, QueryDataviewOutput]):

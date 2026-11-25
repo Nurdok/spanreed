@@ -13,6 +13,7 @@ from typing import Literal
 
 from spanreed.apis.withings import MeasurementType, WithingsApi, today_of
 from spanreed.user import User
+from spanreed.config_form import described
 from spanreed.workflows.blocks import (
     Block,
     Poll,
@@ -43,15 +44,23 @@ class DayMeasurements:
     If a day has more than one reading of a measurement, this is the last.
     """
 
-    # YYYY-MM-DD
-    date: str
-    # In kilograms.
-    weight: float | None = None
-    fat_percentage: float | None = None
-    # In kilograms.
-    fat_mass: float | None = None
-    # In beats per minute.
-    heart_pulse: float | None = None
+    date: str = described("The day of the measurements, as 2026-05-09")
+    weight: float | None = described(
+        "The weight, in kilograms. Nothing if it was not measured",
+        default=None,
+    )
+    fat_percentage: float | None = described(
+        "The share of fat, in percent. Nothing if it was not measured",
+        default=None,
+    )
+    fat_mass: float | None = described(
+        "The mass of fat, in kilograms. Nothing if it was not measured",
+        default=None,
+    )
+    heart_pulse: float | None = described(
+        "The pulse, in beats per minute. Nothing if it was not measured",
+        default=None,
+    )
 
 
 async def measurements_of(

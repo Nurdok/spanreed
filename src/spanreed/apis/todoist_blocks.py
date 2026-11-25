@@ -8,7 +8,7 @@ from typing import Any, Literal
 import yaml
 
 from spanreed.apis.todoist import Todoist
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 from spanreed.workflows.blocks import Action, Block, StepContext
 
 
@@ -25,8 +25,10 @@ class FindTasksInput:
 class FindTasksOutput:
     """The tasks that were found."""
 
-    tasks: list[Any]
-    count: int
+    tasks: list[Any] = described(
+        "The tasks that were found. “Set due date” takes them",
+    )
+    count: int = described("How many tasks were found")
 
 
 class FindTasks(Action[FindTasksInput, FindTasksOutput]):
@@ -58,7 +60,7 @@ class SetDueDateInput:
 class SetDueDateOutput:
     """How many tasks were moved."""
 
-    count: int
+    count: int = described("How many tasks were moved")
 
 
 class SetDueDate(Action[SetDueDateInput, SetDueDateOutput]):
@@ -120,18 +122,17 @@ class ReadTallyInput:
 class ReadTallyOutput:
     """The dates on the task, and what they would be with the date."""
 
-    # Whether there is a task with the label.
-    found: bool
-    # Whether the task has the date already.
-    has_date: bool
-    # The dates the task has.
-    dates: list[str]
-    # The dates with the date added, if it was not there.
-    new_dates: list[str]
-    # ``new_dates`` in one line: 2026-11-17, 2026-11-24.
-    dates_text: str
-    # The cost of all of ``new_dates``. A whole number if it comes out as one.
-    total_cost: float
+    found: bool = described("Whether there is a task with the label")
+    has_date: bool = described("Whether the task has the date already")
+    dates: list[str] = described("The dates the task has")
+    new_dates: list[str] = described(
+        "The dates with the date added, if it was not there",
+    )
+    dates_text: str = described("The new dates in one line: 2026-11-17, 2026-11-24")
+    total_cost: float = described(
+        "What all the new dates cost together. A whole number if it comes "
+        "out as one",
+    )
 
 
 class ReadTally(Action[ReadTallyInput, ReadTallyOutput]):
@@ -184,9 +185,8 @@ class WriteTallyInput:
 class WriteTallyOutput:
     """What was written."""
 
-    # Whether the task was made just now.
-    created: bool
-    count: int
+    created: bool = described("Whether the task was made just now")
+    count: int = described("How many dates the task has now")
 
 
 class WriteTally(Action[WriteTallyInput, WriteTallyOutput]):

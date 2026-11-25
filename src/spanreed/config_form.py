@@ -38,6 +38,17 @@ _SECRET_NAME_RE = re.compile(
 _NONE_TYPE = type(None)
 
 
+def described(text: str, **how: Any) -> Any:
+    """Return a field of a dataclass that says what it is, for the page.
+
+    ``text`` is shown to the user wherever the field is: as the help of an
+    input of a form, and next to an output of a block of a workflow. It is
+    written for the user, and has no period at its end. ``how`` goes to
+    ``dataclasses.field``: a ``default``, or a ``default_factory``.
+    """
+    return dataclasses.field(metadata={HELP_KEY: text}, **how)
+
+
 class ConfigFormError(ValueError):
     """A submitted value does not fit the config.
 

@@ -10,6 +10,7 @@ import re
 import dateutil.parser
 
 from spanreed.plugin import Plugin
+from spanreed.config_form import described
 
 if TYPE_CHECKING:
     from spanreed.workflows.blocks import Block
@@ -17,12 +18,14 @@ if TYPE_CHECKING:
 
 @dataclass
 class Book:
-    title: str
-    authors: list[str]
-    publisher: str
-    publication_date: Optional[datetime.date]
-    description: str
-    thumbnail_url: str
+    title: str = described("The title of the book")
+    authors: list[str] = described("Who wrote it")
+    publisher: str = described("Who published it")
+    publication_date: Optional[datetime.date] = described(
+        "The day it was published. Nothing if Google Books has none",
+    )
+    description: str = described("What Google Books says the book is about")
+    thumbnail_url: str = described("The address of a picture of the cover")
 
     # For compatibility with Booksidian.
     @property

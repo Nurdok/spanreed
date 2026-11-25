@@ -14,7 +14,7 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Any
 
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 from spanreed.workflows.blocks import (
     Action,
     Block,
@@ -60,15 +60,20 @@ class RecallInput:
 class RecallOutput:
     """What the workflow remembers under the name."""
 
-    # Whether anything is kept under the name.
-    found: bool
-    value: Any = None
-    # When it was kept, in UTC. Empty if nothing is.
-    at: str = ""
-    # How many hours ago that was. 0 if nothing is kept. For doing
-    # something at most every so often: ``not last.found or
-    # last.age_hours > 72``.
-    age_hours: float = 0.0
+    found: bool = described("Whether anything is kept under the name")
+    value: Any = described(
+        "What is kept. Nothing if nothing is",
+        default=None,
+    )
+    at: str = described(
+        "When it was kept, in UTC. Empty if nothing is kept",
+        default="",
+    )
+    age_hours: float = described(
+        "How many hours ago that was. 0 if nothing is kept. For something "
+        "to do at most every so often: not found or age_hours > 72",
+        default=0.0,
+    )
 
 
 class Recall(Action[RecallInput, RecallOutput]):
@@ -99,7 +104,7 @@ class ForgetInput:
 class ForgetOutput:
     """Whether there was anything to drop."""
 
-    found: bool
+    found: bool = described("Whether anything was kept under the name")
 
 
 class Forget(Action[ForgetInput, ForgetOutput]):

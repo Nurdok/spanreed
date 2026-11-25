@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from spanreed.apis.hevy import HevyApi, Workout
+from spanreed.config_form import described
 from spanreed.workflows.blocks import (
     Block,
     ManualError,
@@ -32,50 +33,67 @@ EPOCH = "1970-01-01T00:00:00Z"
 class WorkoutSet:
     """One set of a workout."""
 
-    exercise: str
-    # The place of the exercise in the workout, from 1.
-    exercise_index: int
-    # The place of the set in its exercise, from 1.
-    set_number: int
-    # The place of the set in the whole workout, from 1. Sorting by it
-    # gives the order the sets were done in.
-    set_ordinal: int
-    # normal, warmup, failure or dropset.
-    set_type: str
-    weight_kg: float | None
-    reps: int | None
-    # Rate of perceived exertion, if the user logged it.
-    rpe: float | None
-    distance_meters: float | None
-    duration_seconds: int | None
-    # Weight times reps.
-    volume_kg: float | None
-    # The estimated one-rep maximum, by the Epley formula.
-    est_1rm_kg: float | None
-    # A name for a note of the set that is safe as a file name and unlike
-    # the names of the workout's other sets: ``Squat set 1``.
-    note_name: str
-    # The set in a line: ``Squat — set 1: 100 kg × 5 @ RPE 8``.
-    summary: str
+    exercise: str = described("The name of the exercise")
+    exercise_index: int = described("The place of the exercise in the workout, from 1")
+    set_number: int = described("The place of the set in its exercise, from 1")
+    set_ordinal: int = described(
+        "The place of the set in the whole workout, from 1. Sorting by it "
+        "gives the order the sets were done in",
+    )
+    set_type: str = described(
+        "The kind of set: normal, warmup, failure or dropset",
+    )
+    weight_kg: float | None = described(
+        "The weight, in kilograms. Nothing for a set without one",
+    )
+    reps: int | None = described(
+        "How many repetitions. Nothing for a set without them",
+    )
+    rpe: float | None = described(
+        "The rate of perceived exertion. Nothing if you did not log it",
+    )
+    distance_meters: float | None = described(
+        "The distance, in meters. Nothing for a set without one",
+    )
+    duration_seconds: int | None = described(
+        "How long the set took, in seconds. Nothing for a set without a " "time",
+    )
+    volume_kg: float | None = described("Weight times repetitions, in kilograms")
+    est_1rm_kg: float | None = described(
+        "The estimated one-rep maximum, by the Epley formula, in kilograms",
+    )
+    note_name: str = described(
+        "A name for a note of the set that is safe as a file name and "
+        "unlike the names of the workout’s other sets: Squat set 1",
+    )
+    summary: str = described(
+        "The set in a line: Squat — set 1: 100 kg × 5 @ RPE 8",
+    )
 
 
 @dataclass
 class WorkoutEvent:
     """A workout, with its sets in the order they were done."""
 
-    id: str
-    title: str
-    # The day the workout started, YYYY-MM-DD, as Hevy dates it. Empty if
-    # Hevy gave no time for the workout.
-    date: str | None
-    # A name for a folder of the workout's notes: the date, or the id of a
-    # workout that has none.
-    folder: str
-    sets: list[WorkoutSet]
-    set_count: int
-    exercise_count: int
-    # Whether the workflow has not run for this workout before.
-    new: bool = True
+    id: str = described("The id that Hevy gives the workout")
+    title: str = described("The title of the workout")
+    date: str | None = described(
+        "The day the workout started, as 2026-05-09, as Hevy dates it. "
+        "Nothing if Hevy gave no time for it",
+    )
+    folder: str = described(
+        "A name for a folder of the workout’s notes: the date, or the id of "
+        "a workout that has none",
+    )
+    sets: list[WorkoutSet] = described(
+        "The sets of the workout, in the order they were done",
+    )
+    set_count: int = described("How many sets the workout has")
+    exercise_count: int = described("How many exercises the workout has")
+    new: bool = described(
+        "Whether the workflow has not run for this workout before",
+        default=True,
+    )
 
 
 def _sanitize(name: str) -> str:

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spanreed.apis.obsidian import ObsidianApi
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 from spanreed.workflows.asking import Priority, give_up_field, priority_field
 from spanreed.workflows.blocks import Action, Block, BlockKind, StepContext
 
@@ -95,8 +95,7 @@ class JournalInput:
 class JournalOutput:
     """How it went."""
 
-    # How many prompts were answered.
-    answered: int
+    answered: int = described("How many prompts were answered")
 
 
 class Journal(Action[JournalInput, JournalOutput]):
@@ -161,10 +160,8 @@ class ReadingInput:
 class ReadingOutput:
     """How it went."""
 
-    # How many of the books the user was asked about.
-    asked: int
-    # How many of them were marked as read.
-    finished: int
+    asked: int = described("How many of the books you were asked about")
+    finished: int = described("How many of them were marked as read")
 
 
 def _value(row: Any, name: str) -> Any:
@@ -279,12 +276,18 @@ class ProcessScanInput:
 class ProcessScanOutput:
     """What became of the scan."""
 
-    # ``renamed``, ``deleted``, ``skipped`` (for good), ``cancelled``, or
-    # ``nothing to do`` if no scan waits for a name.
-    outcome: str
-    # The scan the conversation was about.
-    path: str = ""
-    new_path: str = ""
+    outcome: str = described(
+        "What became of the scan: renamed, deleted, skipped (for good), "
+        "cancelled, or nothing to do if no scan waits for a name",
+    )
+    path: str = described(
+        "The path of the scan that the conversation was about",
+        default="",
+    )
+    new_path: str = described(
+        "The path of the scan after it was renamed. Empty if it was not",
+        default="",
+    )
 
 
 def skipped_name(path: str) -> str:

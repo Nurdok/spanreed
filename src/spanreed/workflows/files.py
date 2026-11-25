@@ -23,6 +23,7 @@ from urllib.parse import unquote, urljoin, urlparse
 import aiohttp
 
 from spanreed.workflows.blocks import Action, Block, BlockKind, NoOutput, StepContext
+from spanreed.config_form import described
 
 _logger = logging.getLogger(__name__)
 
@@ -39,17 +40,18 @@ _UNSAFE_IN_NAMES_RE = re.compile(r'[\\/:*?"<>|]')
 class File:
     """A file that one step hands to another."""
 
-    # The name of the file, without what a file name cannot hold.
-    name: str
-    # The name up to its extension, and the extension with its dot (or
-    # nothing): ``receipt`` and ``.pdf``.
-    stem: str
-    extension: str
-    # The MIME type, such as application/pdf.
-    type: str
-    data: bytes
-    # In bytes.
-    size: int
+    name: str = described(
+        "The name of the file, without what a file name cannot hold",
+    )
+    stem: str = described("The name up to its extension: receipt")
+    extension: str = described(
+        "The extension with its dot: .pdf. Empty if the name has none",
+    )
+    type: str = described("The MIME type, such as application/pdf")
+    data: bytes = described(
+        "What is in the file. A step that writes or sends a file takes it",
+    )
+    size: int = described("How large the file is, in bytes")
 
 
 def safe_name(name: str) -> str:
@@ -266,10 +268,14 @@ class DownloadFileInput:
 class DownloadFileOutput(File):
     """The file, or why there is none."""
 
-    # Whether the link led to a file. If not, the fields of the file are
-    # empty and ``problem`` says why: a web page, a picture, too large.
-    ok: bool
-    problem: str
+    ok: bool = described(
+        "Whether the link led to a file. If not, the rest is empty and "
+        "“problem” says why",
+    )
+    problem: str = described(
+        "Why there is no file: a web page, a picture, too large. Empty if "
+        "there is one",
+    )
 
 
 class DownloadFile(Action[DownloadFileInput, DownloadFileOutput]):

@@ -26,7 +26,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 from spanreed.workflows.blocks import (
     Action,
     AskLoop,
@@ -152,10 +152,10 @@ class AskTextInput:
 class AskTextOutput:
     """What the user wrote."""
 
-    # Empty if the user said no to the question before.
-    answer: str
-    # Whether the user wrote an answer.
-    answered: bool
+    answer: str = described(
+        "What you wrote. Empty if you said no to the question before",
+    )
+    answered: bool = described("Whether you wrote an answer")
 
 
 class AskText(Action[AskTextInput, AskTextOutput]):
@@ -203,8 +203,10 @@ class AskListInput:
 class AskListOutput:
     """What the user wrote, in order."""
 
-    answers: list[str]
-    count: int
+    answers: list[str] = described(
+        "What you wrote, one text for each answer, in order",
+    )
+    count: int = described("How many answers there are")
 
 
 class AskList(Action[AskListInput, AskListOutput]):
@@ -278,14 +280,22 @@ class AskChoiceInput:
 class AskChoiceOutput:
     """What the user chose."""
 
-    # False if the user chose nothing, or if there was nothing to choose.
-    chosen: bool
-    # The text of the option.
-    answer: str = ""
-    # The option as it was given: a text, or the whole thing.
-    item: Any = None
-    # The place of the option, from 1. 0 if nothing was chosen.
-    index: int = 0
+    chosen: bool = described(
+        "Whether an option was chosen. No if you chose nothing, or if there "
+        "was nothing to choose from",
+    )
+    answer: str = described(
+        "The text of the option that was chosen",
+        default="",
+    )
+    item: Any = described(
+        "The option as it was given: a text, or the whole thing, such as a " "book",
+        default=None,
+    )
+    index: int = described(
+        "The place of the option, from 1. 0 if nothing was chosen",
+        default=0,
+    )
 
 
 def option_text(option: Any, show: str = "") -> str:
@@ -399,15 +409,27 @@ class AskEachInput:
 class AskEachOutput:
     """One pick, for the steps inside. After the loop, all of them."""
 
-    # What the button said, and the value it gave. After the loop: of the
-    # last pick, or empty if there was none.
-    answer: str = ""
-    value: Any = None
-    # Every value picked so far, in order. After the loop: all of them.
-    picked: list[Any] = field(default_factory=list)
-    count: int = 0
-    # How many options are still on offer.
-    left: int = 0
+    answer: str = described(
+        "What the button of the pick said. After the loop: of the last "
+        "pick, or empty if there was none",
+        default="",
+    )
+    value: Any = described(
+        "The value that the pick gives. After the loop: of the last pick",
+        default=None,
+    )
+    picked: list[Any] = described(
+        "Every value picked so far, in order. After the loop: all of them",
+        default_factory=list,
+    )
+    count: int = described(
+        "How many were picked so far. After the loop: in all",
+        default=0,
+    )
+    left: int = described(
+        "How many options are still on offer",
+        default=0,
+    )
 
 
 class AskEach(AskLoop[AskEachInput, AskEachOutput]):

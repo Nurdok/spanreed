@@ -18,7 +18,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from spanreed.config_form import HELP_KEY
+from spanreed.config_form import HELP_KEY, described
 from spanreed.workflows.asking import Command, Priority, give_up_field, priority_field
 from spanreed.workflows.blocks import (
     Action,
@@ -69,10 +69,11 @@ class CallWorkflowInput:
 class CallWorkflowOutput:
     """How the run of the other workflow went."""
 
-    # ``finished``, or ``stopped`` if one of its steps ended it early.
-    status: str
-    finished: bool
-    outcome: str
+    status: str = described(
+        "How its run ended: finished, or stopped if one of its steps ended " "it early",
+    )
+    finished: bool = described("Whether its run got to the end")
+    outcome: str = described("How its run went, in a sentence")
 
 
 class CallWorkflow(Action[CallWorkflowInput, CallWorkflowOutput]):
@@ -121,12 +122,13 @@ class RunOneInput:
 class RunOneOutput:
     """Which workflow ran, and how it went."""
 
-    # The name of the workflow that ran. Empty if none was on offer.
-    ran: str
-    # ``finished`` or ``stopped``. Empty if none ran.
-    status: str
-    # The names that were on offer.
-    on_offer: list[str]
+    ran: str = described(
+        "The name of the workflow that ran. Empty if none was on offer",
+    )
+    status: str = described(
+        "How its run ended: finished or stopped. Empty if none ran",
+    )
+    on_offer: list[str] = described("The names of the workflows that were on offer")
 
 
 def _is_on(value: Any) -> bool:

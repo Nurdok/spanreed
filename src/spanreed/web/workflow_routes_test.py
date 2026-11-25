@@ -150,7 +150,20 @@ def test_a_workflow_is_shown_as_its_trigger_and_its_steps() -> None:
                 {"name": "every", "label": "Every", "value": 4},
                 {"name": "unit", "label": "Unit", "value": "hours"},
             ]
-            assert trigger["outputs"] == ["date", "time"]
+            # What it gives, each with its type and what it holds.
+            assert trigger["outputs"] == [
+                {
+                    "name": "date",
+                    "type": "text",
+                    "help": "The day the run started on, as 2026-05-09, in your "
+                    "timezone",
+                },
+                {
+                    "name": "time",
+                    "type": "text",
+                    "help": "The time it started at, as 18:30",
+                },
+            ]
             # Each input also says how the editor edits it.
             assert [field["edit"] for field in trigger["fields"]] == [
                 {
@@ -167,7 +180,14 @@ def test_a_workflow_is_shown_as_its_trigger_and_its_steps() -> None:
                     "choices": ["minutes", "hours", "days"],
                 },
             ]
-            assert shown["run_outputs"] == ["id", "manual"]
+            assert shown["run_outputs"] == [
+                {"name": "id", "type": "text", "help": "The id of the run"},
+                {
+                    "name": "manual",
+                    "type": "yes or no",
+                    "help": "Whether you started the run by hand",
+                },
+            ]
 
             find, check, move, tell = shown["steps"]
             assert [step["number"] for step in shown["steps"]] == ["1", "2", "3", "4"]
@@ -176,7 +196,10 @@ def test_a_workflow_is_shown_as_its_trigger_and_its_steps() -> None:
                 "Find tasks",
                 "Todoist",
             )
-            assert find["outputs"] == ["tasks", "count"]
+            assert [(out["name"], out["type"]) for out in find["outputs"]] == [
+                ("tasks", "list"),
+                ("count", "whole number"),
+            ]
             # Inputs are shown as they are stored, templates and all.
             assert _shown(check["fields"]) == [
                 {
@@ -745,7 +768,10 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
                 for f in find["card"]["fields"]
             ] == [("label", "text", True), ("due", "choice", False)]
             assert find["card"]["fields"][1]["edit"]["text"] == "any"
-            assert find["card"]["outputs"] == ["tasks", "count"]
+            assert [out["name"] for out in find["card"]["outputs"]] == [
+                "tasks",
+                "count",
+            ]
             # A block that holds steps says which lists it has.
             assert blocks["core.for-each"]["card"]["lanes"] == [
                 {"key": "steps", "title": "For each item"}
