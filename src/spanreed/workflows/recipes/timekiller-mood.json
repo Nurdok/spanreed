@@ -12,10 +12,17 @@
   },
   "steps": [
     {
+      "id": "day",
+      "block": "obsidian.find-daily-note",
+      "inputs": {
+        "date": "{{ trigger.date }}"
+      }
+    },
+    {
       "id": "mood",
       "block": "obsidian.get-note-property",
       "inputs": {
-        "note": "Daily/{{ trigger.date }}.md",
+        "note": "{{ day.path }}",
         "property": "mood"
       }
     },
@@ -116,7 +123,7 @@
       "id": "write",
       "block": "obsidian.set-note-properties",
       "inputs": {
-        "note": "Daily/{{ trigger.date }}.md",
+        "note": "{{ day.path }}",
         "properties": {
           "mood": "{{ rate.answer }}",
           "feelings": "{{ feel.picked }}"

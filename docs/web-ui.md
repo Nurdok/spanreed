@@ -342,8 +342,11 @@ when another workflow that is on writes what it writes.
 ![Two workflows write the same property](images/web-ui-workflow-same-property-desktop.png)
 
 What counts as the same is the text as it is stored: the property `weight`
-of `Daily/{{ trigger.date }}.md` in both. Two paths that are written
-differently and come to the same note are not noticed.
+of `Daily/{{ trigger.date }}.md` in both. A note that a step found, with
+"Find daily note" or "Create daily note", is named by what it is: "the daily
+note of {{ trigger.date }}", whatever the id of that step. Two paths that are
+written differently and come to the same note are not noticed, and neither
+is a path that was typed and a daily note that was found.
 
 ### A new workflow
 

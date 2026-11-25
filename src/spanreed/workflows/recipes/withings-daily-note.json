@@ -15,10 +15,15 @@
       "inputs": {}
     },
     {
+      "id": "day",
+      "block": "obsidian.find-daily-note",
+      "inputs": {"date": "{{ trigger.date }}"}
+    },
+    {
       "id": "write",
       "block": "obsidian.set-note-properties",
       "inputs": {
-        "note": "Daily/{{ trigger.date }}.md",
+        "note": "{{ day.path }}",
         "properties": {
           "weight": "{{ trigger.weight }}",
           "fat-percentage": "{{ trigger.fat_percentage }}",

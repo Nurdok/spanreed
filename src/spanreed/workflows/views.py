@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
+import re
 import typing
 from collections.abc import Iterable
 from typing import Any
@@ -237,14 +238,45 @@ def _last_run(trace: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def _writes(engine: WorkflowEngine, steps: list[Step]) -> set[str]:
-    """Return the names of what some steps, and the steps inside them, write."""
+def _in_words(engine: WorkflowEngine, steps: list[Step]) -> dict[str, str]:
+    """Return what the outputs of some steps are, in words, by their template.
+
+    ``{{ day.path }}`` is ``the daily note of {{ trigger.date }}`` if the
+    block of the step ``day`` says so (see ``Action.stands_for``).
+    """
+    words: dict[str, str] = {}
+    for step in steps:
+        block = engine.registry.get(step.block)
+        if isinstance(block, Action):
+            for output, meaning in block.stands_for(step.inputs).items():
+                words[
+                    rf"\{{\{{\s*{re.escape(step.id)}\.{re.escape(output)}\s*\}}\}}"
+                ] = meaning
+        words |= _in_words(engine, step.steps) | _in_words(engine, step.otherwise)
+    return words
+
+
+def _writes(
+    engine: WorkflowEngine, steps: list[Step], words: dict[str, str] | None = None
+) -> set[str]:
+    """Return the names of what some steps, and the steps inside them, write.
+
+    A name that has the output of another step in it has the words for it
+    instead: what two workflows write is the same by what it is, not by
+    the ids of their steps.
+    """
+    if words is None:
+        words = _in_words(engine, steps)
     written: set[str] = set()
     for step in steps:
         block = engine.registry.get(step.block)
         if isinstance(block, Action):
-            written.update(block.writes(step.inputs))
-        written |= _writes(engine, step.steps) | _writes(engine, step.otherwise)
+            for name in block.writes(step.inputs):
+                for template, meaning in words.items():
+                    name = re.sub(template, lambda _: meaning, name)
+                written.add(name)
+        written |= _writes(engine, step.steps, words)
+        written |= _writes(engine, step.otherwise, words)
     return written
 
 

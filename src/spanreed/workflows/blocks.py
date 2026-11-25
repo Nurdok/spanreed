@@ -574,6 +574,19 @@ class Action(Block, Generic[InT, OutT]):
         """
         return []
 
+    def stands_for(self, inputs: dict[str, Any]) -> dict[str, str]:
+        """Say in words what an output of a step of this block is.
+
+        By the name of the output: ``{"path": "the daily note of
+        {{ trigger.date }}"}``. ``inputs`` are the step's inputs as they
+        are stored. Where another step names what it writes by such an
+        output (see ``writes``), the words take the place of the template:
+        a reader is told which note, and two workflows that mean the same
+        note say the same, whatever the ids of their steps. Nothing by
+        default.
+        """
+        return {}
+
 
 class Loop(Action[InT, OutT]):
     """An action that holds steps, and runs them once for each round.

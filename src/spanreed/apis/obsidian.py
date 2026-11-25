@@ -24,6 +24,27 @@ class ObsidianApiTimeoutError(TimeoutError):
     pass
 
 
+class ObsidianPluginTooOld(RuntimeError):
+    """The Spanreed plugin for Obsidian cannot do what it was asked yet.
+
+    The plugin is installed in the user's Obsidian, and updated there: it
+    can be older than this Spanreed. What the error says is for the user.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class DailyNote:
+    """The daily note of one day, as Obsidian has it."""
+
+    # Where the note is in the vault, or where the Daily notes settings of
+    # Obsidian would put it. Empty if the plugin for Obsidian is from
+    # before it could say.
+    path: str
+    exists: bool
+    # Whether the request that gave this made the note.
+    created: bool = False
+
+
 def note_path(folder: str, title: str) -> str:
     """Return the path of the note with a title, in a folder of the vault.
 
@@ -135,6 +156,17 @@ class ObsidianApi:
         method: str,
         params: dict[str, Any] | None = None,
     ) -> Any:
+        if params is not None and "filepath" in params:
+            if not str(params["filepath"] or "").strip():
+                # Before Obsidian is asked: it would look for a note with no
+                # name, find none, and a step that skips a missing note
+                # would write nothing without a word.
+                raise ValueError(
+                    "This step names no note: the path is empty. A path that "
+                    "comes from “Create daily note” is empty while the "
+                    "Spanreed plugin for Obsidian is too old to say where "
+                    "the note is. Update the plugin."
+                )
         max_attempts = 3
         request_queue_name: str = f"obsidian-plugin-tasks:{self._user.id}"
         self._progress_message = None
@@ -216,6 +248,14 @@ class ObsidianApi:
         self._logger.info(f"Got response: {response=}")
 
         if not response["success"]:
+            failure = response.get("result")
+            if isinstance(failure, str) and failure.startswith("unknown method"):
+                # Not a failure of the vault, so not told as one: the plugin
+                # in Obsidian is from before this request was added.
+                raise ObsidianPluginTooOld(
+                    "The Spanreed plugin for Obsidian is too old: it does not "
+                    f"know “{method}”. Update the plugin."
+                )
             # Elide any large base64 payload (e.g. a write-file's `content`)
             # before building the debug message. Otherwise the message can
             # exceed Telegram's 4096-char limit, and the resulting "Text is too
@@ -240,8 +280,37 @@ class ObsidianApi:
 
         return response.get("result", None)
 
-    async def safe_generate_today_note(self) -> None:
-        await self._send_request("generate-daily-note")
+    async def create_daily_note(self, date: datetime.date) -> DailyNote:
+        """Create the daily note of a day from its template, unless it is there.
+
+        Obsidian puts it where its Daily notes settings say, and the path
+        of what is returned is where that is.
+
+        A plugin for Obsidian from before it took a day creates today's
+        note, by the clock of its machine, and does not say where. The
+        path is empty then.
+        """
+        result = await self._send_request(
+            "generate-daily-note", {"date": date.isoformat()}
+        )
+        if isinstance(result, dict) and isinstance(result.get("path"), str):
+            return DailyNote(
+                path=result["path"], exists=True, created=result.get("created") is True
+            )
+        return DailyNote(path="", exists=True)
+
+    async def find_daily_note(self, date: datetime.date) -> DailyNote:
+        """Return where the daily note of a day is, or would be made.
+
+        Nothing is created. Raise ``ObsidianPluginTooOld`` if the plugin
+        for Obsidian is from before it could say.
+        """
+        result = await self._send_request("get-daily-note", {"date": date.isoformat()})
+        if not isinstance(result, dict) or not isinstance(result.get("path"), str):
+            raise RuntimeError(
+                f"Obsidian did not say where a daily note is: {result!r}"
+            )
+        return DailyNote(path=result["path"], exists=result.get("exists") is True)
 
     async def add_value_to_list_property(
         self, filepath: str, property_name: str, value: str
@@ -306,17 +375,6 @@ class ObsidianApi:
         )
         self._logger.info(f"Got property value: {property_value=}")
         return property_value
-
-    async def get_daily_note(
-        self, daily_note_path: str, date: datetime.date | None = None
-    ) -> str:
-        if date is None:
-            date = datetime.date.today()
-        # TODO: Query the API for the daily note for a specific date
-        filename = f"{date.strftime('%Y-%m-%d')}.md"
-        if daily_note_path is None or daily_note_path == "":
-            return filename
-        return f"{daily_note_path}/{filename}"
 
     async def query_dataview(self, query: str) -> list[Any] | Any:
         query_result = await self._send_request("query-dataview", {"query": query})

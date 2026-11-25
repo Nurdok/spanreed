@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from spanreed.apis.obsidian import ObsidianPlugin
+from spanreed.apis.obsidian import DailyNote, ObsidianPlugin
 from spanreed.apis.withings import MeasurementType
 from spanreed.interaction import commands
 from spanreed.plugin import Plugin
@@ -23,7 +23,12 @@ from spanreed.plugins.withings import (
     convert_to_workflows,
 )
 from spanreed.plugins.workflows import WorkflowsPlugin
-from spanreed.test_utils import FakeRedis, async_return_true, mock_user_find_by_id
+from spanreed.test_utils import (
+    FakeRedis,
+    async_return_true,
+    daily_note_in_daily_folder,
+    mock_user_find_by_id,
+)
 from spanreed.workflows import migrations
 from spanreed.workflows import store as workflow_store
 from spanreed.workflows.blocks import BlockRegistry
@@ -154,7 +159,8 @@ def _world() -> Iterator[World]:
 
         withings.get_measurements.side_effect = get_measurements
         obsidian.for_user = AsyncMock(return_value=obsidian)
-        obsidian.safe_generate_today_note = AsyncMock(return_value=None)
+        obsidian.create_daily_note = AsyncMock(side_effect=daily_note_in_daily_folder)
+        obsidian.find_daily_note = AsyncMock(side_effect=daily_note_in_daily_folder)
         obsidian.get_property = AsyncMock(side_effect=get_property)
         obsidian.set_value_of_property = AsyncMock(return_value=None)
         bot.for_user = AsyncMock(return_value=bot)
@@ -179,6 +185,31 @@ def _run(scenario: Any) -> None:
 # -- from Withings to the daily note -------------------------------------------
 
 
+def test_the_measurements_go_where_obsidian_keeps_its_daily_notes() -> None:
+    async def scenario(world: World) -> None:
+        # Another folder and another date format than the ones Spanreed
+        # used to have typed in: the Daily notes settings of the vault.
+        async def found(date: datetime.date) -> DailyNote:
+            return DailyNote(f"Journal/{date:%Y}/{date:%d.%m.%Y}.md", exists=True)
+
+        world.obsidian.find_daily_note = AsyncMock(side_effect=found)
+        world.measurements[TODAY] = dict(MORNING)
+
+        await world.convert()
+        await world.polls.over()
+
+        # Obsidian is asked about the day of the measurements.
+        world.obsidian.find_daily_note.assert_awaited_with(TODAY)
+        note = "Journal/2026/09.05.2026.md"
+        assert world.properties_set() == [
+            (note, "weight", 80.5),
+            (note, "fat-percentage", 20.1),
+            (note, "fat-mass", 16.2),
+        ]
+
+    _run(scenario)
+
+
 def test_new_measurements_end_up_in_the_daily_note_and_the_user_is_told() -> None:
     async def scenario(world: World) -> None:
         world.measurements[TODAY] = dict(MORNING)
@@ -186,7 +217,7 @@ def test_new_measurements_end_up_in_the_daily_note_and_the_user_is_told() -> Non
         await world.convert()
         await world.polls.over()
 
-        world.obsidian.safe_generate_today_note.assert_awaited()
+        world.obsidian.create_daily_note.assert_awaited()
         assert world.properties_set() == [
             (NOTE, "weight", 80.5),
             (NOTE, "fat-percentage", 20.1),

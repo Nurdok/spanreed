@@ -2,9 +2,12 @@ import builtins
 import datetime
 import fnmatch
 import logging
-from typing import Callable, Any, AsyncIterator, Coroutine
+from typing import TYPE_CHECKING, Callable, Any, AsyncIterator, Coroutine
 from unittest.mock import MagicMock, patch, AsyncMock
 from spanreed.user import User
+
+if TYPE_CHECKING:
+    from spanreed.apis.obsidian import DailyNote
 
 
 def patch_redis(f: Callable[..., None]) -> Callable[..., None]:
@@ -91,6 +94,16 @@ def patch_user_interaction(
     return patch_user_interaction_in_target_package
 
 
+async def daily_note_in_daily_folder(date: datetime.date) -> "DailyNote":
+    """Stand in for Obsidian's daily notes: each is there, in ``Daily``.
+
+    For a mock of ``ObsidianApi.create_daily_note`` or ``find_daily_note``.
+    """
+    from spanreed.apis.obsidian import DailyNote
+
+    return DailyNote(path=f"Daily/{date.isoformat()}.md", exists=True)
+
+
 def patch_obsidian(
     target_package: str,
 ) -> Callable[[Callable[..., None]], Callable[..., None]]:
@@ -101,13 +114,17 @@ def patch_obsidian(
             with patch(f"{target_package}.ObsidianApi", autospec=True) as mock_obsidian:
                 mock_obsidian.for_user = AsyncMock(return_value=mock_obsidian)
 
-                mock_obsidian.safe_generate_today_note = AsyncMock()
+                mock_obsidian.create_daily_note = AsyncMock(
+                    side_effect=daily_note_in_daily_folder
+                )
+                mock_obsidian.find_daily_note = AsyncMock(
+                    side_effect=daily_note_in_daily_folder
+                )
                 mock_obsidian.add_value_to_list_property = AsyncMock()
                 mock_obsidian.remove_value_from_list_property = AsyncMock()
                 mock_obsidian.set_value_of_property = AsyncMock()
                 mock_obsidian.delete_property = AsyncMock()
                 mock_obsidian.get_property = AsyncMock()
-                mock_obsidian.get_daily_note = AsyncMock()
                 mock_obsidian.query_dataview = AsyncMock()
                 mock_obsidian.list_dir = AsyncMock()
                 mock_obsidian.read_file = AsyncMock()
