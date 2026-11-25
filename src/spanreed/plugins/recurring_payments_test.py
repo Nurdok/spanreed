@@ -384,6 +384,16 @@ def test_a_payment_as_a_workflow() -> None:
     assert write.inputs["project"] == "P1"
     assert log.inputs["path"] == "Health/Therapy.md"
 
+    # The whole title names the note, and one written with ".md" has it once.
+    for title, path in (
+        ("Dr. Cohen", "Health/Dr. Cohen.md"),
+        ("Therapy.md", "Health/Therapy.md"),
+    ):
+        payment = _payment({})
+        payment["obsidian_log"]["note_title"] = title
+        steps = workflow_for_payment("wf_3", 4, payment, 1).steps
+        assert steps[-2].inputs["path"] == path
+
     # Without a question, and without a note.
     plain = workflow_for_payment("wf_2", 4, _payment({"log": None}), 1)
     tally, new = plain.steps

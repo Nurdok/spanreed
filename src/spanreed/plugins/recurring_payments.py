@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any
 
+from spanreed.apis.obsidian import note_path
 from spanreed.interaction import UserInteractionApi
 from spanreed.storage import redis_api
 from spanreed.user import User
@@ -108,8 +109,9 @@ def workflow_for_payment(
         ),
     ]
     if isinstance(note, dict):
-        folder = str(note.get("file_location") or "").strip("/")
-        path = f"{folder + '/' if folder else ''}{note.get('note_title') or ''}.md"
+        path = note_path(
+            str(note.get("file_location") or ""), str(note.get("note_title") or "")
+        )
         steps += [
             Step(id="owed", block="core.recall", inputs={"name": TO_LOG}),
             Step(

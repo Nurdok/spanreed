@@ -24,6 +24,28 @@ class ObsidianApiTimeoutError(TimeoutError):
     pass
 
 
+def note_path(folder: str, title: str) -> str:
+    """Return the path of the note with a title, in a folder of the vault.
+
+    The whole title is the name of the note, whatever dots it has:
+    "Mr. Mercedes" is ``Mr. Mercedes.md``. A title that names the note with
+    its ``.md`` is not given a second one.
+    """
+    folder = folder.strip("/")
+    name = title[:-3] if title.lower().endswith(".md") else title
+    return f"{folder + '/' if folder else ''}{name}.md"
+
+
+def once_md(path: str) -> str | None:
+    """Return a path that ends in ``.md.md`` with one ``.md``, else ``None``.
+
+    Such a path was made by putting ``.md`` after a title that had it.
+    """
+    if not path.lower().endswith(".md.md"):
+        return None
+    return path[:-6] + ".md"
+
+
 class ObsidianPlugin(Plugin):
     @classmethod
     def name(cls) -> str:
