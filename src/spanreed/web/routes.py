@@ -36,6 +36,7 @@ from spanreed.plugins.workflows import WorkflowsPlugin
 from spanreed.user import User
 from spanreed.web import auth, google_auth, push
 from spanreed.workflows import editing as workflow_editing
+from spanreed.workflows import conditions as workflow_conditions
 from spanreed.workflows import sharing as workflow_sharing
 from spanreed.workflows import views as workflow_views
 from spanreed.workflows.blocks import Trigger as WorkflowTrigger
@@ -871,6 +872,31 @@ async def workflow_detail(workflow_id: str) -> Any:
     if not isinstance(found[1], Workflow):
         return found
     return _no_store(jsonify(await _workflow_detail(*found)))
+
+
+@blueprint.post("/api/workflows/condition")
+@api_auth
+async def convert_condition() -> Any:
+    """Turn a condition from rows into its text, or from its text into rows.
+
+    The editor shows a condition either way, and asks here when the user
+    changes from one to the other. With ``condition``, the rows, the
+    answer has ``text``. With ``text``, the answer has ``condition``:
+    the rows, or nothing if the text is no list of rows.
+    """
+    body = await request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "A condition is expected."}), 400
+    if "condition" in body:
+        try:
+            text = workflow_conditions.to_template(body["condition"])
+        except workflow_conditions.ConditionError as e:
+            return jsonify({"error": f"Condition: {e}"}), 400
+        return jsonify({"text": text})
+    written = body.get("text")
+    if not isinstance(written, str):
+        return jsonify({"error": "A condition is expected."}), 400
+    return jsonify({"condition": workflow_conditions.from_template(written.strip())})
 
 
 @blueprint.put("/api/workflows/<workflow_id>")

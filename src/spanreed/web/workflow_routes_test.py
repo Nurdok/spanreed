@@ -787,6 +787,43 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
     asyncio.run(run())
 
 
+def test_a_condition_is_turned_from_rows_into_text_and_back() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            url = "/app/api/workflows/condition"
+            assert (
+                await client.post(url, json={"text": ""}, headers=H)
+            ).status_code == 401
+            await _login(client)
+            rows = {"join": "all", "rows": [["{{ find.count }}", "bigger", "0"]]}
+
+            as_text = await client.post(url, json={"condition": rows}, headers=H)
+            as_rows = await client.post(
+                url, json={"text": " {{ find.count > 0 }} "}, headers=H
+            )
+            no_rows = await client.post(
+                url, json={"text": "{{ a.x and b.y or c.z }}"}, headers=H
+            )
+            lacking = await client.post(
+                url,
+                json={"condition": {"join": "all", "rows": [["", "true", ""]]}},
+                headers=H,
+            )
+            nothing = await client.post(url, json={}, headers=H)
+
+            assert await _json(as_text) == {"text": "{{ find.count > 0 }}"}
+            assert await _json(as_rows) == {"condition": rows}
+            # More than a list of rows: the page keeps the text.
+            assert await _json(no_rows) == {"condition": None}
+            assert lacking.status_code == 400
+            assert (await lacking.get_json())["error"] == (
+                "Condition: the value is missing."
+            )
+            assert nothing.status_code == 400
+
+    asyncio.run(run())
+
+
 def test_the_catalog_says_which_plugins_are_not_set_up() -> None:
     async def run() -> None:
         async with _workflows_app() as (client, engine, _):

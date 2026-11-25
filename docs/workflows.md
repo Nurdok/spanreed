@@ -105,6 +105,15 @@ came to, and for a condition what to write instead:
 > the number 3, which is neither yes nor no. Ask something of it that is true
 > or false, such as “{{ find.count > 0 }}”.
 
+The editor shows a condition as rows of a value and what is asked of it,
+and stores the template that asks the same
+(`spanreed/workflows/conditions.py`). Two tests are there for it, besides
+Jinja's own: `{{ note.value is empty }}` holds for no text, no items and
+nothing, and not for 0 or "no"; `{{ note.tags is containing("book") }}`
+holds for a text with the text in it and for a list with the item. A
+template is only shown as rows if the rows give back the same syntax tree,
+so opening and saving a workflow never changes what a condition asks.
+
 A condition has to be yes or no. A number or a text is neither, also where
 it reads like one: `{{ find.count }} > 0` is the text "3 > 0", because only
 what is inside the braces is worked out.

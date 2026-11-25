@@ -12,6 +12,7 @@ from typing import Any, Literal
 import dateutil.tz
 
 from spanreed.config_form import HELP_KEY, described
+from spanreed.workflows import conditions
 
 from spanreed.workflows.blocks import (
     Action,
@@ -365,7 +366,7 @@ class AtTime(Trigger[TimeOfDay, Tick]):
 class ContinueIfInput:
     """The input of ``ContinueIf``."""
 
-    condition: bool
+    condition: bool = conditions.condition()
 
 
 class ContinueIf(Action[ContinueIfInput, NoOutput]):
@@ -386,7 +387,7 @@ class ContinueIf(Action[ContinueIfInput, NoOutput]):
 class IfInput:
     """The input of ``If``."""
 
-    condition: bool
+    condition: bool = conditions.condition()
 
 
 @dataclass

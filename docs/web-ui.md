@@ -286,6 +286,24 @@ its command can be changed there too.
   where the cursor was. A box that wants a number or yes/no says so under
   it.
 - **A choice** is a list to pick from.
+- **A condition**, on "If" and "Only continue if", is rows. Each row has a
+  value, what is asked of it, and for some questions a second value:
+  "is true", "is false", "is", "is not", "is bigger than", "is at least",
+  "is smaller than", "is at most", "contains", "does not contain", "is
+  empty", "is not empty". For a value of an earlier card, the list holds
+  what fits its type: a yes-or-no value can be true or false, a number can
+  be compared. **Add a row** adds one, and with more than one row the
+  condition says whether **all** of them have to hold or **any** of them.
+
+  ![A condition as rows](images/web-ui-workflow-condition-desktop.png)
+
+  <img src="images/web-ui-workflow-condition-phone.png" alt="A condition as rows, on a phone" width="390">
+
+  A second value is written as in any box: `5` is a number, `yes` and `no`
+  are yes and no, anything else is text, and `"5"` in quotes is the text.
+  **Write as text** shows the condition as the one `{{ … }}` it is stored
+  as, and **Show as rows** goes back. A condition that is more than a list
+  of rows, such as one with "and" and "or" at once, stays as text.
 - **Rows**, such as the properties to set, have a name and a value each.
   **Add a row** adds one, and × removes one.
 - **+** on the line between two cards, and after the last, adds a step
