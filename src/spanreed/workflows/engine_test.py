@@ -267,8 +267,38 @@ def test_a_value_that_does_not_fit_the_block_fails_the_step(
     with fake_storage(), _sleeps():
         runs = asyncio.run(scenario())
 
-    assert runs[0]["steps"][0]["error"] == "Text: Expected text."
+    assert runs[0]["steps"][0]["error"] == (
+        "Text: “{{ trigger }}” came to a group of values. Expected text."
+    )
     assert record.texts == []
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_condition_that_is_neither_yes_nor_no_says_what_it_is_and_what_to_write(
+    mock_bot: AsyncMock,
+) -> None:
+    # "Condition: Expected yes or no." told nobody which value was neither.
+    stop = Step(
+        id="stop",
+        block="core.continue-if",
+        inputs={"condition": "{{ trigger.value }}"},
+    )
+    workflow = workflow_of(stop, _record("one", "x"), events=["monday"])
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(Record(), ContinueIf())
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage(), _sleeps():
+        runs = asyncio.run(scenario())
+
+    assert outcome(runs[0]) == (
+        "failed at step 1, Only continue if: Condition: “{{ trigger.value }}” "
+        "came to the text “monday”, which is neither yes nor no. Ask something "
+        "of it that is true or false, such as “{{ trigger.value != '' }}”."
+    )
 
 
 @patch_user_interaction("spanreed.workflows.engine")
