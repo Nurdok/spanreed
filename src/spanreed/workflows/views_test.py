@@ -1,11 +1,20 @@
 from typing import Any
+from unittest.mock import MagicMock
 
 from spanreed.apis.obsidian_blocks import SetNoteProperties, WriteNote
+from spanreed.plugin import Plugin
 from spanreed.workflows import views
+from spanreed.workflows.blocks import BlockRegistry
 from spanreed.workflows.builtin import ForEach, If
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Step, Workflow
-from spanreed.workflows.testing import registry_of, workflow_of
+from spanreed.workflows.testing import (
+    Events,
+    Record,
+    Silent,
+    registry_of,
+    workflow_of,
+)
 
 
 def test_a_mapping_is_shown_in_the_order_it_is_stored() -> None:
@@ -174,10 +183,72 @@ def test_a_branch_shows_both_of_its_sides_numbered_one_after_the_other() -> None
     ]
     assert [(c["id"], c["number"]) for c in card["otherwise"]] == [("c", "1.3")]
     assert (after["number"], after["lanes"], after["otherwise"]) == ("2", [], [])
-    # The list of workflows counts the steps of both sides.
-    assert len(views.summary(engine, workflow, None)["apps"]) == 6
+    # Every block here is of one plugin, which the list names once.
+    assert views.summary(engine, workflow, None)["plugins"] == ["Fake"]
     # What a step on either side writes counts for the note about writes.
     other = workflow_of(note("c"), id="wf_2", name="Other")
     assert views.detail(engine, workflow, None, others=[other])["warnings"] == [
         "“Other” also writes the file c."
     ]
+
+
+# -- the plugins that a workflow touches ----------------------------------------
+
+
+def _plugin(name: str) -> MagicMock:
+    plugin = MagicMock(spec=Plugin)
+    plugin.name.return_value = name
+    plugin.canonical_name.return_value = name.lower().replace(" ", "-")
+    return plugin
+
+
+def _engine_of_several_plugins() -> WorkflowEngine:
+    registry = BlockRegistry()
+    # The plugin that runs the engine: its blocks are Spanreed's own.
+    core, obsidian = _plugin("Workflows"), _plugin("Obsidian")
+    registry.register(Events(), _plugin("Health Connect"))
+    registry.register(Silent(), core)
+    registry.register(If(), core)
+    registry.register(ForEach(), core)
+    registry.register(WriteNote(), obsidian)
+    registry.register(SetNoteProperties(), obsidian)
+    registry.register(Record(), _plugin("Todoist"))
+    return WorkflowEngine(registry)
+
+
+def test_a_workflow_names_each_plugin_it_touches_once_and_not_spanreed() -> None:
+    engine = _engine_of_several_plugins()
+
+    def note(step_id: str) -> Step:
+        return Step(id=step_id, block="obsidian.write-note", inputs={"path": step_id})
+
+    workflow = workflow_of(
+        Step(
+            id="check",
+            block="core.if",
+            inputs={"condition": "{{ trigger.value }}"},
+            steps=[note("a")],
+            otherwise=[Step(id="r", block="fake.record", inputs={"text": "x"})],
+        ),
+        note("d"),
+        Step(id="gone", block="elsewhere.block"),
+        events=["monday"],
+    )
+
+    # In the order they are first used, the plugin of the trigger first.
+    # A block that no plugin has any more names none.
+    assert views.summary(engine, workflow, None)["plugins"] == [
+        "Health Connect",
+        "Obsidian",
+        "Todoist",
+    ]
+
+
+def test_a_workflow_of_spanreeds_own_blocks_names_no_plugin() -> None:
+    engine = _engine_of_several_plugins()
+    workflow = workflow_of(
+        Step(id="each", block="core.for-each", inputs={"items": []}),
+        trigger="fake.silent",
+    )
+
+    assert views.summary(engine, workflow, None)["plugins"] == []

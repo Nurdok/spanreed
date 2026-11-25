@@ -745,7 +745,7 @@ async def workflow_catalog() -> Any:
             ],
             "installed": recipe.id in installed,
             # What it touches, as the list of workflows shows it.
-            "apps": workflow_views.recipe_view(wf_engine, recipe)["apps"],
+            "plugins": workflow_views.recipe_view(wf_engine, recipe)["plugins"],
         }
         for recipe in all_recipes().values()
     ]

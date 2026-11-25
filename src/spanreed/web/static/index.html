@@ -94,7 +94,7 @@
   .primary { padding: 9px 16px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-fg); }
   .conn { color: var(--err); font-size: 13px; }
   #settings { min-height: 0; }
-  #settings[hidden], .layout[hidden] { display: none; }
+  #settings[hidden], .layout[hidden], #workflows[hidden] { display: none; }
   #settings-main { overflow-y: auto; padding: 16px; }
   #settings-main form { max-width: 720px; display: flex; flex-direction: column; gap: 14px; }
   #settings-main h2 { font-size: 17px; margin: 0; }
@@ -123,7 +123,9 @@
               background: var(--bg); padding: 10px 0; }
   .save-row .ok { color: var(--muted); }
   .save-row .err { color: var(--err); }
-  /* Workflows: a list on the left, one workflow's steps and runs beside it. */
+  /* Workflows: a screen with all of them, and a screen for one workflow's
+     steps and runs. Neither has a list on the left. */
+  #workflows { display: grid; min-height: 0; }
   #workflow-main { overflow-y: auto; padding: 16px; min-width: 0; min-height: 0;
                    display: flex; flex-direction: column; gap: 14px; }
   .k-trigger { --k: var(--trig); --ks: var(--trig-soft); }
@@ -135,12 +137,20 @@
   .dot.bad { background: var(--err); }
   .glyph { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; flex: none;
            background: var(--ks); color: var(--k); font-size: 11.5px; font-weight: 700; }
-  .glyph.sm { width: 20px; height: 20px; border-radius: 6px; font-size: 9.5px; }
-  .cmd.wf { display: flex; flex-direction: column; gap: 5px; }
-  .cmd.wf .wf-name { display: flex; align-items: baseline; gap: 8px; }
-  .cmd.wf .wf-name .dot { position: relative; top: -1px; }
-  .cmd.wf .chain { display: flex; gap: 3px; }
-  .cmd.wf small { font-weight: 400; }
+  .wf-filter { width: 100%; max-width: 360px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+               background: var(--card); color: var(--fg); font: inherit; }
+  .wf-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+  .wf-tile { display: flex; flex-direction: column; gap: 7px; text-align: left; padding: 12px; min-width: 0;
+             border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  .wf-tile[hidden] { display: none; }
+  .wf-tile:hover, .wf-tile:focus-visible { border-color: var(--accent); outline: none; }
+  .wf-tile .wf-name { display: flex; align-items: baseline; gap: 8px; font-weight: 600; overflow-wrap: anywhere; }
+  .wf-tile .wf-name .dot { position: relative; top: -1px; }
+  .wf-tile small { color: var(--muted); font-size: 12px; }
+  /* The plugins that a workflow or a recipe touches: one chip for each. */
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg);
+          color: var(--muted); font-size: 12px; white-space: nowrap; }
   .wf-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
   .wf-head h2 { font-size: 17px; margin: 0 auto 0 0; min-width: 0; overflow-wrap: anywhere; }
   .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); cursor: pointer; }
@@ -234,7 +244,6 @@
     outline: 2px solid var(--accent); outline-offset: -1px; }
   .inner .wcard textarea, .inner .wcard select, .inner .wcard input[type=text] { background: var(--card); }
   .ins { font-size: 12px; padding: 0 2px; }
-  .wf-new { display: flex; gap: 8px; margin: 10px 0 0 10px; }
   a.link { text-decoration: none; }
   /* The recipes: one tile for each, with what it touches. */
   .recipes { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
@@ -242,7 +251,6 @@
             display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .recipe strong { font-size: 15px; overflow-wrap: anywhere; }
   .recipe p { margin: 0; color: var(--muted); font-size: 13px; flex: 1; }
-  .recipe .chain { display: flex; flex-wrap: wrap; gap: 3px; }
   .recipe .acts { display: flex; align-items: center; gap: 8px; }
   .recipe .acts small { color: var(--muted); font-size: 12px; margin-right: auto; }
   .recipe .acts small.why { color: var(--err); }
@@ -339,6 +347,8 @@
      (commands, or the plugins in Settings) is a drawer that slides in. */
   #drawer-toggle { display: none; font-size: 22px; line-height: 1; padding: 2px 6px; color: var(--fg); }
   #scrim { display: none; }
+  /* A view with nothing on the left has nothing to slide in. */
+  body.no-drawer #drawer-toggle { display: none !important; }
   @media (max-width: 720px) {
     #drawer-toggle { display: inline-block; }
     .layout { grid-template-columns: 1fr; }
@@ -377,15 +387,7 @@
       <div id="dock"></div>
     </main>
   </div>
-  <div class="layout" id="workflows" hidden>
-    <aside>
-      <h2>Workflows</h2>
-      <nav id="workflow-list"></nav>
-      <div class="wf-new">
-        <button class="small" id="workflow-new" type="button">New workflow</button>
-        <button class="small" id="workflow-recipes" type="button">Recipes</button>
-      </div>
-    </aside>
+  <div id="workflows" hidden>
     <div id="workflow-main"></div>
   </div>
   <div class="layout" id="settings" hidden>
@@ -966,8 +968,8 @@ function monogram(app) {
   if (!words.length) return "?";
   return words.length > 1 ? words[0][0] + words[1][0] : app.slice(0, 2);
 }
-function glyph(app, kind, small) {
-  const g = el("span", "glyph k-" + kind + (small ? " sm" : ""), monogram(app));
+function glyph(app, kind) {
+  const g = el("span", "glyph k-" + kind, monogram(app));
   g.title = app || "Unknown block";
   return g;
 }
@@ -990,40 +992,76 @@ function workflowStatus(w) {
   return { dot: runDot(run), text: "Last run " + when(run.started_at) + ": " + run.outcome };
 }
 
-function renderWorkflowNav(list) {
-  const nav = $("workflow-list");
-  nav.replaceChildren();
-  for (const w of list) {
-    const status = workflowStatus(w);
-    const b = el("button", "cmd wf" + (w.id === currentWorkflow ? " current" : ""));
-    const name = el("span", "wf-name");
-    name.append(el("span", "dot " + status.dot), el("span", "", w.name));
-    const chain = el("span", "chain");
-    for (const a of w.apps) chain.append(glyph(a.app, a.kind, true));
-    b.append(name, chain, el("small", "", status.text));
-    b.onclick = () => openWorkflow(w.id);
-    nav.append(b);
-  }
+// The plugins that a workflow or a recipe touches, as chips.
+function chips(names) {
+  const row = el("span", "chips");
+  for (const name of names) row.append(el("span", "chip", name));
+  return row;
 }
 
-async function loadWorkflows() {
+// The way back to the screen with all the workflows.
+function backToWorkflows() {
+  const back = el("button", "link wf-back", "‹ Workflows");
+  back.onclick = showWorkflows;
+  return back;
+}
+
+// What the screen of all the workflows is filtered by.
+let workflowFilter = "";
+
+// The screen with all the workflows: where the Workflows button leads.
+async function showWorkflows() {
+  if (!mayLeaveEditor()) return;
+  currentWorkflow = null;
   const main = $("workflow-main");
+  // Not what was there before, a workflow for example, while the list loads.
+  main.replaceChildren(el("p", "sys", "Loading…"));
   const res = await api("workflows");
-  if (view !== "workflows") return;
+  if (view !== "workflows" || currentWorkflow) return;
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    $("workflow-list").replaceChildren();
     main.replaceChildren(el("p", "sys err", body.error || "Could not load the workflows."));
     return;
   }
   const list = (await res.json()).workflows;
-  if (!list.some((w) => w.id === currentWorkflow)) currentWorkflow = null;
-  renderWorkflowNav(list);
+  const head = el("div", "wf-head"), tiles = el("div", "wf-list");
+  const add = el("button", "small", "New workflow"), recipes = el("button", "small", "Recipes");
+  add.id = "workflow-new"; add.onclick = newWorkflow;
+  recipes.id = "workflow-recipes"; recipes.onclick = showRecipes;
+  head.append(el("h2", "", "Workflows"), add, recipes);
   if (!list.length) {
-    main.replaceChildren(el("p", "empty", "You have no workflows yet. “New workflow” adds one, and “Recipes” shows the ones that ship."));
+    main.replaceChildren(head, el("p", "empty", "You have no workflows yet. “New workflow” adds one, and “Recipes” shows the ones that ship."));
     return;
   }
-  openWorkflow(currentWorkflow || list[0].id);
+  const filter = el("input", "wf-filter"), none = el("p", "sys", "No workflow has that in its name or its plugins.");
+  filter.type = "search"; filter.placeholder = "Filter workflows"; filter.autocomplete = "off";
+  filter.setAttribute("aria-label", "Filter workflows");
+  filter.value = workflowFilter;
+  for (const w of list) {
+    const status = workflowStatus(w), tile = el("button", "wf-tile"), name = el("span", "wf-name");
+    tile.type = "button";
+    name.append(el("span", "dot " + status.dot), el("span", "", w.name));
+    tile.append(name);
+    if (w.plugins.length) tile.append(chips(w.plugins));
+    tile.append(el("small", "", status.text));
+    tile.dataset.words = [w.name, ...w.plugins].join(" ").toLowerCase();
+    tile.onclick = () => openWorkflow(w.id);
+    tiles.append(tile);
+  }
+  const apply = () => {
+    workflowFilter = filter.value;
+    const words = filter.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const tile of tiles.children) {
+      tile.hidden = !words.every((word) => tile.dataset.words.includes(word));
+      if (!tile.hidden) shown += 1;
+    }
+    none.hidden = shown > 0;
+  };
+  filter.oninput = apply;
+  apply();
+  main.replaceChildren(head, filter, tiles, none);
+  main.scrollTo(0, 0);
 }
 
 // --- What a workflow can be made of: the blocks of the plugins, and the recipes. ---
@@ -1080,7 +1118,7 @@ async function addWorkflow(body, thenEdit) {
     return false;
   }
   currentWorkflow = answer.id;
-  await loadWorkflows();
+  renderWorkflow(answer);
   // A workflow with only a trigger is there to be filled in.
   if (thenEdit) startEditing(answer);
   return true;
@@ -1104,7 +1142,6 @@ function addWorkflowFromFile() {
 async function newWorkflow() {
   if (!mayLeaveEditor()) return;
   if (!await loadCatalog()) { $("workflow-main").prepend(el("p", "sys err", "Could not load the recipes.")); return; }
-  setDrawer(false);
   openSheet("New workflow", (sheet, close) => {
     sheet.append(option("From a recipe", "A workflow that ships with Spanreed. Look at it first, then add it.", "",
                         () => { close(); showRecipes(); }));
@@ -1124,16 +1161,10 @@ async function newWorkflow() {
 const recipeWhy = (recipe) => recipe.installed ? { text: "You have this one.", todo: false }
   : recipe.missing.length ? { text: setUpFirst(recipe.missing), todo: true } : null;
 
-function leaveWorkflow() {
-  currentWorkflow = null;
-  for (const b of $("workflow-list").children) b.classList.remove("current");
-}
-
 async function showRecipes() {
   if (!mayLeaveEditor()) return;
   if (!await loadCatalog()) { $("workflow-main").prepend(el("p", "sys err", "Could not load the recipes.")); return; }
-  setDrawer(false);
-  leaveWorkflow();
+  currentWorkflow = null;
   const head = el("div", "wf-head"), sub = el("div", "wf-sub"), tiles = el("div", "recipes");
   head.append(el("h2", "", "Recipes"));
   sub.append(el("span", "", "Workflows that ship with Spanreed. One that you add is yours to change."));
@@ -1142,8 +1173,7 @@ async function showRecipes() {
   const rank = (recipe) => recipe.installed ? 2 : recipe.missing.length ? 1 : 0;
   const recipes = [...catalog.recipes].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   for (const recipe of recipes) {
-    const tile = el("div", "recipe"), chain = el("span", "chain"), acts = el("div", "acts");
-    for (const a of recipe.apps) chain.append(glyph(a.app, a.kind, true));
+    const tile = el("div", "recipe"), acts = el("div", "acts");
     const why = recipeWhy(recipe);
     const look = el("button", "small", "Look"), add = el("button", "small", "Add");
     look.onclick = () => showRecipe(recipe);
@@ -1151,10 +1181,13 @@ async function showRecipes() {
     add.disabled = !!why;
     if (why) acts.append(el("small", why.todo ? "why" : "", why.text));
     acts.append(look, add);
-    tile.append(el("strong", "", recipe.name), chain, el("p", "", recipe.description), acts);
+    tile.append(el("strong", "", recipe.name));
+    if (recipe.plugins.length) tile.append(chips(recipe.plugins));
+    tile.append(el("p", "", recipe.description), acts);
     tiles.append(tile);
   }
-  $("workflow-main").replaceChildren(head, sub, tiles);
+  $("workflow-main").replaceChildren(backToWorkflows(), head, sub, tiles);
+  $("workflow-main").scrollTo(0, 0);
 }
 
 // One recipe as the cards it would give, before it is added.
@@ -1172,24 +1205,22 @@ async function showRecipe(recipe) {
   if (why) sub.append(el("span", "", why.text));
   $("workflow-main").replaceChildren(back, head, sub, renderLane(d));
 }
-$("workflow-recipes").onclick = showRecipes;
-$("workflow-new").onclick = newWorkflow;
-
 async function openWorkflow(id) {
   if (draft && draft.id !== id && !mayLeaveEditor()) return;
-  setDrawer(false);
+  const coming = currentWorkflow !== id;
+  // A workflow is opened at its steps. It stays on the tab it is on when
+  // it is only drawn again, after its switch was used for example.
+  if (coming) workflowTab = "steps";
   currentWorkflow = id;
-  for (const b of $("workflow-list").children) b.classList.remove("current");
   const res = await api("workflows/" + encodeURIComponent(id));
   if (currentWorkflow !== id) return;
   if (!res.ok) {
-    $("workflow-main").replaceChildren(el("p", "sys err", "Could not load this workflow."));
+    $("workflow-main").replaceChildren(backToWorkflows(), el("p", "sys err", "Could not load this workflow."));
     return;
   }
   renderWorkflow(await res.json());
-  // The list shows the same state, so read it again.
-  const list = await api("workflows");
-  if (list.ok && view === "workflows") renderWorkflowNav((await list.json()).workflows);
+  // From the list, which may have been scrolled down.
+  if (coming) $("workflow-main").scrollTo(0, 0);
 }
 
 // A value that an earlier card gave: its number (T for the trigger) and name.
@@ -1650,8 +1681,6 @@ async function saveDraft() {
   }
   draft = null;
   renderWorkflow(await res.json());
-  const list = await api("workflows");
-  if (list.ok && view === "workflows") renderWorkflowNav((await list.json()).workflows);
 }
 
 function renderEditor(d) {
@@ -1659,7 +1688,7 @@ function renderEditor(d) {
   name.type = "text"; name.value = draft.name; name.setAttribute("aria-label", "Name of the workflow");
   name.oninput = () => { draft.name = name.value; draft.changed = true; };
   head.append(name);
-  const parts = [head];
+  const parts = [backToWorkflows(), head];
   if (d.by_hand) {
     const sub = el("div", "wf-sub"), label = el("label"), command = el("input");
     command.type = "text"; command.value = draft.command_name; command.placeholder = d.name;
@@ -1701,8 +1730,7 @@ async function deleteWorkflow(d) {
   const res = await api("workflows/" + encodeURIComponent(d.id), { method: "DELETE", headers: HEADERS });
   if (!res.ok) { $("workflow-main").prepend(el("p", "sys err", "Could not delete the workflow.")); return; }
   draft = null;
-  currentWorkflow = null;
-  loadWorkflows();
+  showWorkflows();
 }
 
 function traceLines(row, label, data) {
@@ -1870,7 +1898,7 @@ function renderWorkflow(d) {
   out.title = "This workflow as a file, to keep or to give to someone";
   sub.append(out);
 
-  const parts = [head, sub];
+  const parts = [backToWorkflows(), head, sub];
   if (workflowNote) {
     parts.push(el("div", "wf-notes", workflowNote));
     workflowNote = "";
@@ -1960,7 +1988,7 @@ async function runWorkflow(d) {
 
 let view = "commands";
 const VIEWS = { commands: "commands-view", workflows: "workflows", settings: "settings" };
-const DRAWER_LABELS = { commands: "Commands", workflows: "Workflows", settings: "Settings sections" };
+const DRAWER_LABELS = { commands: "Commands", settings: "Settings sections" };
 
 function showView(name) {
   if (name !== "workflows" && !mayLeaveEditor()) return;
@@ -1969,15 +1997,18 @@ function showView(name) {
   // Each button opens its view, and leads back to the conversation from it.
   $("workflows-toggle").textContent = name === "workflows" ? "Commands" : "Workflows";
   $("settings-toggle").textContent = name === "settings" ? "Commands" : "Settings";
-  $("drawer-toggle").setAttribute("aria-label", DRAWER_LABELS[name]);
+  // The workflows have the whole width: there is no list to slide in.
+  document.body.classList.toggle("no-drawer", name === "workflows");
+  $("drawer-toggle").setAttribute("aria-label", DRAWER_LABELS[name] || "");
   if (name === "commands") scrollDown();
-  else if (name === "workflows") loadWorkflows();
+  else if (name === "workflows") showWorkflows();
   else loadSettings();
 }
 
 // --- The drawer: on a phone, the list on the left slides in over the messages. ---
 
 function setDrawer(open) {
+  if (view === "workflows") open = false;
   document.body.classList.toggle("drawer-open", open);
   $("drawer-toggle").setAttribute("aria-expanded", String(open));
 }
