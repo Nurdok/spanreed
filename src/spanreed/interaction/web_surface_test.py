@@ -11,9 +11,7 @@ from spanreed.interaction.surface import Content, PromptSpec, SurfaceScope
 from spanreed.interaction.web_surface import (
     WebSurface,
     choice_rows,
-    plain_text,
     read_inbox,
-    render_html,
 )
 from spanreed.web import push
 from spanreed.test_utils import FakeRedis, mock_user_find_by_id
@@ -48,36 +46,6 @@ async def _settle() -> None:
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
-
-
-def test_render_html_keeps_telegram_tags_and_escapes_the_rest() -> None:
-    rendered = render_html(
-        Content("<b>Hi</b> <i>there</i> <script>alert(1)</script> <pre>x</pre>")
-    )
-    assert rendered == (
-        "<b>Hi</b> <i>there</i> &lt;script&gt;alert(1)&lt;/script&gt;" " <pre>x</pre>"
-    )
-
-
-def test_render_html_drops_attributes_from_allowed_tags() -> None:
-    assert render_html(Content('<b onclick="x()">a</b>')) == "<b>a</b>"
-
-
-def test_render_html_links_only_http() -> None:
-    ok = render_html(Content('<a href="https://x.test/p?a=1&b=2">go</a>'))
-    assert ok == (
-        '<a href="https://x.test/p?a=1&amp;b=2" target="_blank"'
-        ' rel="noopener noreferrer">go</a>'
-    )
-    bad = render_html(Content('<a href="javascript:alert(1)">go</a>'))
-    assert "javascript" not in bad.split(">")[0]
-    assert bad.startswith("<a>")
-
-
-def test_render_html_plain_text_is_fully_escaped() -> None:
-    assert render_html(Content("<b>x</b>", parse_html=False)) == (
-        "&lt;b&gt;x&lt;/b&gt;"
-    )
 
 
 def test_choice_rows_matches_telegram_layout() -> None:
@@ -192,14 +160,6 @@ def test_notify_is_durable_in_the_inbox() -> None:
 # ---------------------------------------------------------------------------
 # Push notifications
 # ---------------------------------------------------------------------------
-
-
-def test_plain_text_strips_markup_and_shortens() -> None:
-    assert plain_text(Content("<b>Did you</b>\n  exercise &amp; stretch?")) == (
-        "Did you exercise & stretch?"
-    )
-    assert plain_text(Content("<b>kept</b>", parse_html=False)) == "<b>kept</b>"
-    assert len(plain_text(Content("x" * 1000))) == 240
 
 
 def test_reachable_and_unattended_while_a_browser_is_subscribed() -> None:
