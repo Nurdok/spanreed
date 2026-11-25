@@ -405,3 +405,67 @@ def test_a_form_with_a_branch_becomes_a_step_with_both_sides() -> None:
     assert [step.id for step in check.steps] == ["yes"]
     assert [step.id for step in check.otherwise] == ["no"]
     assert problems(edited, registry) == []
+
+
+# -- a condition, as rows ------------------------------------------------------
+
+
+def test_a_condition_is_edited_as_rows() -> None:
+    edit = editing.fields(
+        If().Input, {"condition": "{{ run.manual and a.count > 0 }}"}
+    )["condition"]
+
+    assert edit["control"] == "condition"
+    assert edit["text"] == "{{ run.manual and a.count > 0 }}"
+    assert edit["condition"] == {
+        "join": "all",
+        "rows": [["{{ run.manual }}", "true", ""], ["{{ a.count }}", "bigger", "0"]],
+    }
+    assert [q["label"] for q in edit["questions"]][:2] == ["is true", "is false"]
+    # The rows say what to write: not "yes or no", as under a text box.
+    assert edit["hint"] == ""
+
+
+def test_a_new_condition_is_one_empty_row_and_one_that_is_no_list_is_text() -> None:
+    new = editing.fields(If().Input, {})["condition"]
+    by_hand = editing.fields(If().Input, {"condition": "{{ a.x and b.y or c.z }}"})
+    always = editing.fields(If().Input, {"condition": True})["condition"]
+
+    assert new["condition"] == {"join": "all", "rows": [["", "true", ""]]}
+    assert by_hand["condition"]["condition"] is None
+    assert by_hand["condition"]["text"] == "{{ a.x and b.y or c.z }}"
+    assert (always["condition"], always["text"]) == (None, "yes")
+
+
+def test_rows_are_stored_as_the_template_that_asks_the_same() -> None:
+    registry = registry_of(Record(), If())
+    rows = {
+        "join": "any",
+        "rows": [["{{ trigger.value }}", "is", "a"], ["{{ run.manual }}", "true", ""]],
+    }
+    form = _form(
+        steps=[{"id": "check", "block": "core.if", "inputs": {"condition": rows}}]
+    )
+
+    (check,) = workflow_from_form(registry, workflow_of(), form).steps
+
+    assert check.inputs == {"condition": '{{ trigger.value == "a" or run.manual }}'}
+    # A condition that was written as text is stored as it was written.
+    form["steps"][0]["inputs"]["condition"] = "{{ trigger.value == 'a' }}"
+    (check,) = workflow_from_form(registry, workflow_of(), form).steps
+    assert check.inputs == {"condition": "{{ trigger.value == 'a' }}"}
+
+
+def test_rows_that_lack_a_value_are_refused_with_the_name_of_the_step() -> None:
+    registry = registry_of(Record(), If())
+    rows = {"join": "all", "rows": [["{{ trigger.value }}", "bigger", ""]]}
+    form = _form(
+        steps=[{"id": "check", "block": "core.if", "inputs": {"condition": rows}}]
+    )
+
+    with pytest.raises(FormError) as refused:
+        workflow_from_form(registry, workflow_of(), form)
+
+    assert refused.value.problems == [
+        "Step 1, If: Condition: the value after “is bigger than” is missing."
+    ]

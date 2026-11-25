@@ -28,6 +28,40 @@ import jinja2.sandbox
 
 _env = jinja2.sandbox.SandboxedEnvironment(undefined=jinja2.StrictUndefined)
 
+
+def _is_empty(value: Any) -> bool:
+    """Return whether a value holds nothing: no text, no items, or nothing.
+
+    ``0`` and "no" are values: they are not empty.
+    """
+    if value is None or isinstance(value, jinja2.Undefined):
+        return True
+    if isinstance(value, (str, bytes, list, tuple, dict, set, frozenset)):
+        return len(value) == 0
+    return False
+
+
+# ``{{ find.tasks is empty }}`` and ``{{ note.value is not empty }}``.
+_env.tests["empty"] = _is_empty
+
+
+def _is_containing(value: Any, part: Any) -> bool:
+    """Return whether a text has a text in it, or a list an item.
+
+    In a text, what is looked for is read as text: "2026" is in a date,
+    also where it was written as a number.
+    """
+    if isinstance(value, str):
+        return str(part) in value
+    try:
+        return part in value
+    except TypeError:
+        return False
+
+
+# ``{{ note.tags is containing("book") }}``.
+_env.tests["containing"] = _is_containing
+
 # A text that is exactly one ``{{ ... }}``.
 _WHOLE_EXPRESSION_RE = re.compile(
     r"^\s*\{\{(?P<expression>(?:(?!\{\{|\}\}|\{%|%\}).)+)\}\}\s*$", re.DOTALL

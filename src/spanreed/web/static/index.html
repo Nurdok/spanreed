@@ -296,6 +296,20 @@
   .erow textarea { grid-column: 1; }
   .erow .x { background: none; border: 0; color: var(--muted); padding: 2px 6px; font-size: 15px; line-height: 1; }
   .erow .x:hover { color: var(--err); }
+  /* A condition: rows of a value, what is asked of it, and a second value. */
+  .cond { display: flex; flex-direction: column; gap: 6px; }
+  .cond-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 6px; align-items: center;
+              padding: 7px 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+  .cond-row textarea, .cond-row select { grid-column: 1; width: 100%; }
+  .cond-row [hidden] { display: none; }
+  .cond-row .ins { grid-column: 2; }
+  .cond-row .x { grid-column: 2; background: none; border: 0; color: var(--muted); padding: 2px 6px; font-size: 15px;
+                 line-height: 1; }
+  .cond-row .x:hover { color: var(--err); }
+  .cond-join { font-size: 12px; color: var(--muted); text-align: center; }
+  .cond-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .cond-foot .link { font-size: 12px; padding: 2px; }
+  .cond .err { font-size: 12px; color: var(--err); }
   .sheet-back { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .35); display: flex;
                 align-items: center; justify-content: center; }
   .sheet { background: var(--card); color: var(--fg); width: min(480px, 100%); max-height: 70vh; overflow-y: auto;
@@ -1401,8 +1415,15 @@ function renderDraftLane() {
 // of each card as the text of its control. Null when nothing is edited.
 let draft = null;
 
-const draftInputs = (card) => Object.fromEntries(card.fields.filter((f) => f.edit).map((f) =>
-  [f.name, f.edit.control === "rows" ? f.edit.rows.map((row) => [...row]) : f.edit.text]));
+const draftInput = (e) => {
+  if (e.control === "rows") return e.rows.map((row) => [...row]);
+  // A condition is rows of its own, or text if it is no list of rows.
+  if (e.control === "condition" && e.condition) {
+    return { join: e.condition.join, rows: e.condition.rows.map((row) => [...row]) };
+  }
+  return e.text;
+};
+const draftInputs = (card) => Object.fromEntries(card.fields.filter((f) => f.edit).map((f) => [f.name, draftInput(f.edit)]));
 // A step of the draft keeps the card it is drawn from: its title, its
 // inputs and how each is edited, its outputs.
 const draftSteps = (cards) => cards.map((card) =>
@@ -1594,6 +1615,8 @@ function editField(card, field, edit) {
     add.type = "button";
     add.onclick = () => { inputs[field.name].push(["", ""]); changed(); draw(); rows.lastChild.querySelector("input").focus(); };
     f.append(rows, add);
+  } else if (e.control === "condition") {
+    f.append(conditionEditor(card, field, edit, changed));
   } else {
     const value = templateBox(inputs[field.name], edit.offers, (text) => { inputs[field.name] = text; changed(); });
     value.box.setAttribute("aria-label", field.label);
@@ -1603,6 +1626,132 @@ function editField(card, field, edit) {
   }
   if (e.hint) f.append(el("div", "hint", e.hint));
   return f;
+}
+
+// The kind of value that a type in words is, for what can be asked of it.
+// Nothing for a type that anything can be asked of.
+function kindOfType(type) {
+  const base = (type || "").split(",")[0];
+  if (base === "yes or no" || base === "text") return base;
+  if (base === "whole number" || base === "number") return "number";
+  return base.startsWith("list") ? "list" : null;
+}
+
+// The output of an earlier card that a text names, if it is that and
+// nothing else: "{{ find.count }}".
+function offeredOutput(text, offers) {
+  const one = /^\s*\{\{\s*([a-z][a-z0-9_]*)\.([A-Za-z_][\w.]*)\s*\}\}\s*$/.exec(text || "");
+  const offer = one && offers.find((o) => o.id === one[1]);
+  return (offer && offer.outputs.find((out) => out.name === one[2])) || null;
+}
+
+// What can be asked of a value: what fits its kind, if the kind is known.
+// What is asked already stays on the list, whatever it is.
+function questionsFor(text, asked, offers, questions) {
+  const out = offeredOutput(text, offers), kind = out && kindOfType(out.type);
+  if (!kind) return questions;
+  const canBeMissing = out.type.endsWith("or nothing");
+  return questions.filter((q) => q.id === asked || q.kinds.includes(kind) ||
+                                 (canBeMissing && (q.id === "empty" || q.id === "not-empty")));
+}
+
+// A condition: rows of a value and what is asked of it, where all or any
+// of them have to hold. One that is no list of rows is edited as text.
+function conditionEditor(card, field, edit, changed) {
+  const inputs = inputsOf(card), questions = field.edit.questions, box = el("div", "cond");
+  const say = (problem) => { const line = el("div", "err", problem); line.setAttribute("role", "alert"); box.append(line); };
+  const swap = async (body, key) => {
+    const res = await post("workflows/condition", body);
+    const answer = await res.json().catch(() => ({}));
+    if (!res.ok) return say(answer.error || "That did not work.");
+    if (answer[key] === null || answer[key] === undefined) {
+      return say("This condition is more than a list of rows, so it stays as text.");
+    }
+    inputs[field.name] = answer[key];
+    changed();
+    draw();
+  };
+  const draw = () => {
+    box.replaceChildren();
+    const value = inputs[field.name], foot = el("div", "cond-foot");
+    if (typeof value === "string") {
+      const text = templateBox(value, edit.offers, (t) => { inputs[field.name] = t; changed(); });
+      text.box.setAttribute("aria-label", field.label);
+      text.box.placeholder = "{{ step.count > 0 }}";
+      const rows = el("button", "link", "Show as rows");
+      rows.type = "button";
+      rows.onclick = () => swap({ text: inputs[field.name] }, "condition");
+      if (text.insert) foot.append(text.insert);
+      foot.append(rows);
+      box.append(text.box, foot, el("div", "hint", "One {{ … }} that comes to yes or no"));
+      requestAnimationFrame(() => grow(text.box));
+      return;
+    }
+    value.rows.forEach((row, i) => {
+      if (i) box.append(el("div", "cond-join", value.join === "any" ? "or" : "and"));
+      const line = el("div", "cond-row"), ask = el("select");
+      const nth = value.rows.length > 1 ? ", row " + (i + 1) : "";
+      const right = templateBox(row[2], edit.offers, (t) => { row[2] = t; changed(); });
+      const fill = (newValue) => {
+        // A new value of another kind than what was asked of the last
+        // one, with nothing written after it yet: ask what fits this one.
+        // Never for a row as it was stored: that asks what its author meant.
+        if (newValue && !row[2] && !offeredFits(row, edit.offers, questions)) {
+          row[1] = questionsFor(row[0], "", edit.offers, questions)[0]?.id || row[1];
+        }
+        ask.replaceChildren(...questionsFor(row[0], row[1], edit.offers, questions).map((q) => new Option(q.label, q.id)));
+        ask.value = row[1];
+        const second = questions.find((q) => q.id === row[1])?.second;
+        right.box.hidden = !second;
+        if (right.insert) right.insert.hidden = !second;
+      };
+      const left = templateBox(row[0], edit.offers, (t) => { row[0] = t; changed(); fill(true); });
+      left.box.placeholder = "A value"; left.box.setAttribute("aria-label", field.label + nth + ", value");
+      right.box.placeholder = "A value"; right.box.setAttribute("aria-label", field.label + nth + ", second value");
+      ask.setAttribute("aria-label", field.label + nth + ", what is asked");
+      ask.onchange = () => { row[1] = ask.value; changed(); fill(false); };
+      line.append(left.box);
+      if (left.insert) line.append(left.insert);
+      line.append(ask);
+      if (value.rows.length > 1) {
+        const remove = el("button", "x", "×");
+        remove.type = "button"; remove.title = "Remove this row"; remove.setAttribute("aria-label", "Remove row " + (i + 1));
+        remove.onclick = () => { value.rows.splice(i, 1); changed(); draw(); };
+        line.append(remove);
+      }
+      line.append(right.box);
+      if (right.insert) line.append(right.insert);
+      fill(false);
+      box.append(line);
+      requestAnimationFrame(() => { grow(left.box); grow(right.box); });
+    });
+    const add = el("button", "small", "Add a row");
+    add.type = "button";
+    add.onclick = () => { value.rows.push(["", "true", ""]); changed(); draw(); box.querySelectorAll(".cond-row textarea")[2 * (value.rows.length - 1)].focus(); };
+    foot.append(add);
+    if (value.rows.length > 1) {
+      const join = el("select");
+      join.append(new Option("All of them hold", "all"), new Option("Any of them holds", "any"));
+      join.value = value.join; join.setAttribute("aria-label", field.label + ", how the rows go together");
+      join.onchange = () => { value.join = join.value; changed(); draw(); };
+      foot.append(join);
+    }
+    const text = el("button", "link", "Write as text");
+    text.type = "button";
+    text.onclick = () => swap({ condition: value }, "text");
+    foot.append(text);
+    box.append(foot);
+  };
+  draw();
+  return box;
+}
+
+// Whether what is asked of a row's value fits the kind of the value.
+function offeredFits(row, offers, questions) {
+  const out = offeredOutput(row[0], offers), kind = out && kindOfType(out.type);
+  if (!kind) return true;
+  const q = questions.find((x) => x.id === row[1]);
+  return !q || q.kinds.includes(kind) || (out.type.endsWith("or nothing") && (q.id === "empty" || q.id === "not-empty"));
 }
 
 // The list of values that the cards before a card give. Picking one puts

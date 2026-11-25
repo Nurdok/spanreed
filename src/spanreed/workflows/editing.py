@@ -6,12 +6,15 @@ This module says how each input is edited, turns a stored value into the
 text the form shows, and turns the text the form sends back into the value
 to store.
 
-There are three controls:
+There are four controls:
 
 - ``text``: one line of text, with templates. A text without a template is
   turned into what the input's type asks for: a number, yes or no, a list.
 - ``choice``: one of a fixed set of texts.
 - ``rows``: a mapping, edited as rows of a name and a text.
+- ``condition``: an input that is a condition, edited as rows of a value
+  and what is asked of it (see ``spanreed.workflows.conditions``). A
+  condition that is no list of rows is edited as text, as before.
 
 An input of any type (and the value of a row) keeps a text that is a
 number, ``true``, ``false``, ``null``, a list or an object in JSON as that
@@ -26,13 +29,14 @@ import json
 from typing import Any
 
 from spanreed import config_form
-from spanreed.workflows import expressions
+from spanreed.workflows import conditions, expressions
 from spanreed.workflows.blocks import Action, BlockRegistry, Trigger
 from spanreed.workflows.model import Step, TriggerSpec, Workflow
 
 TEXT = "text"
 CHOICE = "choice"
 ROWS = "rows"
+CONDITION = "condition"
 
 _YES = ("yes", "true", "on")
 _NO = ("no", "false", "off")
@@ -171,6 +175,14 @@ def fields(cls: type[Any], stored: dict[str, Any]) -> dict[str, dict[str, Any]]:
             edit["rows"] = [[str(key), _any_text(item)] for key, item in rows.items()]
         else:
             edit["text"] = _text(node, value)
+        if conditions.is_condition(default):
+            edit["control"] = CONDITION
+            # The rows say what to fill in. "yes or no" is for a text box.
+            edit["hint"] = node.get("help") or ""
+            # The rows that ask the same, or nothing for a condition that
+            # is no list of rows: the page then shows the text.
+            edit["condition"] = conditions.from_template(value)
+            edit["questions"] = conditions.questions()
         if control == CHOICE:
             edit["choices"] = list(node["choices"])
         described[name] = edit
@@ -188,11 +200,19 @@ def _inputs(cls: type[Any], submitted: Any, where: str, found: list[str]) -> dic
         found.append(f"{where}: the inputs are missing.")
         return {}
     inputs: dict[str, Any] = {}
+    of_class = {field.name: field for field in dataclasses.fields(cls)}
     for node in config_form.form_schema(cls)["fields"]:
         name, label = node["name"], node["label"]
         if name not in submitted:
             continue
         sent = submitted[name]
+        if isinstance(sent, dict) and conditions.is_condition(of_class[name]):
+            # Rows. A condition that was written as text comes as text.
+            try:
+                inputs[name] = conditions.to_template(sent)
+            except conditions.ConditionError as e:
+                found.append(f"{where}: {label}: {e}")
+            continue
         if _control(node) == ROWS:
             if not isinstance(sent, list):
                 found.append(f"{where}: {label}: rows are expected.")
