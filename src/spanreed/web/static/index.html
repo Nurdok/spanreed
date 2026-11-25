@@ -293,7 +293,8 @@
   .erows { display: flex; flex-direction: column; gap: 8px; }
   .erow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 6px; align-items: center;
           border-left: 2px solid var(--line); padding-left: 7px; }
-  .erow textarea { grid-column: 1; }
+  .erow textarea, .erow select { grid-column: 1; }
+  .erow [hidden] { display: none; }
   .erow .x { background: none; border: 0; color: var(--muted); padding: 2px 6px; font-size: 15px; line-height: 1; }
   .erow .x:hover { color: var(--err); }
   /* A condition: rows of a value, what is asked of it, and a second value. */
@@ -1320,6 +1321,8 @@ function renderCard(card, badge, sources, edit) {
   if (card.fields.length) {
     const sec = el("div", "wc-sec");
     for (const field of card.fields) {
+      // The types of the rows of another input: shown with those rows.
+      if (field.edit && field.edit.control === "hidden") continue;
       if (edit && field.edit) { sec.append(editField(card, field, edit)); continue; }
       const f = el("div", "wc-field");
       f.append(el("label", "", field.label), richValue(field.value, sources, field.pairs));
@@ -1423,7 +1426,9 @@ const draftInput = (e) => {
   }
   return e.text;
 };
-const draftInputs = (card) => Object.fromEntries(card.fields.filter((f) => f.edit).map((f) => [f.name, draftInput(f.edit)]));
+// An input without a control of its own is edited by another input's rows.
+const draftInputs = (card) => Object.fromEntries(card.fields.filter((f) => f.edit && f.edit.control !== "hidden")
+  .map((f) => [f.name, draftInput(f.edit)]));
 // A step of the draft keeps the card it is drawn from: its title, its
 // inputs and how each is edited, its outputs.
 const draftSteps = (cards) => cards.map((card) =>
@@ -1576,6 +1581,12 @@ function templateBox(text, offers, onChange) {
   return wrap;
 }
 
+// The types that a row can have, as the page says them, and what to write
+// for a value of each.
+const TYPE_LABELS = { any: "Any type", text: "Text", number: "Number", checkbox: "Checkbox", date: "Date", list: "List" };
+const TYPE_HINTS = { text: "Text", number: "A number", checkbox: "A value that is yes or no", date: "A date, as 2026-05-09",
+                     list: "Items, with commas between them" };
+
 function editField(card, field, edit) {
   const inputs = inputsOf(card), e = field.edit;
   const f = el("div", "wc-field"), top = el("div", "wc-ftop");
@@ -1604,7 +1615,37 @@ function editField(card, field, edit) {
         remove.onclick = () => { inputs[field.name].splice(i, 1); changed(); draw(); };
         const value = templateBox(row[1], edit.offers, (text) => { row[1] = text; changed(); });
         value.box.placeholder = "Value"; value.box.setAttribute("aria-label", field.label + ", value of " + (row[0] || "row " + (i + 1)));
-        line.append(name, remove, value.box);
+        line.append(name, remove);
+        if (e.types) {
+          // The type of the row, and a value that can only be of it.
+          const type = el("select", "rtype"), pick = el("select");
+          for (const t of e.types) type.append(new Option(TYPE_LABELS[t] || t, t));
+          type.value = row[2]; type.setAttribute("aria-label", field.label + ", type of " + (row[0] || "row " + (i + 1)));
+          pick.append(new Option("yes", "yes"), new Option("no", "no"), new Option("A value of a step…", ""));
+          pick.setAttribute("aria-label", value.box.getAttribute("aria-label"));
+          const fit = () => {
+            // A checkbox is yes or no, or what an earlier step gives.
+            const fixed = row[2] === "checkbox" && ["yes", "no", "true", "false", ""].includes(row[1].trim().toLowerCase()) && !pick.dataset.free;
+            pick.hidden = row[2] !== "checkbox";
+            value.box.hidden = fixed;
+            if (value.insert) value.insert.hidden = fixed;
+            if (fixed) {
+              const yes = ["yes", "true"].includes(row[1].trim().toLowerCase());
+              if (!yes && row[1].trim().toLowerCase() !== "no") { row[1] = "no"; value.box.value = "no"; }
+              pick.value = yes ? "yes" : "no";
+            } else if (row[2] === "checkbox") pick.value = "";
+            value.box.placeholder = TYPE_HINTS[row[2]] || "Value";
+          };
+          type.onchange = () => { row[2] = type.value; delete pick.dataset.free; changed(); fit(); grow(value.box); };
+          pick.onchange = () => {
+            if (pick.value) { delete pick.dataset.free; row[1] = pick.value; value.box.value = pick.value; }
+            else { pick.dataset.free = "1"; row[1] = ""; value.box.value = ""; }
+            changed(); fit(); if (!pick.value) value.box.focus();
+          };
+          line.append(type, pick);
+          fit();
+        }
+        line.append(value.box);
         if (value.insert) line.append(value.insert);
         rows.append(line);
         requestAnimationFrame(() => grow(value.box));
@@ -1613,7 +1654,7 @@ function editField(card, field, edit) {
     draw();
     const add = el("button", "small", "Add a row");
     add.type = "button";
-    add.onclick = () => { inputs[field.name].push(["", ""]); changed(); draw(); rows.lastChild.querySelector("input").focus(); };
+    add.onclick = () => { inputs[field.name].push(e.types ? ["", "", e.types[0]] : ["", ""]); changed(); draw(); rows.lastChild.querySelector("input").focus(); };
     f.append(rows, add);
   } else if (e.control === "condition") {
     f.append(conditionEditor(card, field, edit, changed));

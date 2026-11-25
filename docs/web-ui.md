@@ -306,6 +306,17 @@ its command can be changed there too.
   of rows, such as one with "and" and "or" at once, stays as text.
 - **Rows**, such as the properties to set, have a name and a value each.
   **Add a row** adds one, and × removes one.
+- **A property of a note** also has a type, on "Set note properties" and
+  "Write note": Text, Number, Checkbox, Date or List, as Obsidian has
+  them. A checkbox is yes or no, picked from a list, or a value of a step.
+  A value is written as its type has it: "5" as the number 5 for a Number,
+  "a, b" as two items for a List. A value that cannot be of the type, such
+  as "many" for a Number, fails the step and says so. "Any type" writes
+  the value as it comes, as before.
+
+  ![The types of properties](images/web-ui-workflow-property-types-desktop.png)
+
+  <img src="images/web-ui-workflow-property-types-phone.png" alt="The types of properties, on a phone" width="390">
 - **+** on the line between two cards, and after the last, adds a step
   there. It opens the list of blocks, by plugin, with a box to search it. A
   block of a plugin that is not set up is listed, and says what to do. A loop
