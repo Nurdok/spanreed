@@ -1500,7 +1500,9 @@ blocks under ids that start with the new name.
 starts the workflows as they are stored:
 
 - **The users are registered to the new plugin**, and no longer to the old
-  one. Each is told once that the name changed.
+  one. Each is told once that the name changed, after the engine has
+  started: telling waits until a surface can carry it, and the workflows do
+  not wait for that.
 - **Every stored workflow names the blocks by their new ids**: the trigger,
   the steps, and the steps inside them. Nothing else of a workflow changes.
   This is done once (`workflows:renamed:{plugin}`).

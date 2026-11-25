@@ -346,8 +346,9 @@ def test_a_workflow_from_before_the_search_moved_to_google_books_runs_as_before(
         ]
 
         # What a start does now.
-        await migrations.rename_plugins(world.engine, [4])
+        moved = await migrations.rename_plugins(world.engine, [4])
         await world.engine.start([4])
+        await migrations.tell_about_renames(moved)
 
         (stored,) = await world.engine.store.list_for_user(4)
         assert stored.id == workflow.id

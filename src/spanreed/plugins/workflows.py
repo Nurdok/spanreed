@@ -73,7 +73,7 @@ class WorkflowsPlugin(Plugin):
             # Before the start: the engine starts the workflows as they are
             # stored, and one that names a block by an id that the block no
             # longer has would not start.
-            await migrations.rename_plugins(
+            renamed = await migrations.rename_plugins(
                 self._engine, [user.id for user in await self.get_users()]
             )
             await self._engine.start(user.id for user in await self.get_users())
@@ -84,6 +84,7 @@ class WorkflowsPlugin(Plugin):
             await migrations.mend_note_paths(
                 self._engine, [user.id for user in await self.get_users()]
             )
+            await migrations.tell_about_renames(renamed)
             await self._say_started()
             # The engine's work is in its own tasks. This goes on until
             # the plugin is stopped.

@@ -110,13 +110,14 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         passing_on.set()
         await asyncio.Event().wait()
 
-    async def renamed(engine: Any, user_ids: list[int]) -> None:
+    async def renamed(engine: Any, user_ids: list[int]) -> list[str]:
         # The engine starts the workflows as they are stored, so their
         # blocks have to have the ids of now by then.
         started = bool(engine._sources)
         order.append(
             "renamed after the start" if started else "renamed before the start"
         )
+        return ["whoever was moved"]
 
     with fake_storage(), NOT_DUE, patch.object(
         WorkflowsPlugin, "_register_existing_users", AsyncMock()
@@ -134,6 +135,9 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         "spanreed.plugins.workflows.migrations.mend_note_paths",
         new=AsyncMock(side_effect=lambda engine, ids: order.append("mended")),
     ) as mend, patch(
+        "spanreed.plugins.workflows.migrations.tell_about_renames",
+        new=AsyncMock(side_effect=lambda moved: order.append(f"told {moved}")),
+    ), patch(
         "spanreed.plugins.workflows.system.say_started",
         new=AsyncMock(side_effect=lambda users: order.append("said it started")),
     ) as say_started, patch(
@@ -148,6 +152,8 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         "renamed before the start",
         "converted",
         "mended",
+        # After the start: telling waits for a surface, the workflows do not.
+        "told ['whoever was moved']",
         "said it started",
         "passes errors on",
     ]

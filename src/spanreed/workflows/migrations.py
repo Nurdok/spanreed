@@ -15,7 +15,8 @@ old behavior, and adds the recipes they want.
 A plugin that another plugin took the place of is renamed: what was left
 of it, its blocks, is published under the new name. Its users are
 registered to the new plugin, and their workflows name the blocks by the
-ids they have there. This runs before the engine starts.
+ids they have there. This runs before the engine starts, and the users
+are told after it has.
 
 A user never has the old behavior and the new one, and doing any of these
 again changes nothing.
@@ -461,21 +462,26 @@ def current_block(block_id: str) -> str:
     return block_id
 
 
-async def rename_plugins(engine: WorkflowEngine, user_ids: Iterable[int]) -> None:
+async def rename_plugins(
+    engine: WorkflowEngine, user_ids: Iterable[int]
+) -> list[tuple[RenamedPlugin, int]]:
     """Move the users and the workflows of every renamed plugin to the new one.
 
     ``user_ids`` are the users whose workflows are looked at. Call this
     before the engine starts: it starts the workflows as they are stored,
     and one that names a block by an id that is gone does not start.
+
+    Return who was moved from which plugin, for ``tell_about_renames``.
     """
     user_ids = list(user_ids)
+    moved: list[tuple[RenamedPlugin, int]] = []
     for plugin in RENAMED_PLUGINS:
         # The engine starts whatever happens here. What was not moved stays
         # as it was, so the next start tries again. One of the two does not
         # wait for the other: each leaves the user nearer to a workflow
         # that runs.
         try:
-            await _move_registrations(plugin)
+            await _move_registrations(plugin, moved)
         except Exception:
             _logger.exception(
                 f"Could not move the users of plugin {plugin.canonical_name}"
@@ -487,10 +493,16 @@ async def rename_plugins(engine: WorkflowEngine, user_ids: Iterable[int]) -> Non
             _logger.exception(
                 f"Could not rename the blocks of plugin {plugin.canonical_name}."
             )
+    return moved
 
 
-async def _move_registrations(plugin: RenamedPlugin) -> None:
-    """Register the users of a renamed plugin to the one that took its place."""
+async def _move_registrations(
+    plugin: RenamedPlugin, moved: list[tuple[RenamedPlugin, int]]
+) -> None:
+    """Register the users of a renamed plugin to the one that took its place.
+
+    Add each user who was moved to ``moved``.
+    """
     # The conversion of the old plugin reads its users from these
     # registrations, the first time it looks. Let it look before they go.
     for conversion in _conversions():
@@ -507,31 +519,38 @@ async def _move_registrations(plugin: RenamedPlugin) -> None:
         await redis_api.sadd(new_key, user_id)
         await redis_api.srem(f"user:{user_id}:plugins", plugin.canonical_name)
         await redis_api.srem(old_key, user_id)
+        moved.append((plugin, user_id))
         _logger.info(
             f"Moved user {user_id} from plugin {plugin.canonical_name} to"
             f" {plugin.new_canonical_name}."
         )
+
+
+async def tell_about_renames(moved: list[tuple[RenamedPlugin, int]]) -> None:
+    """Tell the users whom ``rename_plugins`` moved that the name changed.
+
+    Call this after the engine has started. Telling waits until a surface
+    can carry it, and the workflows must not wait for that.
+    """
+    for plugin, user_id in moved:
+        text = f"The plugin “{plugin.name}” is called “{plugin.new_name}” now. "
+        if plugin.note:
+            text += f"{plugin.note} "
+        text += (
+            "Your workflows go on as they were, and “Manage plugins” has it "
+            "under the new name."
+        )
         try:
-            await _tell_about_rename(plugin, user_id)
+            user = await User.find_by_id(user_id)
+            bot = await UserInteractionApi.for_user(user)
+            await bot.notify(text, parse_html=False)
         except Exception:
-            # The user is moved. Not told is better than not started.
+            # The user is moved, and is not moved again: there is no next
+            # start to tell them at.
             _logger.exception(
                 f"Could not tell user {user_id} that plugin"
                 f" {plugin.canonical_name} has another name."
             )
-
-
-async def _tell_about_rename(plugin: RenamedPlugin, user_id: int) -> None:
-    text = f"The plugin “{plugin.name}” is called “{plugin.new_name}” now. "
-    if plugin.note:
-        text += f"{plugin.note} "
-    text += (
-        "Your workflows go on as they were, and “Manage plugins” has it "
-        "under the new name."
-    )
-    user = await User.find_by_id(user_id)
-    bot = await UserInteractionApi.for_user(user)
-    await bot.notify(text, parse_html=False)
 
 
 async def _rename_blocks(

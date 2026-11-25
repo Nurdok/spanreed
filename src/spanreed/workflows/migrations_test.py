@@ -359,7 +359,9 @@ def _rename(
     async def run() -> None:
         for workflow in workflows:
             await engine.store.save(workflow)
-        await migrations.rename_plugins(engine, users)
+        moved = await migrations.rename_plugins(engine, users)
+        # The engine would start here.
+        await migrations.tell_about_renames(moved)
 
     with patch(
         "spanreed.workflows.migrations.UserInteractionApi", autospec=True
@@ -409,16 +411,53 @@ def test_the_users_of_a_renamed_plugin_are_registered_to_the_new_one(
         assert {int(user) for user in asyncio.run(redis.smembers(NEW_USERS))} == {4, 7}
 
 
-def test_a_user_who_cannot_be_told_is_moved_all_the_same(redis: FakeRedis) -> None:
+def test_the_users_are_moved_before_the_engine_starts_and_told_after(
+    redis: FakeRedis,
+) -> None:
     asyncio.run(redis.sadd(OLD_USERS, 4, 7))
     engine = WorkflowEngine(registry_of())
 
     with fake_storage(), patch(
         "spanreed.workflows.migrations.UserInteractionApi", autospec=True
     ) as bot:
-        bot.for_user = AsyncMock(side_effect=RuntimeError("no surface"))
-        asyncio.run(migrations.rename_plugins(engine, [4, 7]))
+        bot.for_user = AsyncMock(return_value=bot)
+        bot.notify = AsyncMock()
+        moved = asyncio.run(migrations.rename_plugins(engine, [4, 7]))
 
+        # Moving does not wait for a surface that can carry the telling:
+        # the workflows start first.
+        bot.for_user.assert_not_awaited()
+        assert {int(user) for user in asyncio.run(redis.smembers(NEW_USERS))} == {4, 7}
+        assert sorted(user_id for _, user_id in moved) == [4, 7]
+        assert {plugin.canonical_name for plugin, _ in moved} == {"lit-notes"}
+
+        asyncio.run(migrations.tell_about_renames(moved))
+        assert bot.notify.await_count == 2
+
+
+def test_a_user_who_cannot_be_told_does_not_stop_the_others(redis: FakeRedis) -> None:
+    asyncio.run(redis.sadd(OLD_USERS, 4, 7))
+    engine = WorkflowEngine(registry_of())
+    told: list[int] = []
+
+    async def for_user(user: Any) -> Any:
+        if not told:
+            told.append(-1)
+            raise RuntimeError("no surface")
+        told.append(user.id)
+        return bot
+
+    with fake_storage(), patch(
+        "spanreed.workflows.migrations.UserInteractionApi", autospec=True
+    ) as bot:
+        bot.for_user = AsyncMock(side_effect=for_user)
+        bot.notify = AsyncMock()
+        moved = asyncio.run(migrations.rename_plugins(engine, [4, 7]))
+        # Nothing is raised.
+        asyncio.run(migrations.tell_about_renames(moved))
+
+    assert len(told) == 2 and told[1] in (4, 7)
+    bot.notify.assert_awaited_once()
     assert {int(user) for user in asyncio.run(redis.smembers(NEW_USERS))} == {4, 7}
     assert asyncio.run(redis.smembers(OLD_USERS)) == set()
 
