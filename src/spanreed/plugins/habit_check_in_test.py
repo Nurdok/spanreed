@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from spanreed.apis.obsidian import ObsidianPlugin
+from spanreed.apis.obsidian import DailyNote, ObsidianPlugin
 from spanreed.interaction import UserInteractionPriority, commands
 from spanreed.interaction import engine as turns
 from spanreed.plugin import Plugin
@@ -28,7 +28,12 @@ from spanreed.plugins.habit_check_in_test_data import (
     OLD_PLUGIN,
 )
 from spanreed.plugins.workflows import WorkflowsPlugin
-from spanreed.test_utils import FakeRedis, async_return_true, mock_user_find_by_id
+from spanreed.test_utils import (
+    FakeRedis,
+    async_return_true,
+    daily_note_in_daily_folder,
+    mock_user_find_by_id,
+)
 from spanreed.workflows import migrations
 from spanreed.workflows import store as workflow_store
 from spanreed.workflows.blocks import BlockRegistry
@@ -141,8 +146,9 @@ def _world() -> Iterator[World]:
             user=mock_user_find_by_id(4),
         )
 
-        async def create() -> None:
+        async def create(date: datetime.date) -> DailyNote:
             world.lines.append(["create"])
+            return await daily_note_in_daily_folder(date)
 
         async def get(note: str, name: str) -> Any:
             world.lines.append(["get", note, name])
@@ -172,7 +178,7 @@ def _world() -> Iterator[World]:
             world.notified.append(message)
 
         obsidian.for_user = AsyncMock(return_value=obsidian)
-        obsidian.safe_generate_today_note = AsyncMock(side_effect=create)
+        obsidian.create_daily_note = AsyncMock(side_effect=create)
         obsidian.get_property = AsyncMock(side_effect=get)
         obsidian.add_value_to_list_property = AsyncMock(side_effect=add)
         bot.for_user = AsyncMock(return_value=bot)
@@ -409,7 +415,8 @@ def test_settings_without_habits_leave_the_recipe_as_it_is() -> None:
         workflow = recipe.workflow_for(4)
         keep_settings(saved)(workflow)
         assert workflow.enabled is False
-        assert workflow.steps[1].inputs["note"] == "Daily/{{ trigger.date }}.md"
+        # Where Obsidian says the daily note is.
+        assert workflow.steps[1].inputs["note"] == "{{ today.path }}"
 
     # No folder: the daily notes are at the top of the vault.
     workflow = recipe.workflow_for(4)

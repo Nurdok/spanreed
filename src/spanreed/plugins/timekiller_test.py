@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from spanreed.apis.obsidian import ObsidianPlugin
+from spanreed.apis.obsidian import DailyNote, ObsidianPlugin
 from spanreed.interaction import UserInteractionPriority, commands
 from spanreed.interaction import engine as turns
 from spanreed.plugin import Plugin
@@ -34,7 +34,12 @@ from spanreed.plugins.timekiller import (
 from spanreed.plugins.timekiller_blocks import PROMPTS, timekiller_blocks
 from spanreed.plugins.timekiller_test_data import CASES, OLD_PLUGIN
 from spanreed.plugins.workflows import WorkflowsPlugin
-from spanreed.test_utils import FakeRedis, async_return_true, mock_user_find_by_id
+from spanreed.test_utils import (
+    FakeRedis,
+    async_return_true,
+    daily_note_in_daily_folder,
+    mock_user_find_by_id,
+)
 from spanreed.workflows import migrations
 from spanreed.workflows import store as workflow_store
 from spanreed.workflows.blocks import BlockRegistry
@@ -71,6 +76,12 @@ def _dated(text: Any) -> Any:
     if isinstance(text, str):
         return text.replace("<today>", TODAY).replace("<yesterday>", YESTERDAY)
     return text
+
+
+def _step(workflow: Workflow, step_id: str) -> Any:
+    """Return the step of a workflow that has an id, from its top steps."""
+    (step,) = [step for step in workflow.steps if step.id == step_id]
+    return step
 
 
 def _flat(choices: list[Any]) -> list[str]:
@@ -151,7 +162,7 @@ class World:
             if line[0] in ("choice", "input")
         ]
         journal = self.workflows[JOURNAL_RECIPE]
-        journal.steps[0].inputs["heading"] = case.get("heading")
+        _step(journal, "journal").inputs["heading"] = case.get("heading")
         await self.engine.save(journal)
         memory = self.engine.store.memory(self.workflows[KILL_TIME_RECIPE].id)
         await memory.forget(LAST_ASKED_BOOKS_KEY)
@@ -224,8 +235,9 @@ def _world() -> Iterator[World]:
             user=mock_user_find_by_id(4),
         )
 
-        async def create() -> None:
+        async def create(date: datetime.date) -> DailyNote:
             world.lines.append(["create"])
+            return await daily_note_in_daily_folder(date)
 
         async def get(note: str, name: str) -> Any:
             world.lines.append(["get", note, name])
@@ -301,7 +313,8 @@ def _world() -> Iterator[World]:
             return prompts[world.prompts_picked - 1]
 
         vault.for_user = AsyncMock(return_value=vault)
-        vault.safe_generate_today_note = AsyncMock(side_effect=create)
+        vault.create_daily_note = AsyncMock(side_effect=create)
+        vault.find_daily_note = AsyncMock(side_effect=daily_note_in_daily_folder)
         vault.get_property = AsyncMock(side_effect=get)
         vault.set_value_of_property = AsyncMock(side_effect=set_)
         vault.append_to_note = AsyncMock(side_effect=append)
@@ -584,8 +597,9 @@ def test_the_user_gets_five_workflows_with_what_the_plugin_knew() -> None:
             "Books": False,
             "Scan Processing": False,
         }
-        assert workflows[JOURNAL_RECIPE].steps[0].inputs["heading"] == "Journal"
-        assert workflows[JOURNAL_RECIPE].steps[0].inputs["prompts"] == PROMPTS
+        journal = _step(workflows[JOURNAL_RECIPE], "journal")
+        assert journal.inputs["heading"] == "Journal"
+        assert journal.inputs["prompts"] == PROMPTS
 
         kill_time = world.engine.store.memory(workflows[KILL_TIME_RECIPE].id)
         last = await kill_time.get(LAST_ASKED_BOOKS_KEY)

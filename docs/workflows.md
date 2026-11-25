@@ -203,7 +203,8 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `todoist.set-due-date` Set due date | action | Todoist |
 | `todoist.read-tally` Get the dates on a task | action | Todoist |
 | `todoist.write-tally` Write the dates to a task | action | Todoist |
-| `obsidian.create-daily-note` Create today's daily note | action | Obsidian |
+| `obsidian.create-daily-note` Create daily note | action | Obsidian |
+| `obsidian.find-daily-note` Find daily note | action | Obsidian |
 | `obsidian.query-dataview` Query Dataview | action | Obsidian |
 | `obsidian.get-note-property` Get note property | action | Obsidian |
 | `obsidian.set-note-properties` Set note properties | action | Obsidian |
@@ -282,7 +283,7 @@ pick is acted on even if the user never answers again:
       "id": "mark",
       "block": "obsidian.add-to-list-property",
       "inputs": {
-        "note": "Daily/{{ trigger.date }}.md",
+        "note": "{{ today.path }}",
         "property": "habits",
         "value": "{{ pick.value }}"
       }
@@ -510,6 +511,48 @@ A message that comes out empty is not sent. So a message that is all inside
 `{% if … %}` is sent only when the condition holds. The workflows that
 Gmail Monitor's rules became say things this way. A workflow that is made
 now can use "If" in its place.
+
+### The daily note
+
+Obsidian decides where a daily note is: the folder and the date format of
+its Daily notes settings (or of Periodic Notes, when that has them). A
+workflow asks Obsidian, and does not name the folder itself:
+
+```json
+{"id": "day", "block": "obsidian.find-daily-note", "inputs": {"date": "{{ trigger.date }}"}},
+{"id": "write", "block": "obsidian.set-note-properties",
+ "inputs": {"note": "{{ day.path }}", "properties": {"weight": "{{ trigger.weight }}"}}}
+```
+
+| Block | Does | Gives |
+| --- | --- | --- |
+| Create daily note | Makes the note of the day from the template, unless it is there | `path`, and `created`: whether it made the note now |
+| Find daily note | Makes nothing | `path`, and `exists`: whether the note is there |
+
+- **Date** is the day, as `2026-05-09`: usually `{{ trigger.date }}`. Empty
+  means today, where the user is.
+- **`path` is there also for a note that is not.** "Find daily note" says
+  where the note would be made, so the step that writes to it decides what
+  to do about a missing note: skip it, fail, or make it.
+- **A note that is there is found where it is**, also if it was moved
+  inside the folder of the daily notes, or the date format changed since.
+- **The day comes from Spanreed**, in the user's timezone. Obsidian's clock
+  does not decide which note "today" is.
+
+A workflow that names the note itself, `Daily/{{ trigger.date }}.md`, goes
+on working. It writes to that path whatever the settings of Obsidian say.
+
+Both blocks need the Spanreed plugin for Obsidian to say where the note is.
+A plugin from before it could:
+
+- still makes today's note for "Create daily note", and gives an empty
+  `path`. A step that is given an empty path fails, and says to update the
+  plugin: it never writes to a note without a name.
+- cannot make the note of another day, and cannot find a note. Those steps
+  fail, and say to update the plugin.
+
+"Show supported API commands", in Obsidian's command palette, lists what the
+installed plugin knows: `get-daily-note` is the new one.
 
 ### Gmail
 

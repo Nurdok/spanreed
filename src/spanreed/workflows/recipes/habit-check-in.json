@@ -12,13 +12,13 @@
     {
       "id": "today",
       "block": "obsidian.create-daily-note",
-      "inputs": {}
+      "inputs": {"date": "{{ trigger.date }}"}
     },
     {
       "id": "done",
       "block": "obsidian.get-note-property",
       "inputs": {
-        "note": "Daily/{{ trigger.date }}.md",
+        "note": "{{ today.path }}",
         "property": "habits"
       }
     },
@@ -38,7 +38,7 @@
           "id": "mark",
           "block": "obsidian.add-to-list-property",
           "inputs": {
-            "note": "Daily/{{ trigger.date }}.md",
+            "note": "{{ today.path }}",
             "property": "habits",
             "value": "{{ pick.value }}"
           }

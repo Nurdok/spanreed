@@ -14,7 +14,6 @@ from spanreed.workflows.model import Step, Workflow
 # The recipe that does what the plugin did.
 RECIPE = "habit-check-in"
 # What the recipe ships with, which a user of the plugin had their own of.
-DEFAULT_FOLDER = "Daily"
 DEFAULT_PROPERTY = "habits"
 # The plugin laid the habits out in at least this many columns.
 MIN_COLUMNS = 4
@@ -51,15 +50,16 @@ def keep_settings(saved: dict[str, Any] | None) -> Callable[[Workflow], None]:
     folder = str(config.get("daily_note_path") or "").strip("/")
     name = str(config.get("habit_tracker_property_name") or "")
 
-    def note_of(path: str) -> str:
-        start = f"{folder}/" if folder else ""
-        return path.replace(f"{DEFAULT_FOLDER}/", start, 1)
+    # The plugin wrote to the note that it named itself, from its own
+    # setting. The recipe asks Obsidian where the daily note is. A workflow
+    # that takes the place of the plugin writes where the plugin did.
+    note = (f"{folder}/" if folder else "") + "{{ trigger.date }}.md"
 
     def change(steps: list[Step]) -> None:
         for step in steps:
             inputs = step.inputs
             if isinstance(inputs.get("note"), str):
-                inputs["note"] = note_of(inputs["note"])
+                inputs["note"] = note
             if inputs.get("property") == DEFAULT_PROPERTY and name:
                 inputs["property"] = name
             if step.block == "core.ask-each":

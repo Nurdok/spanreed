@@ -14,28 +14,129 @@ from typing import Any, Literal
 
 import yaml
 
-from spanreed.apis.obsidian import ObsidianApi
+from spanreed.apis.obsidian import ObsidianApi, ObsidianPluginTooOld
 from spanreed.apis.obsidian_watch import StoppedAnswering
 from spanreed.interaction import UserInteractionApi
-from spanreed.workflows.blocks import Action, Block, NoInput, NoOutput, StepContext
+from spanreed.workflows.blocks import Action, Block, StepContext
 from spanreed.workflows.files import as_bytes
 
 
-class CreateDailyNote(Action[NoInput, NoOutput]):
-    """Create today's daily note from its template, if it is not there.
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
-    Only today's note can be created: Obsidian makes it from the daily note
-    template. A note of another day has to be there already.
+
+def _today(ctx: StepContext) -> datetime.date:
+    """Return today's date where the user is."""
+    return datetime.datetime.now(ctx.user.tzinfo).date()
+
+
+@dataclass
+class DailyNoteInput:
+    """Which day's note."""
+
+    # The day, as ``2026-05-09``: ``{{ trigger.date }}``. Empty for today,
+    # where the user is.
+    date: str = ""
+
+
+def _day(ctx: StepContext, inputs: DailyNoteInput) -> datetime.date:
+    """Return the day that a step about a daily note is about."""
+    text = str(inputs.date or "").strip()
+    if not text:
+        return _today(ctx)
+    try:
+        if not _DATE_RE.fullmatch(text):
+            raise ValueError(text)
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        raise ValueError(
+            f"“{text}” is not a date. Write it as 2026-05-09, or leave it "
+            "empty for today."
+        ) from None
+
+
+def _daily_note_in_words(inputs: dict[str, Any]) -> str:
+    """Return which daily note a step is about, from its stored inputs."""
+    date = str(inputs.get("date") or "").strip()
+    return f"the daily note of {date}" if date else "today’s daily note"
+
+
+@dataclass
+class CreateDailyNoteOutput:
+    """Where the note is."""
+
+    # The path of the note in the vault, such as ``Daily/2026-05-09.md``:
+    # where the Daily notes settings of Obsidian put it. Empty if the
+    # Spanreed plugin for Obsidian is too old to say.
+    path: str
+    # Whether the note was made now. False if it was there already.
+    created: bool
+
+
+class CreateDailyNote(Action[DailyNoteInput, CreateDailyNoteOutput]):
+    """Create the daily note of a day from its template, if it is not there.
+
+    Obsidian makes it where its Daily notes settings say, and ``path`` is
+    where that is. The steps after this one write to ``path``, and need
+    not know the folder or the date format.
     """
 
     id = "obsidian.create-daily-note"
-    title = "Create today’s daily note"
+    title = "Create daily note"
 
-    async def run(self, ctx: StepContext, inputs: NoInput) -> NoOutput:
-        """Ask Obsidian for today's daily note."""
+    def stands_for(self, inputs: dict[str, Any]) -> dict[str, str]:
+        """Say which note ``path`` is."""
+        return {"path": _daily_note_in_words(inputs)}
+
+    async def run(
+        self, ctx: StepContext, inputs: DailyNoteInput
+    ) -> CreateDailyNoteOutput:
+        """Ask Obsidian for the daily note of the day."""
+        day = _day(ctx, inputs)
         obsidian = await ObsidianApi.for_user(ctx.user)
-        await obsidian.safe_generate_today_note()
-        return NoOutput()
+        note = await obsidian.create_daily_note(day)
+        if not note.path and day != _today(ctx):
+            # A plugin from before it took a day made today's note.
+            raise ObsidianPluginTooOld(
+                "The Spanreed plugin for Obsidian is too old to create the "
+                "daily note of another day than today. Update the plugin."
+            )
+        return CreateDailyNoteOutput(path=note.path, created=note.created)
+
+
+@dataclass
+class FindDailyNoteOutput:
+    """Where the note is, or would be."""
+
+    # The path of the note in the vault, such as ``Daily/2026-05-09.md``:
+    # where it is, or where the Daily notes settings of Obsidian would put
+    # it.
+    path: str
+    # Whether the note is there.
+    exists: bool
+
+
+class FindDailyNote(Action[DailyNoteInput, FindDailyNoteOutput]):
+    """Say where the daily note of a day is, without creating it.
+
+    ``path`` is where the Daily notes settings of Obsidian put the note of
+    that day, also while it is not there. A step that writes to it then
+    skips it, fails, or makes it, as that step is set.
+    """
+
+    id = "obsidian.find-daily-note"
+    title = "Find daily note"
+
+    def stands_for(self, inputs: dict[str, Any]) -> dict[str, str]:
+        """Say which note ``path`` is."""
+        return {"path": _daily_note_in_words(inputs)}
+
+    async def run(
+        self, ctx: StepContext, inputs: DailyNoteInput
+    ) -> FindDailyNoteOutput:
+        """Ask Obsidian where the daily note of the day is."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        note = await obsidian.find_daily_note(_day(ctx, inputs))
+        return FindDailyNoteOutput(path=note.path, exists=note.exists)
 
 
 @dataclass
@@ -431,6 +532,7 @@ def obsidian_blocks() -> list[Block]:
     """Return the blocks that the Obsidian plugin publishes."""
     return [
         CreateDailyNote(),
+        FindDailyNote(),
         QueryDataview(),
         GetNoteProperty(),
         SetNoteProperties(),

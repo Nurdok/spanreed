@@ -1,9 +1,11 @@
 import asyncio
+import datetime
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from spanreed.apis.obsidian import DailyNote, ObsidianPluginTooOld
 from spanreed.apis.obsidian_blocks import (
     AddToListProperty,
     AddToListPropertyInput,
@@ -14,6 +16,10 @@ from spanreed.apis.obsidian_blocks import (
     QueryDataview,
     QueryDataviewInput,
     CreateDailyNote,
+    CreateDailyNoteOutput,
+    DailyNoteInput,
+    FindDailyNote,
+    FindDailyNoteOutput,
     SetNoteProperties,
     SetNotePropertiesInput,
     SetNotePropertiesOutput,
@@ -30,7 +36,7 @@ from spanreed.test_utils import (
     patch_obsidian,
     patch_user_interaction,
 )
-from spanreed.workflows.blocks import BlockRegistry, NoInput, RunInfo, StepContext
+from spanreed.workflows.blocks import BlockRegistry, RunInfo, StepContext
 from spanreed.workflows.testing import fake_plugin
 
 NOTE = "Daily/2026-05-09.md"
@@ -62,6 +68,7 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         registry.register(block, fake_plugin())
     assert [block.id for block in registry.all()] == [
         "obsidian.create-daily-note",
+        "obsidian.find-daily-note",
         "obsidian.query-dataview",
         "obsidian.get-note-property",
         "obsidian.set-note-properties",
@@ -73,13 +80,122 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
     ]
 
 
+TODAY = datetime.date(2026, 5, 9)
+
+
+def _create(date: str = "") -> CreateDailyNoteOutput:
+    with patch("spanreed.apis.obsidian_blocks._today", return_value=TODAY):
+        return asyncio.run(CreateDailyNote().run(_context(), DailyNoteInput(date)))
+
+
+def _find(date: str = "") -> FindDailyNoteOutput:
+    with patch("spanreed.apis.obsidian_blocks._today", return_value=TODAY):
+        return asyncio.run(FindDailyNote().run(_context(), DailyNoteInput(date)))
+
+
 @patch_obsidian("spanreed.apis.obsidian_blocks")
-def test_create_daily_note_asks_obsidian_for_todays_note(
+def test_create_daily_note_makes_todays_note_and_says_where_it_is(
     mock_obsidian: AsyncMock,
 ) -> None:
-    asyncio.run(CreateDailyNote().run(_context(), NoInput()))
+    mock_obsidian.create_daily_note = AsyncMock(
+        return_value=DailyNote("Journal/09.05.2026.md", exists=True, created=True)
+    )
 
-    mock_obsidian.safe_generate_today_note.assert_awaited_once()
+    output = _create()
+
+    # Today where the user is, so that Obsidian's clock does not decide.
+    mock_obsidian.create_daily_note.assert_awaited_once_with(TODAY)
+    assert output == CreateDailyNoteOutput(path="Journal/09.05.2026.md", created=True)
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_create_daily_note_makes_the_note_of_the_day_it_is_given(
+    mock_obsidian: AsyncMock,
+) -> None:
+    output = _create(" 2026-03-01 ")
+
+    mock_obsidian.create_daily_note.assert_awaited_once_with(datetime.date(2026, 3, 1))
+    assert output == CreateDailyNoteOutput(path="Daily/2026-03-01.md", created=False)
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_what_is_not_a_date_is_refused_before_obsidian_is_asked(
+    mock_obsidian: AsyncMock,
+) -> None:
+    for date in ("tomorrow", "2026-13-45", "20260301", "2026-W10-1", "01/03/2026"):
+        for step in (_create, _find):
+            with pytest.raises(ValueError) as error:
+                step(date)
+            assert str(error.value) == (
+                f"“{date}” is not a date. Write it as 2026-05-09, or leave it "
+                "empty for today."
+            )
+
+    mock_obsidian.create_daily_note.assert_not_awaited()
+    mock_obsidian.find_daily_note.assert_not_awaited()
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_an_older_plugin_still_makes_todays_note_but_cannot_say_where(
+    mock_obsidian: AsyncMock,
+) -> None:
+    # What a workflow from before the path was there does: it goes on.
+    mock_obsidian.create_daily_note = AsyncMock(
+        return_value=DailyNote(path="", exists=True)
+    )
+
+    assert _create() == CreateDailyNoteOutput(path="", created=False)
+    assert _create("2026-05-09") == CreateDailyNoteOutput(path="", created=False)
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_an_older_plugin_cannot_make_the_note_of_another_day(
+    mock_obsidian: AsyncMock,
+) -> None:
+    # It made today's note, whatever the day. That is not what was asked.
+    mock_obsidian.create_daily_note = AsyncMock(
+        return_value=DailyNote(path="", exists=True)
+    )
+
+    with pytest.raises(ObsidianPluginTooOld, match="Update the plugin."):
+        _create("2026-05-08")
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_find_daily_note_says_where_the_note_of_a_day_is(
+    mock_obsidian: AsyncMock,
+) -> None:
+    for exists in (True, False):
+        mock_obsidian.find_daily_note = AsyncMock(
+            return_value=DailyNote("Daily/2026-03-01.md", exists=exists)
+        )
+
+        output = _find("2026-03-01")
+
+        mock_obsidian.find_daily_note.assert_awaited_once_with(
+            datetime.date(2026, 3, 1)
+        )
+        assert output == FindDailyNoteOutput(path="Daily/2026-03-01.md", exists=exists)
+    # Nothing is made, also where the note is not there.
+    mock_obsidian.create_daily_note.assert_not_awaited()
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_find_daily_note_is_about_today_when_no_day_is_given(
+    mock_obsidian: AsyncMock,
+) -> None:
+    assert _find() == FindDailyNoteOutput(path="Daily/2026-05-09.md", exists=True)
+
+    mock_obsidian.find_daily_note.assert_awaited_once_with(TODAY)
+
+
+def test_a_step_about_a_daily_note_says_which_note_its_path_is() -> None:
+    for block in (CreateDailyNote(), FindDailyNote()):
+        assert block.stands_for({}) == {"path": "today’s daily note"}
+        assert block.stands_for({"date": ""}) == {"path": "today’s daily note"}
+        assert block.stands_for({"date": "{{ trigger.date }}"}) == {
+            "path": "the daily note of {{ trigger.date }}"
+        }
 
 
 @patch_obsidian("spanreed.apis.obsidian_blocks")

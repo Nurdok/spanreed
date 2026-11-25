@@ -1,7 +1,12 @@
 from typing import Any
 from unittest.mock import MagicMock
 
-from spanreed.apis.obsidian_blocks import SetNoteProperties, WriteNote
+from spanreed.apis.obsidian_blocks import (
+    CreateDailyNote,
+    FindDailyNote,
+    SetNoteProperties,
+    WriteNote,
+)
 from spanreed.plugin import Plugin
 from spanreed.workflows import views
 from spanreed.workflows.blocks import BlockRegistry
@@ -62,7 +67,15 @@ def _writer(workflow_id: str, name: str, *properties: str, **fields: Any) -> Wor
 
 
 def _warnings(workflow: Workflow, *others: Workflow) -> list[str]:
-    engine = WorkflowEngine(registry_of(SetNoteProperties(), WriteNote(), ForEach()))
+    engine = WorkflowEngine(
+        registry_of(
+            SetNoteProperties(),
+            WriteNote(),
+            ForEach(),
+            CreateDailyNote(),
+            FindDailyNote(),
+        )
+    )
     shown: list[str] = views.detail(engine, workflow, None, others=others)["warnings"]
     return shown
 
@@ -91,6 +104,74 @@ def test_the_same_property_of_another_note_is_another_thing() -> None:
     other.steps[0].inputs["note"] = "Weekly/{{ trigger.date }}.md"
 
     assert _warnings(health, other) == []
+
+
+def _daily_writer(
+    workflow_id: str,
+    name: str,
+    step_id: str,
+    block: str = "obsidian.find-daily-note",
+    date: str = "{{ trigger.date }}",
+    note: str | None = None,
+) -> Workflow:
+    """Return a workflow that asks Obsidian for a daily note, and sets its weight."""
+    steps = [
+        Step(id=step_id, block=block, inputs={"date": date} if date else {}),
+        Step(
+            id="write",
+            block="obsidian.set-note-properties",
+            inputs={
+                "note": note or f"{{{{ {step_id}.path }}}}",
+                "properties": {"weight": "x"},
+            },
+        ),
+    ]
+    return workflow_of(*steps, id=workflow_id, name=name)
+
+
+def test_a_note_that_a_step_found_is_named_by_what_it_is() -> None:
+    # Not by the template: "{{ day.path }}" says nothing to a reader, and
+    # another workflow has another id for its step.
+    health = _daily_writer("wf_1", "Health", "day")
+    scale = _daily_writer("wf_2", "Scale", "the_note")
+    made = _daily_writer("wf_3", "Made", "today", "obsidian.create-daily-note")
+
+    said = "also writes the property “weight” of the daily note of {{ trigger.date }}."
+    assert _warnings(health, scale, made) == [f"“Scale” {said}", f"“Made” {said}"]
+    assert _warnings(made, health) == [f"“Health” {said}"]
+
+
+def test_the_daily_note_of_another_day_is_another_note() -> None:
+    health = _daily_writer("wf_1", "Health", "day")
+    today = _daily_writer("wf_2", "Today", "day", date="")
+    also_today = _daily_writer("wf_3", "Also today", "note", date="  ")
+    yesterday = _daily_writer("wf_4", "Yesterday", "day", date="{{ trigger.before }}")
+
+    assert _warnings(health, today, also_today, yesterday) == []
+    assert _warnings(today, health, also_today) == [
+        "“Also today” also writes the property “weight” of today’s daily note."
+    ]
+
+
+def test_a_template_is_put_into_words_wherever_and_however_it_is_written() -> None:
+    spaced = _daily_writer("wf_1", "Spaced", "day", note="{{day.path}}")
+    wide = _daily_writer("wf_2", "Wide", "day", note="{{   day.path   }}")
+    # Another output of the step, and the path of another step, stay.
+    other = _daily_writer("wf_3", "Other", "day", note="{{ day.exists }}")
+    unknown = _daily_writer("wf_4", "Unknown", "day", note="{{ days.path }}")
+
+    assert _warnings(spaced, wide, other, unknown) == [
+        "“Wide” also writes the property “weight” of the daily note of "
+        "{{ trigger.date }}."
+    ]
+
+
+def test_a_path_that_was_typed_is_not_known_to_be_the_daily_note() -> None:
+    # A workflow from before Obsidian was asked names the note itself.
+    typed = _writer("wf_1", "Typed", "weight")
+    asked = _daily_writer("wf_2", "Asked", "day")
+
+    assert _warnings(typed, asked) == []
 
 
 def test_what_a_step_inside_a_loop_writes_counts_too() -> None:

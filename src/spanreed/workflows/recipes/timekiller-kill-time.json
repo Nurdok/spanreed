@@ -20,13 +20,13 @@
     {
       "id": "today",
       "block": "obsidian.create-daily-note",
-      "inputs": {}
+      "inputs": {"date": "{{ trigger.date }}"}
     },
     {
       "id": "mood",
       "block": "obsidian.get-note-property",
       "inputs": {
-        "note": "Daily/{{ trigger.date }}.md",
+        "note": "{{ today.path }}",
         "property": "mood"
       }
     },

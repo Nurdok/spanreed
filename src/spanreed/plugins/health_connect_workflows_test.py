@@ -25,7 +25,12 @@ from spanreed.plugins.health_connect import (
     convert_to_workflows,
 )
 from spanreed.plugins.workflows import WorkflowsPlugin
-from spanreed.test_utils import FakeRedis, async_return_true, mock_user_find_by_id
+from spanreed.test_utils import (
+    FakeRedis,
+    async_return_true,
+    daily_note_in_daily_folder,
+    mock_user_find_by_id,
+)
 from spanreed.workflows import migrations
 from spanreed.workflows import store as workflow_store
 from spanreed.workflows.blocks import BlockRegistry
@@ -121,8 +126,9 @@ def _world() -> Iterator[World]:
         patch("spanreed.workflows.engine._sleep", new=AsyncMock()),
     ):
         obsidian.for_user = AsyncMock(return_value=obsidian)
+        obsidian.create_daily_note = AsyncMock(side_effect=daily_note_in_daily_folder)
+        obsidian.find_daily_note = AsyncMock(side_effect=daily_note_in_daily_folder)
         for name in (
-            "safe_generate_today_note",
             "get_property",
             "set_value_of_property",
             "write_binary_file",
@@ -191,7 +197,7 @@ def test_a_payload_ends_up_in_the_daily_note_and_in_the_raw_files() -> None:
             (NOTE, "steps", 350),
             (NOTE, "resting-heart-rate", 58),
         ]
-        world.obsidian.safe_generate_today_note.assert_awaited()
+        world.obsidian.create_daily_note.assert_awaited()
         # One file for each record type, also for one that has no metric.
         assert world.files_written() == {
             "Health/raw/resting_heart_rate/2026-05-09.jsonl": _line(
@@ -358,7 +364,7 @@ def test_sync_health_data_says_nothing_about_a_day_that_was_up_to_date() -> None
         await world.engine.run_by_hand(daily.id, world.user)
 
         assert world.said() == [
-            "Health data → daily note: done. The run ended at step 3, Only continue if."
+            "Health data → daily note: done. The run ended at step 4, Only continue if."
         ]
 
     _run(scenario)
@@ -420,7 +426,7 @@ def test_the_conversion_gives_both_workflows_with_the_recipes_settings() -> None
             "Health raw data → vault files",
         )
         assert daily.enabled and raw.enabled
-        properties = daily.steps[1].inputs["properties"]
+        properties = daily.steps[2].inputs["properties"]
         assert list(properties) == [
             "steps",
             "resting-heart-rate",
@@ -455,7 +461,7 @@ def test_the_conversion_keeps_the_folder_and_the_properties_that_were_on() -> No
         daily, raw = await world.convert()
         await world.receive({"steps": [_steps_record("a", 8, 100)]})
 
-        properties = daily.steps[1].inputs["properties"]
+        properties = daily.steps[2].inputs["properties"]
         assert "steps" not in properties and "vo2-max" not in properties
         assert len(properties) == 8
         # Steps were turned off, so the payload writes no property.
@@ -478,7 +484,7 @@ def test_the_conversion_turns_the_daily_note_workflow_off_if_nothing_was_written
     async def scenario(world: World) -> None:
         every_property_off = {
             name.replace("-", "_"): False
-            for name in (await world.convert())[0].steps[1].inputs["properties"]
+            for name in (await world.convert())[0].steps[2].inputs["properties"]
         }
         # Start over, as a user who had turned every property off.
         for workflow in await world.engine.store.list_for_user(4):
@@ -490,7 +496,7 @@ def test_the_conversion_turns_the_daily_note_workflow_off_if_nothing_was_written
         assert not daily.enabled
         assert raw.enabled
         # Its properties are all there, for when it is turned on.
-        assert len(daily.steps[1].inputs["properties"]) == 10
+        assert len(daily.steps[2].inputs["properties"]) == 10
 
     _run(scenario)
 

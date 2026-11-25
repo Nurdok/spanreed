@@ -3,6 +3,7 @@
   "name": "Journaling Prompt",
   "description": "Offers a journaling prompt and adds your answer to today's daily note. “Kill time” runs it.",
   "requires": [
+    "obsidian",
     "timekiller"
   ],
   "command_hidden": true,
@@ -12,10 +13,17 @@
   },
   "steps": [
     {
+      "id": "day",
+      "block": "obsidian.find-daily-note",
+      "inputs": {
+        "date": "{{ trigger.date }}"
+      }
+    },
+    {
       "id": "journal",
       "block": "timekiller.journal",
       "inputs": {
-        "note": "Daily/{{ trigger.date }}.md",
+        "note": "{{ day.path }}",
         "prompts": [
           "What are you doing right now?",
           "What are you grateful for today?",
