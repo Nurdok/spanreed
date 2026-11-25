@@ -1252,6 +1252,13 @@ What differs from the plugin:
   fat-percentage=20.1 for 2026-05-09.`
 - **Yesterday is asked for too.** The plugin asked for today only, so a
   measurement that reached Withings after midnight was never written.
+- **A measurement belongs to the day it was taken on where the user is.**
+  A day starts at midnight in the timezone of the user's profile, for what
+  Withings is asked and for the date of each measurement. The plugin, and
+  the trigger at first, counted days by the server's clock: with the server
+  on UTC and the user three hours ahead, a weigh-in at 01:30 went into the
+  note of the day before. A user who has set no timezone gets the server's
+  days, as before.
 - **A day that could not be written is tried again.** While Obsidian does not
   answer, the day is not remembered as done, and the next poll finds it.
 - **An unchanged day does not run again.** The plugin read the note every
