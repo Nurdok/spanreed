@@ -22,9 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import html
 import json
-import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -32,6 +30,7 @@ from typing import Any
 
 from spanreed.interaction import engine
 from spanreed.interaction.engine import PendingPrompt
+from spanreed.interaction.web_markup import plain_text, render_html
 from spanreed.interaction.surface import (
     Content,
     PromptSpec,
@@ -55,80 +54,6 @@ PUSH_BODY_MAX = 240
 
 def inbox_key(user_id: int) -> str:
     return f"web-surface:{user_id}:inbox"
-
-
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
-
-# The tags Telegram's HTML parse mode accepts, which is what plugins write.
-_ALLOWED_TAGS = {
-    "b",
-    "strong",
-    "i",
-    "em",
-    "u",
-    "ins",
-    "s",
-    "strike",
-    "del",
-    "code",
-    "pre",
-    "tg-spoiler",
-}
-_TAG_RE = re.compile(r"&lt;(/?)([a-zA-Z-]+)((?:\s.*?)?)&gt;")
-# Matches the (already escaped) attribute text of an <a> tag; the captured
-# URL is still escaped, which is what goes back into the attribute.
-_HREF_RE = re.compile(
-    r"^\s+href=(?:&quot;|&#x27;)?(https?://(?:[^\s&]|&amp;)+?)(?:&quot;|&#x27;|\s|$)"
-)
-
-
-def render_html(content: Content) -> str:
-    """Render plugin content as safe HTML for the browser.
-
-    Everything is escaped first; then the Telegram-HTML tags are restored
-    (no attributes, except an http(s) ``href`` on ``<a>``). Text that was
-    not sent as HTML stays fully escaped. Newlines are kept by the page's
-    ``white-space: pre-wrap``.
-    """
-    escaped = html.escape(content.text)
-    if not content.parse_html:
-        return escaped
-
-    def restore(match: re.Match[str]) -> str:
-        closing, tag, attrs = match.group(1), match.group(2).lower(), match.group(3)
-        if tag in _ALLOWED_TAGS:
-            if tag == "tg-spoiler":
-                return "</span>" if closing else '<span class="spoiler">'
-            return f"<{closing}{tag}>"
-        if tag == "a":
-            if closing:
-                return "</a>"
-            href = _HREF_RE.match(attrs or "")
-            if href:
-                return (
-                    f'<a href="{href.group(1)}" target="_blank"'
-                    ' rel="noopener noreferrer">'
-                )
-            return "<a>"
-        return match.group(0)
-
-    return _TAG_RE.sub(restore, escaped)
-
-
-_ANY_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def plain_text(content: Content) -> str:
-    """Return plugin content as one line of plain text, for a notification."""
-    text = content.text
-    if content.parse_html:
-        text = html.unescape(_ANY_TAG_RE.sub("", text))
-    text = " ".join(text.split())
-    if len(text) > PUSH_BODY_MAX:
-        text = text[: PUSH_BODY_MAX - 1] + "…"
-    return text
 
 
 def choice_rows(
@@ -262,7 +187,7 @@ class WebSurface(UserInteractionSurface):
         payload = {
             "kind": kind,
             "title": "Spanreed asks" if kind == "prompt" else "Spanreed",
-            "body": plain_text(content),
+            "body": plain_text(content, PUSH_BODY_MAX),
             "tag": tag,
         }
         task = asyncio.create_task(push.send(user.id, payload))

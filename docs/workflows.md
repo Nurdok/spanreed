@@ -231,8 +231,12 @@ More arrive with each plugin whose behavior becomes a recipe.
 "Send message" goes to where the user is now. "Notify me" leaves a
 notification on every surface the user has: one that cannot show it now
 keeps it until it can. It is for what must not be missed and need not be
-seen at once. With **Markdown** its text is read as Markdown, so that what
-is between two lines of ``` is shown as code.
+seen at once. With **Markdown** its text is read as Telegram's MarkdownV2,
+so that what is between two lines of ``` is shown as code: in Telegram, and
+in the web UI, where a block that names its language (```` ```python ````) has
+its parts coloured (see [web-ui.md](web-ui.md#how-a-message-is-shown)).
+MarkdownV2 is strict: outside code, a character such as `.` or `-` that is
+meant as itself has a backslash before it, or Telegram refuses the message.
 
 ### Asking
 

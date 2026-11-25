@@ -39,6 +39,41 @@ The routes are a Quart blueprint (`spanreed.web.routes`) registered on the
 existing Web UI plugin app on `127.0.0.1:5000`, which nginx already proxies
 for the OAuth callbacks.
 
+## How a message is shown
+
+A message is written in one of three ways, as it is for Telegram, and the
+page shows it as Telegram would (`spanreed.interaction.web_markup`):
+
+- **HTML**: the tags Telegram takes, `<b>`, `<i>`, `<u>`, `<s>`, `<code>`,
+  `<pre>`, `<blockquote>`, `<tg-spoiler>` and `<a href>`, and the entities
+  the text was written with (`&amp;`).
+- **Markdown**: Telegram's MarkdownV2. `*bold*`, `_italic_`, `__underline__`,
+  `~strikethrough~`, `||spoiler||`, `` `code` ``, `[a link](https://…)`, a
+  quotation on lines that start with `>`, and a backslash before a character
+  that is meant as itself.
+- **Plain text**, shown as it is written.
+
+Everything is escaped on the server, and only what is known is put back as
+a tag, so a message cannot bring markup of its own to the page.
+
+![Messages with code in them](images/web-ui-code-desktop.png)
+
+**A block of code** is drawn as a block: between two lines of ```` ``` ```` in
+Markdown, or in `<pre>` in HTML. If it names its language, on the line of
+the first fence (```` ```python ````) or as
+`<pre><code class="language-python">`, the name is shown above it and its
+parts are coloured. [Pygments](https://pygments.org) does that on the
+server, so the page loads no script for it, and knows the languages that
+Pygments knows. A block that says it is Python and holds the report of an
+error, a traceback, is read as one. A block with no language, or one that
+Pygments does not know, is shown without colours. So is code longer than
+20,000 characters.
+
+<img src="images/web-ui-code-phone.png" alt="The same on a phone, in the dark" width="390">
+
+A notification on the phone's lock screen is one line of plain text: the
+same message with its marks and fences taken out.
+
 ## An app on your phone, with notifications
 
 The web UI can be installed as an app and can send push notifications, so

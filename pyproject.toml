@@ -23,6 +23,7 @@ google-auth-oauthlib = "*"
 google-api-python-client = "*"
 audible = {version = "^0.10.0", python = ">=3.12,<3.13"}
 pywebpush = "^2.0"
+pygments = "^2.21.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "*"
@@ -35,6 +36,7 @@ types-PyYAML = "*"
 types-redis = "*"
 types-python-dateutil = "*"
 types-requests = "*"
+types-pygments = "^2.21.0.20261122"
 
 [tool.poetry.group.rpi.dependencies]
 smbus2 = "*"

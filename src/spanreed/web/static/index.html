@@ -12,7 +12,7 @@
   :root {
     --bg: #f6f5f2; --card: #ffffff; --fg: #1d1d1b; --muted: #6b6a66; --line: #e2e0da;
     --accent: #3b5bdb; --accent-fg: #fff; --bubble: #ffffff; --mine: #dbe4ff; --notice: #fff4e6;
-    --err: #c92a2a; --ok: #2b8a3e;
+    --err: #c92a2a; --ok: #2b8a3e; --code-bg: rgba(0, 0, 0, .055);
     --trig: #a8590a; --trig-soft: #fdeed8; --act: #3b5bdb; --act-soft: #e4e9fd;
     --ask: #0b7a5c; --ask-soft: #dcf3ea; --logic: #6a4bb5; --logic-soft: #ece6fa;
   }
@@ -20,7 +20,7 @@
     :root {
       --bg: #161615; --card: #1f1f1e; --fg: #ecebe7; --muted: #9a9993; --line: #2f2f2d;
       --accent: #7b93f0; --accent-fg: #10121a; --bubble: #262624; --mine: #2b3561; --notice: #3a2e1d;
-      --err: #ff8787; --ok: #69db7c;
+      --err: #ff8787; --ok: #69db7c; --code-bg: rgba(255, 255, 255, .07);
       --trig: #f0a94e; --trig-soft: #3a2a14; --act: #8fa4f5; --act-soft: #232b4d;
       --ask: #5fd0aa; --ask-soft: #15332a; --logic: #b6a0f0; --logic-soft: #2b2444;
     }
@@ -52,7 +52,27 @@
             border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; align-self: flex-start; }
   .bubble.mine { background: var(--mine); border-color: transparent; align-self: flex-end; }
   .bubble.notice { background: var(--notice); border-color: transparent; }
-  .bubble pre { white-space: pre-wrap; margin: 4px 0; }
+  /* Code: inside a line, and as a block. A block that names its language
+     shows the name, and has its parts coloured (the classes are Pygments'). */
+  .bubble code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em;
+                 background: var(--code-bg); border-radius: 4px; padding: 1px 4px; }
+  .bubble pre { white-space: pre-wrap; margin: 6px 0; padding: 8px 10px; border-radius: 8px;
+                background: var(--code-bg); font-size: 13px; line-height: 1.45; tab-size: 4; }
+  .bubble pre:first-child { margin-top: 2px; }
+  .bubble pre:last-child { margin-bottom: 2px; }
+  .bubble pre code { background: none; padding: 0; font-size: inherit; }
+  pre.code[data-lang]::before { content: attr(data-lang); display: block; margin-bottom: 4px; color: var(--muted);
+                                font: 600 11px/1.2 system-ui, sans-serif; letter-spacing: .04em; text-transform: uppercase; }
+  pre.code :is(.c, .c1, .cm, .ch, .cs, .cpf, .sd, .gp, .go) { color: var(--muted); font-style: italic; }
+  pre.code :is(.k, .kd, .kn, .kp, .kr, .kt, .ow, .cp) { color: var(--logic); }
+  pre.code :is(.kc, .nb, .bp, .no, .nv, .vc, .vg, .vi) { color: var(--act); }
+  pre.code :is(.s, .s1, .s2, .sa, .sb, .sc, .dl, .sh, .si, .sx, .sr, .ss, .se, .gi) { color: var(--ask); }
+  pre.code :is(.m, .mi, .mf, .mh, .mo, .mb, .il, .l, .ld) { color: var(--trig); }
+  pre.code :is(.nf, .fm, .nc, .nd, .nt, .na, .nl, .nn) { color: var(--act); }
+  pre.code :is(.ne, .gr, .gt, .gd, .err) { color: var(--err); }
+  pre.code :is(.gh, .gu, .gs, .nc, .ne) { font-weight: 600; }
+  pre.code .ge { font-style: italic; }
+  .bubble blockquote { margin: 4px 0; padding: 2px 0 2px 10px; border-left: 3px solid var(--line); color: var(--muted); }
   .bubble a { color: var(--accent); }
   .spoiler { background: var(--muted); color: transparent; border-radius: 3px; }
   .spoiler:hover { color: inherit; background: none; }
