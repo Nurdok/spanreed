@@ -2,12 +2,13 @@ import asyncio
 import datetime
 from unittest.mock import AsyncMock, patch
 
-from spanreed.apis.google_books import Book
+from spanreed.apis.google_books import Book, GoogleBooksPlugin
 from spanreed.apis.google_books_blocks import (
     SearchBooks,
     SearchBooksInput,
     google_books_blocks,
 )
+from spanreed.plugin import Plugin
 from spanreed.test_utils import mock_user_find_by_id
 from spanreed.workflows.asking import option_text
 from spanreed.workflows.blocks import BlockRegistry, RunInfo, StepContext
@@ -23,7 +24,21 @@ def test_the_block_is_well_formed() -> None:
     registry = BlockRegistry()
     for block in google_books_blocks():
         registry.register(block, fake_plugin())
-    assert [block.id for block in registry.all()] == ["lit-notes.search-books"]
+    assert [block.id for block in registry.all()] == ["google-books.search-books"]
+
+
+def test_the_plugin_publishes_the_search_and_has_no_settings() -> None:
+    Plugin.reset_registry()
+    plugin = GoogleBooksPlugin()
+
+    assert plugin.name() == "Google Books"
+    assert plugin.canonical_name() == "google-books"
+    assert plugin.has_user_config() is False
+    assert [block.id for block in plugin.blocks()] == ["google-books.search-books"]
+    # Its blocks carry its name, as those of every plugin do.
+    assert all(
+        block.id.startswith(plugin.canonical_name() + ".") for block in plugin.blocks()
+    )
 
 
 def test_search_books_returns_what_google_books_finds() -> None:

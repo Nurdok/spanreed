@@ -1,8 +1,8 @@
-"""Lit Notes from end to end: the command, the conversation, the note.
+"""What Lit Notes did, from end to end: the command, the conversation, the note.
 
-The plugin, the engine, the asking blocks and the Obsidian block are the
-real ones. Redis is in memory, and Google Books, Obsidian and the user are
-mocks. The conversations are the ones the plugin was run on before it
+The engine, the asking blocks, the search block and the Obsidian block are
+the real ones. Redis is in memory, and Google Books, Obsidian and the user
+are mocks. The conversations are the ones the plugin was run on before it
 became a workflow (see ``litnotes_test_data``).
 """
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from spanreed.apis.google_books import Book
+from spanreed.apis.google_books import Book, GoogleBooksPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
 from spanreed.interaction import UserInteractionPriority, commands
 from spanreed.interaction import engine as turns
@@ -23,7 +23,6 @@ from spanreed.plugin import Plugin
 from spanreed.plugins.litnotes import (
     ADD_BOOK_NOTE_RECIPE,
     OLD_NAMES,
-    LitNotesPlugin,
     convert_to_workflows,
     note_inputs,
     template_problem,
@@ -56,16 +55,6 @@ FIXED_LABELS = {
     "Vlissides (1994)": "Design Patterns by Erich Gamma, Richard Helm, Ralph "
     "Johnson and John Vlissides (1994)",
 }
-
-
-def test_the_plugin_publishes_the_search_and_has_no_settings() -> None:
-    Plugin.reset_registry()
-    plugin = LitNotesPlugin()
-
-    assert plugin.name() == "Lit Notes"
-    assert plugin.canonical_name() == "lit-notes"
-    assert plugin.has_user_config() is False
-    assert [block.id for block in plugin.blocks()] == ["lit-notes.search-books"]
 
 
 @dataclass
@@ -126,12 +115,13 @@ def _world() -> Iterator[World]:
     turns.reset_state_for_tests()
     Plugin.reset_registry()
     registry = BlockRegistry.from_plugins(
-        [WorkflowsPlugin(), ObsidianPlugin(), LitNotesPlugin()]
+        [WorkflowsPlugin(), ObsidianPlugin(), GoogleBooksPlugin()]
     )
     find_user = AsyncMock(side_effect=mock_user_find_by_id)
     search = AsyncMock()
     with (
         patch("spanreed.plugin.redis_api", new=fake),
+        patch("spanreed.plugins.litnotes.redis_api", new=fake),
         patch("spanreed.workflows.store.redis_api", new=fake),
         patch("spanreed.workflows.migrations.redis_api", new=fake),
         patch("spanreed.workflows.engine.User.find_by_id", new=find_user),
@@ -337,6 +327,54 @@ def test_the_recipe_as_it_ships_writes_a_note() -> None:
 
 
 # -- from the plugin to the workflow -------------------------------------------
+
+
+def test_a_workflow_from_before_the_search_moved_to_google_books_runs_as_before() -> (
+    None
+):
+    async def scenario(world: World) -> None:
+        # As a start left it while Lit Notes published the search: the user
+        # is registered to that plugin, and the workflow names its block.
+        workflow = all_recipes()[ADD_BOOK_NOTE_RECIPE].workflow_for(4)
+        (search,) = [s for s in workflow.steps if s.id == "search"]
+        search.block = "lit-notes.search-books"
+        await world.engine.store.save(workflow)
+        await world.redis.sadd("config:plugin:name=lit-notes:users", 4)
+        await world.redis.sadd("user:4:plugins", "lit-notes", "obsidian")
+        assert world.engine.problems(workflow) == [
+            "Step 2: there is no block “lit-notes.search-books”."
+        ]
+
+        # What a start does now.
+        await migrations.rename_plugins(world.engine, [4])
+        await world.engine.start([4])
+
+        (stored,) = await world.engine.store.list_for_user(4)
+        assert stored.id == workflow.id
+        assert world.engine.problems(stored) == []
+        assert commands.get_command(f"workflow.{stored.id}") is not None
+        assert await world.redis.smembers("user:4:plugins") == {
+            "google-books",
+            "obsidian",
+        }
+        assert world.notified == [
+            "The plugin “Lit Notes” is called “Google Books” now. Searching "
+            "Google Books is all it did since “Add book note” became a "
+            "workflow. Your workflows go on as they were, and “Manage "
+            "plugins” has it under the new name."
+        ]
+
+        # And the command does what it did: it finds the books, asks which,
+        # and writes the note.
+        name = "many, show more, with recommendations and free text"
+        world.books = sample_books(BOOKS_FOUND[name])
+        world.answers = _answers(OLD_PLUGIN[name])
+        run = await world.run_command(stored)
+        assert run["status"] == "ok"
+        assert world.answers == []
+        assert [line[0] for line in world.lines].count("append") == 1
+        searched = next(step for step in run["steps"] if step["id"] == "search")
+        assert searched["block"] == "google-books.search-books"
 
 
 def test_the_conversion_keeps_the_folder_and_the_templates() -> None:

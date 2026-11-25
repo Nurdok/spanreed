@@ -2,7 +2,7 @@
   "id": "lit-notes-add-book-note",
   "name": "Add book note",
   "description": "Asks which book, finds it on Google Books, and writes a note for it.",
-  "requires": ["lit-notes", "obsidian"],
+  "requires": ["google-books", "obsidian"],
   "command_name": "Add book note",
   "trigger": {
     "block": "core.command",
@@ -16,7 +16,7 @@
     },
     {
       "id": "search",
-      "block": "lit-notes.search-books",
+      "block": "google-books.search-books",
       "inputs": {"query": "{{ query.answer }}"}
     },
     {

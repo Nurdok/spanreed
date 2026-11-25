@@ -110,11 +110,22 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
         passing_on.set()
         await asyncio.Event().wait()
 
+    async def renamed(engine: Any, user_ids: list[int]) -> None:
+        # The engine starts the workflows as they are stored, so their
+        # blocks have to have the ids of now by then.
+        started = bool(engine._sources)
+        order.append(
+            "renamed after the start" if started else "renamed before the start"
+        )
+
     with fake_storage(), NOT_DUE, patch.object(
         WorkflowsPlugin, "_register_existing_users", AsyncMock()
     ) as register, patch.object(
         WorkflowsPlugin, "get_users", AsyncMock(return_value=[user])
     ), patch(
+        "spanreed.plugins.workflows.migrations.rename_plugins",
+        new=AsyncMock(side_effect=renamed),
+    ) as rename, patch(
         "spanreed.plugins.workflows.migrations.retire_plugins", new=AsyncMock()
     ) as retire, patch(
         "spanreed.plugins.workflows.migrations.convert_plugins",
@@ -133,8 +144,15 @@ def test_run_starts_the_engine_with_the_stored_workflows(mock_bot: AsyncMock) ->
     convert.assert_awaited_once()
     # After the plugins were moved, so that what came from one runs too.
     say_started.assert_awaited_once_with([user])
-    assert order == ["converted", "mended", "said it started", "passes errors on"]
+    assert order == [
+        "renamed before the start",
+        "converted",
+        "mended",
+        "said it started",
+        "passes errors on",
+    ]
     assert [call.args[1] for call in mend.await_args_list] == [[4]]
+    assert [call.args[1] for call in rename.await_args_list] == [[4]]
 
     register.assert_awaited_once()
     mock_bot.register_command.assert_awaited_once()

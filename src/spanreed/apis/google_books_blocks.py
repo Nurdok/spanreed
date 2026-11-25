@@ -22,9 +22,9 @@ class SearchBooksOutput:
 
     # Each has a ``label``, a line to choose it by, so the list can be the
     # options of "Ask me to choose". A book also has what a note template
-    # of Lit Notes could use: ``short_title``, ``full_title``,
-    # ``formatted_authors``, ``formatted_authors_dataview``,
-    # ``publication_year`` and ``cover_image_url``.
+    # can use: ``short_title``, ``full_title``, ``formatted_authors``,
+    # ``formatted_authors_dataview``, ``publication_year`` and
+    # ``cover_image_url``.
     books: list[Book]
     count: int
 
@@ -32,7 +32,7 @@ class SearchBooksOutput:
 class SearchBooks(Action[SearchBooksInput, SearchBooksOutput]):
     """Search Google Books."""
 
-    id = "lit-notes.search-books"
+    id = "google-books.search-books"
     title = "Search books"
 
     async def run(
@@ -44,5 +44,5 @@ class SearchBooks(Action[SearchBooksInput, SearchBooksOutput]):
 
 
 def google_books_blocks() -> list[Block]:
-    """Return the blocks that the Lit Notes plugin publishes."""
+    """Return the blocks that the Google Books plugin publishes."""
     return [SearchBooks()]

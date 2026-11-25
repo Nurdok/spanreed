@@ -1,31 +1,36 @@
-"""Publish the book search, for workflows that write a note for a book.
+"""Move the users of Lit Notes to the workflow that does what it did.
 
-The recipe "Add book note" does what this plugin used to do itself: it asks
-which book, lets the user choose among what Google Books finds, asks who
-recommended it and for free text, and writes the note. ``convert_to_workflows``
-gives it to a user who had the plugin before, with the folder and the two
-note templates they had.
+Lit Notes is gone. The recipe "Add book note" does what the plugin did
+itself: it asks which book, lets the user choose among what Google Books
+finds, asks who recommended it and for free text, and writes the note.
+``convert_to_workflows`` gives it to a user who had the plugin, with the
+folder and the two note templates they had.
+
+The search for books, which was what was left of the plugin, is a block of
+the Google Books plugin now (see ``spanreed.apis.google_books`` and, for
+the move of the users, ``spanreed.workflows.migrations``).
 """
 
 import datetime
+import json
 import logging
 
 from spanreed.apis.google_books import Book
-from spanreed.apis.google_books_blocks import google_books_blocks
 from spanreed.apis.obsidian import note_path
 from spanreed.interaction import UserInteractionApi
-from spanreed.plugin import Plugin
+from spanreed.storage import redis_api
 from spanreed.user import User
 from spanreed.workflows import expressions
 from spanreed.workflows.asking import AskChoiceOutput, AskListOutput, AskTextOutput
-from spanreed.workflows.blocks import Block
 from spanreed.workflows.engine import WorkflowEngine
 from spanreed.workflows.model import Workflow
 from spanreed.workflows.recipes import all_recipes
 
 _logger = logging.getLogger(__name__)
 
-# The recipe that does what this plugin used to do itself.
+# What the plugin was registered as, and kept its settings under.
+CANONICAL_NAME = "lit-notes"
+# The recipe that does what the plugin used to do itself.
 ADD_BOOK_NOTE_RECIPE = "lit-notes-add-book-note"
 # The step of the recipe that writes the note.
 NOTE_STEP = "note"
@@ -39,20 +44,6 @@ OLD_NAMES = (
     "{% set recommended_by = recommended_by.answers %}"
     "{% set free_text = free_text.answer %}"
 )
-
-
-class LitNotesPlugin(Plugin):
-    @classmethod
-    def name(cls) -> str:
-        return "Lit Notes"
-
-    @classmethod
-    def has_user_config(cls) -> bool:
-        return False
-
-    def blocks(self) -> list[Block]:
-        """Return the book search for workflows."""
-        return google_books_blocks()
 
 
 # -- from a plugin that writes the note to a workflow that does ----------------
@@ -99,6 +90,22 @@ def template_problem(inputs: dict[str, str]) -> str | None:
     return None
 
 
+async def _saved_settings(user: User) -> dict | None:
+    """Return the settings the plugin had saved for a user, if it had any.
+
+    The plugin is gone, so this reads the key that ``Plugin`` kept them
+    under.
+    """
+    raw = await redis_api.get(f"config:plugin:name={CANONICAL_NAME}:user_id={user.id}")
+    if raw is None:
+        return None
+    try:
+        saved = json.loads(raw)
+    except ValueError:
+        return None
+    return saved if isinstance(saved, dict) else None
+
+
 async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workflow]:
     """Give a user of the old plugin the workflow that does what it did.
 
@@ -109,7 +116,7 @@ async def convert_to_workflows(engine: WorkflowEngine, user: User) -> list[Workf
     plugin left empty. The workflow is stored all the same, and the user is
     told what to change.
     """
-    saved = await LitNotesPlugin.get_saved_config_data(user)
+    saved = await _saved_settings(user)
     if saved is None:
         # Registered, but never set up: the command had nothing to write with.
         return []

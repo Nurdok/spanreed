@@ -219,7 +219,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `gmail.new-email` New email | trigger | Gmail Monitor |
 | `gmail.get-attachments` Get attachments | action | Gmail Monitor |
 | `gmail.find-links` Find links | action | Gmail Monitor |
-| `lit-notes.search-books` Search books | action | Lit Notes |
+| `google-books.search-books` Search books | action | Google Books |
 | `audible.get-library` Get library | action | Audible |
 | `audible.link-note` Link a note to a book | action | Audible |
 | `timekiller.journal` Journaling prompt | ask | Timekiller |
@@ -935,6 +935,7 @@ problem: both run.
 | `workflows:workflow:{id}:places` | Hash of how far each run that is not over got, by the id of the run: see [A run goes on after a restart](#a-run-goes-on-after-a-restart). Dropped 30 days after the last run. |
 | `workflows:converted:{plugin}` | Set of the users whose use of a plugin was converted to recipes |
 | `workflows:to-convert:{plugin}` | JSON list of the users the plugin had when it became recipes, and who are not converted yet |
+| `workflows:renamed:{plugin}` | Set once the blocks of a plugin that was renamed have their new ids in every stored workflow |
 
 ## Plugins that became recipes
 
@@ -1197,7 +1198,7 @@ behavior: the setup tells them which recipes to add.
 | Withings | Holds the login, and publishes the trigger that asks Withings | Withings → daily note |
 | Hevy | Holds the API key, and publishes the trigger that asks Hevy | Hevy workouts → set notes |
 | Gmail Monitor | Holds the Gmail login, and publishes the Gmail blocks | None: a workflow for each rule the user had |
-| Lit Notes | Publishes the search of Google Books | Add book note |
+| Lit Notes | Nothing: Google Books took its place and publishes the search (see [Renamed](#renamed-another-plugin-took-its-place)) | Add book note |
 | Timekiller | Publishes three conversations as blocks | Kill time · Journaling Prompt · Mood · Books · Scan Processing |
 
 #### Health Connect
@@ -1370,8 +1371,11 @@ What differs from the plugin:
 #### Lit Notes
 
 Lit Notes had one command, "Add book note": a conversation that ends with a
-note for a book. It is the recipe "Add book note" now, and the plugin
-publishes the search.
+note for a book. It is the recipe "Add book note" now.
+
+What was left of the plugin was the search for books, so it has the name of
+what it is now: Google Books (see
+[Renamed](#renamed-another-plugin-took-its-place)).
 
 ![Add book note as a workflow](images/web-ui-workflow-ask-desktop.png)
 
@@ -1480,3 +1484,36 @@ part off takes it out of the picking.
 `spanreed/plugins/timekiller_test_data.py` holds 31 cases and what the plugin
 did in each, taken by running it before it was changed. The tests run the
 workflows on the same cases and compare.
+
+### Renamed: another plugin took its place
+
+A plugin is the name on the chips of a workflow, and what the user registers
+to. When what is left of a plugin is something else than its name says, the
+name follows. The old plugin is deleted, and the new one publishes its
+blocks under ids that start with the new name.
+
+| Was | Is now | Block |
+| --- | --- | --- |
+| Lit Notes | Google Books | `lit-notes.search-books` is `google-books.search-books` |
+
+`rename_plugins` does this before the engine starts, because the engine
+starts the workflows as they are stored:
+
+- **The users are registered to the new plugin**, and no longer to the old
+  one. Each is told once that the name changed.
+- **Every stored workflow names the blocks by their new ids**: the trigger,
+  the steps, and the steps inside them. Nothing else of a workflow changes.
+  This is done once (`workflows:renamed:{plugin}`).
+- **A run that the restart cut short goes on.** Its place is kept for the
+  workflow as it was, so the place is moved to the workflow as it is now
+  (see [A run goes on after a restart](#a-run-goes-on-after-a-restart)).
+- **A file from before comes in.** A workflow that was exported while the old
+  plugin published the block names it by the old id. Importing gives the
+  step the id of now.
+- **The history is left as it was written**: a run from before shows the
+  step by its title, and keeps the id that the block had then.
+
+The table of what was renamed is `RENAMED_PLUGINS` in
+`spanreed/workflows/migrations.py`. The id of the recipe "Add book note"
+is still `lit-notes-add-book-note`: a workflow remembers the recipe it came
+from by that id.

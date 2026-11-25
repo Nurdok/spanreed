@@ -11,7 +11,6 @@ from spanreed.apis.telegram_bot import TelegramBotPlugin
 from spanreed.plugins.todoist import TodoistPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
 
-from spanreed.plugins.litnotes import LitNotesPlugin
 from spanreed.plugins.obsidian_surface import ObsidianSurfacePlugin
 from spanreed.plugins.plugin_manager import PluginManagerPlugin
 from spanreed.plugins.user_profile import UserProfilePlugin
@@ -23,6 +22,7 @@ from spanreed.plugins.gmail_monitor import GmailMonitorPlugin
 from spanreed.plugins.hevy import HevyPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.apis.audible import AudiblePlugin
+from spanreed.apis.google_books import GoogleBooksPlugin
 
 
 def setup_logger() -> None:
@@ -53,7 +53,7 @@ def load_plugins() -> List[Plugin]:
         ObsidianSurfacePlugin(),
         ObsidianPlugin(),
         TodoistPlugin(),
-        LitNotesPlugin(),
+        GoogleBooksPlugin(),
         WebUiPlugin(),
         TimekillerPlugin(),
         WithingsPlugin(),

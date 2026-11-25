@@ -20,6 +20,7 @@ from typing import Any
 
 from spanreed.workflows import model
 from spanreed.workflows.blocks import BlockRegistry
+from spanreed.workflows.migrations import current_block
 from spanreed.workflows.model import Step, TriggerSpec, Workflow, new_workflow_id
 
 # What a file may hold at most. A workflow of this size is no workflow.
@@ -106,7 +107,8 @@ def _step(data: Any, count: list[int]) -> Step:
         if not isinstance(inside, list):
             raise ValueError(f"The steps inside “{step_id}” are not a list.")
         lanes[lane] = [_step(item, count) for item in inside]
-    return Step(id=step_id, block=block, inputs=inputs, **lanes)
+    # A file from before a plugin was renamed has the ids of that time.
+    return Step(id=step_id, block=current_block(block), inputs=inputs, **lanes)
 
 
 def imported(
@@ -142,7 +144,7 @@ def imported(
             id=new_workflow_id(),
             user_id=user_id,
             name=_free_name(name.strip()[:MAX_NAME], taken),
-            trigger=TriggerSpec(block=trigger["block"], params=params),
+            trigger=TriggerSpec(block=current_block(trigger["block"]), params=params),
             steps=[_step(step, count) for step in steps],
             enabled=False,
             command_name=command_name or None,
