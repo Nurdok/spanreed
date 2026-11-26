@@ -328,6 +328,19 @@ its command can be changed there too.
   out. In a loop and on a phone the arrows point up and down. A step moves
   within its list: to put it into a loop or take it out, remove it and add it
   again.
+- **Change trigger**, on the card marked T, lists the triggers and puts the
+  one you pick in place of the trigger, with its settings as they start. The
+  steps stay as they are: a step that uses a value the new trigger does not
+  give, such as `{{ trigger.subject }}`, has to be changed by hand, and the
+  run says so if it is not. The card says what it was changed from until
+  you save. Saving drops what the old trigger kept track of, so the new one
+  starts fresh; the history and what the steps remember stay. A workflow
+  that has no trigger you can start by hand loses its command.
+
+  ![The list of triggers](images/web-ui-workflow-change-trigger-desktop.png)
+
+  <img src="images/web-ui-workflow-change-trigger-changed-phone.png" alt="A trigger that was changed and not saved yet, on a phone" width="390">
+
 - **Save** stores the workflow, and it runs with the new values from then
   on. If a value does not fit, or the workflow could not run, nothing is
   stored and the page says what has to change: a step that was moved before

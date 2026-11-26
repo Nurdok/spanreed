@@ -279,6 +279,7 @@
   .wc-tools button:hover:not(:disabled) { border-color: var(--accent); }
   .wc-tools button:disabled { opacity: .35; cursor: default; }
   .wc-tools .rm { margin-left: auto; }
+  .wc-note { padding: 0 10px 8px; font-size: 12px; color: var(--k); }
   .wc-tools .rm:hover { border-color: var(--err); color: var(--err); }
   /* Earlier and later are left and right in the lane, up and down in a column. */
   .wc-tools .v, .inner .wc-tools .h { display: none; }
@@ -1321,6 +1322,7 @@ function renderCard(card, badge, sources, edit) {
   head.append(glyph(card.app, card.kind), title, el("span", "num", badge));
   c.append(head, el("div", "wc-kind", card.kind));
   if (edit && edit.list) c.append(stepTools(card, edit));
+  if (edit && card.id === "trigger") c.append(triggerTools());
   if (card.fields.length) {
     const sec = el("div", "wc-sec");
     for (const field of card.fields) {
@@ -1514,6 +1516,32 @@ function stepTools(card, edit) {
     tool("", "Move later", [["h", "→"], ["v", "↓"]], i < list.length - 1, () => swap(i, i + 1)),
     tool("rm", "Remove", [["", "Remove"]], true, () => list.splice(i, 1)));
   return tools;
+}
+
+// The trigger cannot be moved or removed, but it can be changed for another.
+function triggerTools() {
+  const tools = el("div", "wc-tools"), b = el("button", "", "Change trigger");
+  b.type = "button";
+  b.onclick = () => openSheet("Change the trigger", (sheet, close) => {
+    sheet.append(el("p", "foot", "The steps stay. A step that uses a value of the old trigger has to be changed " +
+                                 "by hand. Saving drops what the old trigger kept track of, so the new one starts fresh."));
+    for (const block of catalog.blocks.filter((entry) => entry.kind === "trigger")) {
+      const current = block.block === draft.trigger.block;
+      sheet.append(option(block.title, block.app + " · " + block.description,
+                          current ? "This is the trigger now" : block.connected ? "" : setUpFirst([block.app]), () => {
+        close();
+        const card = structuredClone(block.card);
+        draft.trigger = { block: block.block, params: draftInputs(card), card };
+        draft.changed = true;
+        redrawEditor();
+      }, !current));
+    }
+  });
+  tools.append(b);
+  if (draft.trigger.block === draft.shown.trigger.block) return tools;
+  const box = document.createDocumentFragment();
+  box.append(tools, el("div", "wc-note", "Changed from “" + draft.shown.trigger.title + "”. Not saved yet."));
+  return box;
 }
 
 // The blocks a step can be made of, by plugin, with a box to search them.

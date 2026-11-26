@@ -906,7 +906,8 @@ async def save_workflow(workflow_id: str) -> Any:
 
     The body holds the name, the trigger and the steps, each input as the
     text of its form control. Nothing is stored unless the engine can run
-    the result: the answer then lists what has to be changed.
+    the result: the answer then lists what has to be changed. A workflow
+    that got another trigger loses what the old trigger kept.
     """
     found = await _own_workflow(workflow_id)
     if not isinstance(found[1], Workflow):
@@ -918,16 +919,17 @@ async def save_workflow(workflow_id: str) -> Any:
     except workflow_editing.FormError as e:
         return jsonify({"error": "This cannot be saved.", "problems": e.problems}), 400
     problems = wf_engine.problems(edited)
-    if edited.trigger.block != workflow.trigger.block:
-        # What the old trigger remembers would not fit the new one.
-        problems.insert(
-            0,
-            "The trigger of a workflow cannot be changed. Make a new workflow "
-            "with the other trigger.",
-        )
     if problems:
         return jsonify({"error": "This cannot be saved.", "problems": problems}), 400
-    await wf_engine.save(edited)
+    if edited.trigger.block != workflow.trigger.block:
+        # What the old trigger remembers would not fit the new one.
+        await wf_engine.change_trigger(edited)
+        _logger.info(
+            f"User {edited.user_id} changed the trigger of workflow {edited.id}"
+            f" from {workflow.trigger.block} to {edited.trigger.block}."
+        )
+    else:
+        await wf_engine.save(edited)
     # Which steps there are, not what they hold: the values stay out of
     # the log.
     _logger.info(
@@ -963,7 +965,8 @@ async def test_workflow(workflow_id: str) -> Any:
         return jsonify({"error": "This cannot run.", "problems": e.problems}), 400
     problems = wf_engine.problems(edited)
     if edited.trigger.block != workflow.trigger.block:
-        problems.insert(0, "The trigger of a workflow cannot be changed.")
+        # There is no event of the new trigger to test with yet.
+        problems.insert(0, "Save the workflow with its new trigger before testing it.")
     if problems:
         return jsonify({"error": "This cannot run.", "problems": problems}), 400
     if wf_engine.asks(edited):

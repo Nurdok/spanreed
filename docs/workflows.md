@@ -1109,8 +1109,12 @@ so is a recipe that needs such a plugin.
 - **A new workflow** is made with `POST /app/api/workflows`, from a recipe or
   with only a trigger. One that starts with only a trigger is off, so that
   its trigger does not start to count things as done before there are steps.
-- **The trigger of a workflow cannot be changed.** What a trigger remembers
-  (a cursor, the things it ran for) belongs to that trigger.
+- **A workflow can get another trigger** ("Change trigger" on the trigger's
+  card). What the old trigger kept belongs to that trigger, so saving drops
+  it: what it remembers (a cursor, the things it ran for), the events that
+  still waited for a run, and the last event. The steps, the history and
+  what the steps remember stay. A workflow whose trigger was changed cannot
+  be tested before it is saved: there is no event of the new trigger yet.
 - **Deleting** a workflow (`DELETE /app/api/workflows/<id>`) deletes its
   history and what its trigger remembers.
 
