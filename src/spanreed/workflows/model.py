@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from spanreed.workflows import expressions
-from spanreed.workflows.blocks import Action, BlockRegistry, Trigger
+from spanreed.workflows.blocks import Action, BlockRegistry, Trigger, UntilLoop
 from spanreed.workflows.values import from_data
 
 # Names that step inputs can refer to besides the ids of earlier steps.
@@ -169,8 +169,19 @@ def _step_problems(
             where = f"{where}, {block.title}"
             found.extend(f"{where}: {p}" for p in _input_problems(block, step))
 
+        early = dict(step.inputs)
+        # What says when a loop ends is about the steps inside it too.
+        late = (
+            early.pop(block.late_input, None) if isinstance(block, UntilLoop) else None
+        )
         try:
-            unknown = expressions.referenced_names(step.inputs) - known_names
+            unknown = expressions.referenced_names(early) - known_names
+            unknown_late = (
+                expressions.referenced_names(late)
+                - known_names
+                - {step.id}
+                - {inside.id for inside in step.steps}
+            )
         except expressions.ExpressionError as e:
             found.append(f"{where}: {e}")
         else:
@@ -178,6 +189,11 @@ def _step_problems(
                 found.append(
                     f"{where}: “{name}” is not the trigger, the run or an "
                     "earlier step."
+                )
+            for name in sorted(unknown_late):
+                found.append(
+                    f"{where}: “{name}” is not the trigger, the run, an "
+                    "earlier step or a step right inside this one."
                 )
         known_names.add(step.id)
 

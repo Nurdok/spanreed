@@ -58,6 +58,7 @@ from spanreed.workflows import expressions, model
 from spanreed.workflows.blocks import (
     Action,
     AskLoop,
+    UntilLoop,
     BlockRegistry,
     Branch,
     Called,
@@ -1069,15 +1070,25 @@ class WorkflowEngine:
                     f"{plugin.name()} is not set up. Register to it with "
                     "“Manage plugins”."
                 )
+            written = dict(step.inputs)
+            if isinstance(block, UntilLoop):
+                # Filled in after each round, with what its steps gave.
+                written[block.late_input] = False
             inputs = from_data(
-                block.Input, expressions.render(step.inputs, context), step.inputs
+                block.Input, expressions.render(written, context), written
             )
             entry["inputs"] = to_data(inputs)
+            if isinstance(block, UntilLoop):
+                entry["inputs"][block.late_input] = step.inputs.get(block.late_input)
             said: list[dict[str, str]] = []
             try:
                 if isinstance(block, AskLoop):
                     outputs = await self._run_asked_rounds(
                         step, block, inputs, ctx, context, entry, said
+                    )
+                elif isinstance(block, UntilLoop):
+                    outputs = await self._run_rounds_until(
+                        step, block, inputs, ctx, context, entry
                     )
                 else:
                     if isinstance(block, Loop):
@@ -1195,6 +1206,50 @@ class WorkflowEngine:
                 step, loop, value, str(len(values)), ctx, context, entry
             )
 
+    async def _run_rounds_until(
+        self,
+        step: Step,
+        loop: UntilLoop,
+        inputs: Any,
+        ctx: StepContext,
+        context: dict[str, Any],
+        entry: dict[str, Any],
+    ) -> Any:
+        """Run the steps inside a loop until its condition holds.
+
+        The condition is filled in after each round, with what the steps
+        of the round gave. A step of the round that did not run gives
+        nothing, and what is asked of nothing does not hold.
+
+        Add the rounds to the loop's ``entry`` of the trace, and return
+        what the steps after the loop see.
+        """
+        entry["round_name"] = loop.round_name
+        entry["round_count"] = 0
+        entry["rounds_run"] = 0
+        entry["rounds"] = []
+        condition = step.inputs.get(loop.late_input, False)
+        number = 0
+        for number in range(1, loop.limit(inputs) + 1):
+            entry["round_count"] = entry["rounds_run"] = number
+            seen = {**context, step.id: loop.round(inputs, number)}
+            await self._run_round(
+                step, loop, seen[step.id], str(number), ctx, context, entry, seen
+            )
+            for inside in step.steps:
+                seen.setdefault(inside.id, expressions.NOTHING)
+            try:
+                stop = expressions.render(condition, seen)
+            except expressions.ExpressionError as e:
+                if not str(e).endswith(expressions.NO_SUCH_VALUE):
+                    raise
+                stop = False
+            if isinstance(stop, str):
+                stop = stop.strip().lower() in ("true", "yes")
+            if stop:
+                return loop.after(inputs, number, True)
+        return loop.after(inputs, number, False)
+
     async def _run_round(
         self,
         step: Step,
@@ -1204,18 +1259,20 @@ class WorkflowEngine:
         ctx: StepContext,
         context: dict[str, Any],
         entry: dict[str, Any],
+        seen: dict[str, Any] | None = None,
     ) -> None:
         """Run the steps inside a loop for one round, and add it to the trace.
 
         ``which`` names the round in a failure: "3 of 5". Raise ``StopRun``
         if a step inside ends the whole run, and ``_InsideFailed`` if one
-        fails.
+        fails. ``seen`` is what the steps inside see, if the caller is to
+        see what they gave.
         """
         number = entry["rounds_run"]
         steps: list[dict[str, Any]] = []
-        status = await self._run_steps(
-            step.steps, ctx, {**context, step.id: value}, steps
-        )
+        if seen is None:
+            seen = {**context, step.id: value}
+        status = await self._run_steps(step.steps, ctx, seen, steps)
         kept = {"number": number, "status": status, "steps": steps}
         ends_run = status == STOPPED and bool(steps[-1].get("ends_run"))
         if len(entry["rounds"]) < self.ROUNDS_KEPT or status == FAILED or ends_run:

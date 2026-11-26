@@ -26,6 +26,7 @@ from spanreed.workflows.blocks import (
     StepContext,
     StopRun,
     Trigger,
+    UntilLoop,
     TriggerContext,
 )
 
@@ -35,6 +36,7 @@ _NEXT_AT = "next_at"
 # Indirections so that tests can skip the waits and say how long one is.
 _sleep = asyncio.sleep
 _uniform = random.uniform
+_randrange = random.randrange
 
 _UNIT_SECONDS = {"minutes": 60.0, "hours": 3600.0, "days": 86400.0}
 
@@ -460,6 +462,106 @@ class ForEach(Loop[ForEachInput, ForEachOutput]):
         return ForEachOutput(count=len(inputs.items))
 
 
+# The most rounds that "Repeat" can be told to run.
+MOST_ROUNDS = 100
+
+
+@dataclass
+class RepeatStepsInput:
+    """The input of ``RepeatSteps``."""
+
+    stop_when: bool = conditions.condition(
+        "Looked at after each round. It can be about the steps inside: one "
+        "that did not run in the round counts as nothing"
+    )
+    at_most: int = described(
+        f"The loop ends after this many rounds whatever happens, up to {MOST_ROUNDS}",
+        default=20,
+    )
+
+    def __post_init__(self) -> None:
+        """Raise ``ValueError`` for a number of rounds that cannot be."""
+        if not 1 <= self.at_most <= MOST_ROUNDS:
+            raise ValueError(f"“At most” is a number from 1 to {MOST_ROUNDS}.")
+
+
+@dataclass
+class RepeatStepsOutput:
+    """What ``RepeatSteps`` gives: inside, the round; after, how it ended."""
+
+    round: int = described(
+        "The number of the round, from 1. After the loop: how many there were",
+        default=0,
+    )
+    stopped: bool = described(
+        "After the loop: whether the condition held. No if the most rounds " "ended it",
+        default=False,
+    )
+
+
+class RepeatSteps(UntilLoop[RepeatStepsInput, RepeatStepsOutput]):
+    """Run the steps inside again and again, until a condition holds.
+
+    The steps always run once. A step inside that ends its round, such as
+    "Only continue if", goes on to the condition.
+    """
+
+    id = "core.repeat"
+    title = "Repeat"
+
+    def round(self, inputs: RepeatStepsInput, number: int) -> RepeatStepsOutput:
+        """Return the number of the round."""
+        return RepeatStepsOutput(round=number)
+
+    def limit(self, inputs: RepeatStepsInput) -> int:
+        """Return the most rounds the step was told to run."""
+        return inputs.at_most
+
+    def after(
+        self, inputs: RepeatStepsInput, rounds: int, stopped: bool
+    ) -> RepeatStepsOutput:
+        """Return how many rounds there were, and what ended them."""
+        return RepeatStepsOutput(round=rounds, stopped=stopped)
+
+    async def run(
+        self, ctx: StepContext, inputs: RepeatStepsInput
+    ) -> RepeatStepsOutput:
+        """Return what a loop without rounds gives. The engine runs the rounds."""
+        return RepeatStepsOutput()
+
+
+@dataclass
+class PickRandomInput:
+    """The input of ``PickRandom``."""
+
+    items: list[Any] = described("The list to pick from")
+
+
+@dataclass
+class PickRandomOutput:
+    """What ``PickRandom`` gives: one item of the list."""
+
+    item: Any = described("The item that was picked. Nothing if the list is empty")
+    index: int = described("Its place in the list, from 1. 0 if the list is empty")
+    count: int = described("How many items the list has")
+
+
+class PickRandom(Action[PickRandomInput, PickRandomOutput]):
+    """Pick one item of a list at random."""
+
+    id = "core.pick-random"
+    title = "Pick at random"
+    kind = BlockKind.LOGIC
+
+    async def run(self, ctx: StepContext, inputs: PickRandomInput) -> PickRandomOutput:
+        """Return an item of the list, each as likely as another."""
+        count = len(inputs.items)
+        if not count:
+            return PickRandomOutput(item=None, index=0, count=0)
+        index = _randrange(count)
+        return PickRandomOutput(item=inputs.items[index], index=index + 1, count=count)
+
+
 @dataclass
 class SendMessageInput:
     """The input of ``SendMessage``."""
@@ -534,6 +636,8 @@ def builtin_blocks() -> list[Block]:
         ContinueIf(),
         If(),
         ForEach(),
+        RepeatSteps(),
+        PickRandom(),
         SendMessage(),
         Notify(),
     ]

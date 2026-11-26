@@ -16,6 +16,10 @@ from spanreed.workflows.blocks import (
     TriggerContext,
 )
 from spanreed.workflows.builtin import (
+    PickRandom,
+    PickRandomInput,
+    PickRandomOutput,
+    RepeatStepsInput,
     ContinueIf,
     ContinueIfInput,
     ForEach,
@@ -107,6 +111,8 @@ def test_the_builtin_blocks_are_well_formed() -> None:
         "core.continue-if",
         "core.if",
         "core.for-each",
+        "core.repeat",
+        "core.pick-random",
         "core.send-message",
         "core.notify",
     ]
@@ -499,3 +505,28 @@ def test_a_time_of_day_by_hand_is_now() -> None:
         )
 
     assert event == Tick(date="2026-05-09", time="12:00")
+
+
+def _pick(items: list[Any]) -> PickRandomOutput:
+    return asyncio.run(PickRandom().run(_step_context(), PickRandomInput(items=items)))
+
+
+def test_pick_at_random_gives_an_item_and_its_place() -> None:
+    with patch("spanreed.workflows.builtin._randrange", return_value=1) as randrange:
+        output = _pick(["a", "b", "c"])
+
+    randrange.assert_called_once_with(3)
+    assert (output.item, output.index, output.count) == ("b", 2, 3)
+
+
+def test_pick_at_random_of_an_empty_list_gives_nothing() -> None:
+    output = _pick([])
+
+    assert (output.item, output.index, output.count) == (None, 0, 0)
+
+
+def test_repeat_takes_a_number_of_rounds_that_can_be() -> None:
+    assert from_data(RepeatStepsInput, {"stop_when": True}).at_most == 20
+    for rounds in (0, 101):
+        with pytest.raises(ValueError, match="from 1 to 100"):
+            from_data(RepeatStepsInput, {"stop_when": True, "at_most": rounds})

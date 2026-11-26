@@ -160,6 +160,55 @@ for each set of a Hevy workout:
   from its first step, so the items before are done again.
 - The trace keeps the first 50 rounds of a loop, and the one that failed.
 
+`core.repeat` runs its steps again and again, until a condition holds. This
+is the heart of the recipe "Journal": a prompt picked at random, which can
+be answered, changed for another, or left:
+
+```json
+{"id": "rounds", "block": "core.repeat",
+ "inputs": {"stop_when": "{{ not what.chosen or again.answer == 'No' }}", "at_most": 50},
+ "steps": [
+   {"id": "prompt", "block": "core.pick-random", "inputs": {"items": ["What are you doing right now?", "…"]}},
+   {"id": "what", "block": "core.ask-choice",
+    "inputs": {"question": "Prompt: {{ prompt.item }}", "options": ["Answer", "Change"], "cancel": "Cancel"}},
+   {"id": "taken", "block": "core.continue-if", "inputs": {"condition": "{{ what.answer == 'Answer' }}"}},
+   {"id": "answer", "block": "core.ask-text", "inputs": {"question": "{{ prompt.item }}"}},
+   {"id": "note", "block": "obsidian.append-to-note",
+    "inputs": {"path": "{{ day.path }}", "text": "\n\n### {{ prompt.item }}\n{{ answer.answer }}"}},
+   {"id": "again", "block": "core.ask-choice", "inputs": {"question": "Another?", "options": ["Yes", "No"], "cancel": ""}}
+ ]}
+```
+
+- **Stop when** is looked at after each round, so the steps always run
+  once. Unlike any other input, it can refer to the steps right inside the
+  loop, and gets what they gave in that round. It cannot refer to a step
+  inside a branch of the loop.
+- A step that did not run in the round, because "Only continue if" ended
+  the round before it, counts as nothing: whatever is asked of it does not
+  hold. Above, "Change" ends the round before `again` runs, so
+  `again.answer == 'No'` does not hold and the next round picks another
+  prompt.
+- **At most** ends the loop after that many rounds whatever happens: 20
+  unless the step says otherwise, and never more than 100.
+- Inside, `{{ rounds.round }}` is the number of the round, from 1. After
+  the loop it is how many rounds there were, and `{{ rounds.stopped }}`
+  says whether the condition held, and not **At most** ended the loop.
+- The rest is as for "For each": a round starts without what the round
+  before gave, a step after the loop cannot refer to a step inside it, and
+  a step inside that fails makes the loop and the run fail.
+
+`core.pick-random` gives one `item` of a list, each as likely as another,
+with its `index` (from 1) and the `count` of the list.
+
+![The recipe "Journal" in the editor](images/web-ui-workflow-repeat-desktop.png)
+
+<img src="images/web-ui-workflow-repeat-phone.png" alt="A Repeat step in the editor on a phone" width="390">
+
+"Journal" does the work of Timekiller's "Journaling prompt" with these,
+and needs only Obsidian. The old step and its recipe "Journaling Prompt"
+stay, and "Kill time" runs the old one until its **Run** list names
+"Journal".
+
 A step whose block is a branch holds two lists of steps and runs one of
 them. `core.if` runs `steps` if its condition holds, and `otherwise` if not:
 
@@ -206,6 +255,8 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `core.continue-if` Only continue if | logic | Workflows |
 | `core.if` If | logic | Workflows |
 | `core.for-each` For each | logic | Workflows |
+| `core.repeat` Repeat | logic | Workflows |
+| `core.pick-random` Pick at random | logic | Workflows |
 | `core.stop` End the run | logic | Workflows |
 | `core.call-workflow` Run a workflow | logic | Workflows |
 | `core.run-one` Run one workflow | logic | Workflows |

@@ -23,6 +23,7 @@ from spanreed.workflows.blocks import (
     BlockKind,
     RunInfo,
     Trigger,
+    UntilLoop,
 )
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Step, Workflow
@@ -122,6 +123,8 @@ def _card(
         "fields": _fields(inputs, stored),
         "outputs": outputs_of(outputs),
         "item_outputs": _item_outputs(outputs),
+        # Inputs that can be about the steps inside the step.
+        "late": [block.late_input] if isinstance(block, UntilLoop) else [],
         "missing": False,
     }
 

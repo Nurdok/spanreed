@@ -731,6 +731,8 @@ def test_the_catalog_lists_the_blocks_with_a_card_for_a_new_step() -> None:
                 "core.continue-if",
                 "core.if",
                 "core.for-each",
+                "core.repeat",
+                "core.pick-random",
                 "core.send-message",
                 "core.notify",
                 "core.command",

@@ -68,6 +68,23 @@ _WHOLE_EXPRESSION_RE = re.compile(
 )
 
 
+# How the message ends when a template comes to no value at all.
+NO_SUCH_VALUE = "there is no such value."
+
+
+class _Nothing(jinja2.ChainableUndefined):
+    """Nothing, whatever is read of it. What is asked of it does not hold."""
+
+    def _no(self, other: Any) -> bool:
+        return False
+
+    __lt__ = __le__ = __gt__ = __ge__ = __contains__ = _no  # type: ignore[assignment]
+
+
+# What a step gives that did not run.
+NOTHING = _Nothing()
+
+
 class ExpressionError(ValueError):
     """A template is not valid, or refers to a value that does not exist."""
 
@@ -113,7 +130,7 @@ def _render_text(text: str, context: Mapping[str, Any]) -> Any:
         # An expression can fail in any way a Python expression can.
         raise ExpressionError(f"{text!r}: {type(e).__name__}: {e}") from e
     if isinstance(result, jinja2.Undefined):
-        raise ExpressionError(f"{text!r}: there is no such value.")
+        raise ExpressionError(f"{text!r}: {NO_SUCH_VALUE}")
     return result
 
 
