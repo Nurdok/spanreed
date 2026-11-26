@@ -23,6 +23,7 @@ from spanreed.plugins.hevy import HevyPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.apis.audible import AudiblePlugin
 from spanreed.apis.google_books import GoogleBooksPlugin
+from spanreed.apis.claude import ClaudePlugin
 
 
 def setup_logger() -> None:
@@ -61,6 +62,7 @@ def load_plugins() -> List[Plugin]:
         HevyPlugin(),
         HealthConnectPlugin(),
         AudiblePlugin(),
+        ClaudePlugin(),
     ]
 
     return core_plugins + optional_plugins
