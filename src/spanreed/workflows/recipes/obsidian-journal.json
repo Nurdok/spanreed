@@ -1,0 +1,118 @@
+{
+  "id": "obsidian-journal",
+  "name": "Journal",
+  "description": "Offers a journaling prompt, picked at random, and adds your answer to today's daily note. You can change the prompt, and go on with another one.",
+  "requires": [
+    "obsidian"
+  ],
+  "trigger": {
+    "block": "core.called",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "day",
+      "block": "obsidian.find-daily-note",
+      "inputs": {
+        "date": "{{ trigger.date }}"
+      }
+    },
+    {
+      "id": "rounds",
+      "block": "core.repeat",
+      "inputs": {
+        "stop_when": "{{ not what.chosen or again.answer == 'No' }}",
+        "at_most": 50
+      },
+      "steps": [
+        {
+          "id": "prompt",
+          "block": "core.pick-random",
+          "inputs": {
+            "items": [
+              "What are you doing right now?",
+              "What are you grateful for today?",
+              "What are you looking forward to today?",
+              "What are you struggling with today?",
+              "What are you proud of today?",
+              "What are you excited about today?",
+              "What are you worried about today?",
+              "Did you make progress on a project today? If so, what?",
+              "What is one thing you learned today?",
+              "What did you do today to take care of yourself?",
+              "What did you do today to take care of someone else?",
+              "What did you do today to take care of your home?",
+              "What friend did you talk to today?",
+              "What family member did you talk to today?",
+              "What did you do today for your yearly theme?",
+              "Take a picture of you or something you did today.",
+              "What did you do for physical health today?",
+              "What did you do for mental health today?",
+              "What did you do today for fun?",
+              "What are you currently watching?",
+              "What are you currently listening to?",
+              "What is your favorite song right now?",
+              "Do you have plans to meet up with friends anytime soon?",
+              "What project are you currently working on?"
+            ]
+          }
+        },
+        {
+          "id": "what",
+          "block": "core.ask-choice",
+          "inputs": {
+            "question": "Prompt: {{ prompt.item }}",
+            "options": [
+              "Answer",
+              "Change"
+            ],
+            "cancel": "Cancel",
+            "columns": 2
+          }
+        },
+        {
+          "id": "taken",
+          "block": "core.continue-if",
+          "inputs": {
+            "condition": "{{ what.answer == 'Answer' }}"
+          }
+        },
+        {
+          "id": "answer",
+          "block": "core.ask-text",
+          "inputs": {
+            "question": "{{ prompt.item }}"
+          }
+        },
+        {
+          "id": "note",
+          "block": "obsidian.append-to-note",
+          "inputs": {
+            "path": "{{ day.path }}",
+            "text": "\n\n### {{ prompt.item }}\n{{ answer.answer }}"
+          }
+        },
+        {
+          "id": "noted",
+          "block": "core.send-message",
+          "inputs": {
+            "message": "Noted!"
+          }
+        },
+        {
+          "id": "again",
+          "block": "core.ask-choice",
+          "inputs": {
+            "question": "Another?",
+            "options": [
+              "Yes",
+              "No"
+            ],
+            "cancel": "",
+            "columns": 2
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 from spanreed.interaction import SurfaceBusyError, commands
 from spanreed.test_utils import mock_user_find_by_id, patch_user_interaction
 from spanreed.workflows.blocks import BlockRegistry, NoQuestion
-from spanreed.workflows.builtin import ContinueIf, ForEach, If
+from spanreed.workflows.builtin import ContinueIf, ForEach, If, RepeatSteps
 from spanreed.workflows.engine import WorkflowEngine, outcome
 from spanreed.workflows.model import Step, Workflow
 from spanreed.workflows.recipes import Recipe
@@ -1354,3 +1354,131 @@ def test_a_user_cannot_run_the_workflow_of_another_user(mock_bot: AsyncMock) -> 
 
     assert record.texts == []
     mock_bot.send_message.assert_awaited_once_with("This workflow no longer exists.")
+
+
+def _repeat(stop_when: str, *steps: Step, at_most: int = 20) -> Step:
+    return Step(
+        id="loop",
+        block="core.repeat",
+        inputs={"stop_when": stop_when, "at_most": at_most},
+        steps=list(steps),
+    )
+
+
+def _run_repeat(*steps: Step) -> tuple[list[str], dict[str, Any]]:
+    """Run a workflow of the steps once. Return what was recorded, and the trace."""
+    record = Record()
+    workflow = workflow_of(*steps, events=["a"])
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = _engine(record, RepeatSteps(), ContinueIf())
+        assert engine.problems(workflow) == []
+        await engine.save(workflow)
+        await drain(engine, workflow)
+        return await _runs(engine, workflow)
+
+    with fake_storage():
+        (run,) = asyncio.run(scenario())
+    return record.texts, run
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_repeat_runs_its_steps_until_the_condition_holds(mock_bot: AsyncMock) -> None:
+    texts, run = _run_repeat(
+        _repeat("{{ loop.round == 3 }}", _record("inner", "round {{ loop.round }}")),
+        _record("after", "{{ loop.round }} rounds, stopped: {{ loop.stopped }}"),
+    )
+
+    assert texts == ["round 1", "round 2", "round 3", "3 rounds, stopped: True"]
+    assert run["status"] == "finished"
+    loop = run["steps"][0]
+    assert (loop["round_count"], loop["rounds_run"]) == (3, 3)
+    assert [r["number"] for r in loop["rounds"]] == [1, 2, 3]
+    assert loop["inputs"] == {"stop_when": "{{ loop.round == 3 }}", "at_most": 20}
+    assert loop["outputs"] == {"round": 3, "stopped": True}
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_repeat_ends_after_its_most_rounds(mock_bot: AsyncMock) -> None:
+    texts, run = _run_repeat(
+        _repeat("{{ false }}", _record("inner", "r{{ loop.round }}"), at_most=2),
+        _record("after", "stopped: {{ loop.stopped }}"),
+    )
+
+    assert texts == ["r1", "r2", "stopped: False"]
+    assert run["steps"][0]["outputs"] == {"round": 2, "stopped": False}
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_repeat_can_stop_on_what_a_step_inside_gave(mock_bot: AsyncMock) -> None:
+    texts, run = _run_repeat(
+        _repeat(
+            "{{ inner.length == 3 }}",
+            _record("inner", "{{ 'x' * loop.round }}"),
+        ),
+    )
+
+    assert texts == ["x", "xx", "xxx"]
+    assert run["status"] == "finished"
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_a_step_that_did_not_run_in_a_round_counts_as_nothing(
+    mock_bot: AsyncMock,
+) -> None:
+    # Rounds 1 and 2 end at "Only continue if", so "inner" gives nothing:
+    # neither a comparison with it nor a question of it holds.
+    texts, run = _run_repeat(
+        _repeat(
+            "{{ inner.text == 'done' or inner.length > 0 }}",
+            Step(
+                id="late",
+                block="core.continue-if",
+                inputs={"condition": "{{ loop.round == 3 }}"},
+            ),
+            _record("inner", "done"),
+            at_most=5,
+        ),
+    )
+
+    assert texts == ["done"]
+    assert run["status"] == "finished"
+    assert run["steps"][0]["outputs"] == {"round": 3, "stopped": True}
+    assert [r["status"] for r in run["steps"][0]["rounds"]] == [
+        "stopped",
+        "stopped",
+        "finished",
+    ]
+
+
+def test_what_ends_a_repeat_can_refer_to_the_steps_right_inside_it() -> None:
+    engine = _engine(Record(), RepeatSteps(), If())
+    inner = _record("inner", "a")
+    deep = Step(
+        id="branch",
+        block="core.if",
+        inputs={"condition": True},
+        steps=[_record("deep", "b")],
+    )
+
+    def problems(stop_when: str) -> list[str]:
+        return engine.problems(workflow_of(_repeat(stop_when, inner, deep)))
+
+    assert problems("{{ inner.text == 'a' and loop.round > 1 }}") == []
+    assert problems("{{ deep.text == 'b' or other.text }}") == [
+        "Step 1, Repeat: “deep” is not the trigger, the run, an earlier step "
+        "or a step right inside this one.",
+        "Step 1, Repeat: “other” is not the trigger, the run, an earlier step "
+        "or a step right inside this one.",
+    ]
+    # The other inputs are filled in before the loop, as those of any step.
+    assert engine.problems(
+        workflow_of(
+            Step(
+                id="loop",
+                block="core.repeat",
+                inputs={"stop_when": True, "at_most": "{{ inner.length }}"},
+                steps=[inner],
+            )
+        )
+    ) == ["Step 1, Repeat: “inner” is not the trigger, the run or an earlier step."]

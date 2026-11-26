@@ -10,7 +10,7 @@ from spanreed.interaction import commands
 from spanreed.plugin import Plugin
 from spanreed.apis.audible import AudiblePlugin
 from spanreed.apis.google_books import GoogleBooksPlugin
-from spanreed.apis.obsidian import ObsidianPlugin
+from spanreed.apis.obsidian import DailyNote, ObsidianPlugin
 from spanreed.plugins.health_connect import HealthConnectPlugin
 from spanreed.plugins.hevy import HevyPlugin
 from spanreed.plugins.timekiller import TimekillerPlugin
@@ -288,3 +288,83 @@ def test_name_scans_leaves_a_scan_for_later(mock_bot: AsyncMock) -> None:
     ]
     obsidian.move_file.assert_not_awaited()
     obsidian.delete_file.assert_not_awaited()
+
+
+def _journal(
+    mock_bot: AsyncMock, choices: list[int], typed: list[str]
+) -> tuple[Any, dict[str, Any]]:
+    """Run "Journal" by hand, with what the user chooses and types.
+
+    Return the Obsidian mock and the trace of the run.
+    """
+    registry = _real_registry()
+    mock_bot.request_user_choice.side_effect = choices
+    mock_bot.request_user_input.side_effect = typed
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = WorkflowEngine(registry)
+        user = mock_user_find_by_id(4)
+        workflow = await engine.install(user, all_recipes()["obsidian-journal"])
+        await engine.run_by_hand(workflow.id, user)
+        found = await engine.store.recent_runs(workflow.id, 10)
+        await engine.stop()
+        return found
+
+    with fake_storage(), patch(
+        "spanreed.apis.obsidian_blocks.ObsidianApi", autospec=True
+    ) as obsidian, patch.object(Plugin, "is_registered", async_return_true), patch(
+        "spanreed.workflows.blocks.UserInteractionApi", new=mock_bot
+    ), patch(
+        "spanreed.workflows.builtin._randrange", side_effect=[0, 1, 2, 3]
+    ):
+        obsidian.for_user = AsyncMock(return_value=obsidian)
+        obsidian.find_daily_note = AsyncMock(
+            return_value=DailyNote(path="Daily/2026-05-09.md", exists=True)
+        )
+        obsidian.append_to_note = AsyncMock()
+        (run,) = asyncio.run(scenario())
+        return obsidian, run
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_journal_asks_prompts_until_the_user_has_enough(mock_bot: AsyncMock) -> None:
+    # Change the first prompt, answer the second, go on, answer the third, stop.
+    obsidian, run = _journal(
+        mock_bot, choices=[1, 0, 0, 0, 1], typed=["For the sun", "A walk"]
+    )
+
+    assert run["status"] == "finished", run
+    asked = [c.args[0] for c in mock_bot.request_user_choice.await_args_list]
+    assert asked == [
+        "Prompt: What are you doing right now?",
+        "Prompt: What are you grateful for today?",
+        "Another?",
+        "Prompt: What are you looking forward to today?",
+        "Another?",
+    ]
+    assert mock_bot.request_user_choice.await_args_list[0].args[1] == [
+        "Answer",
+        "Change",
+        ["Cancel"],
+    ]
+    assert [c.args[:2] for c in obsidian.append_to_note.await_args_list] == [
+        (
+            "Daily/2026-05-09.md",
+            "\n\n### What are you grateful for today?\nFor the sun",
+        ),
+        (
+            "Daily/2026-05-09.md",
+            "\n\n### What are you looking forward to today?\nA walk",
+        ),
+    ]
+    loop = run["steps"][1]
+    assert loop["outputs"] == {"round": 3, "stopped": True}
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_journal_ends_when_the_prompt_is_cancelled(mock_bot: AsyncMock) -> None:
+    obsidian, run = _journal(mock_bot, choices=[1, 2], typed=[])
+
+    assert run["status"] == "finished", run
+    obsidian.append_to_note.assert_not_awaited()
+    assert run["steps"][1]["outputs"] == {"round": 2, "stopped": True}

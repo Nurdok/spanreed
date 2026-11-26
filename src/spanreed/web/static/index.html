@@ -1326,7 +1326,13 @@ function renderCard(card, badge, sources, edit) {
     for (const field of card.fields) {
       // The types of the rows of another input: shown with those rows.
       if (field.edit && field.edit.control === "hidden") continue;
-      if (edit && field.edit) { sec.append(editField(card, field, edit)); continue; }
+      if (edit && field.edit) {
+        // What says when a loop ends can be about the steps inside it.
+        const late = (card.late || []).includes(field.name);
+        const offers = late ? [...edit.offers, holderOffer(card, edit.cards), ...(card.steps || []).map(offerOf)] : edit.offers;
+        sec.append(editField(card, field, { ...edit, offers }));
+        continue;
+      }
       const f = el("div", "wc-field");
       f.append(el("label", "", field.label), richValue(field.value, sources, field.pairs));
       sec.append(f);

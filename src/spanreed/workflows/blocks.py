@@ -616,6 +616,45 @@ class Loop(Action[InT, OutT]):
         """Return what the steps inside see, for each time they run."""
 
 
+class UntilLoop(Loop[InT, OutT]):
+    """A loop that runs its steps again and again, until a condition holds.
+
+    The condition is the input that ``late_input`` names. It is not filled
+    in before the loop, as the other inputs are, but after each round,
+    with what the steps of that round gave: so it can refer to the steps
+    inside. A step that did not run in the round, because the round ended
+    before it, gives nothing: whatever is asked of it does not hold.
+
+    In round ``number`` the id of the step refers to what ``round``
+    returns, and after the loop to what ``after`` returns. The loop ends
+    after ``limit`` rounds at the latest.
+    """
+
+    inside_title: ClassVar[str] = "Each round"
+    # The name of the input that says when the loop ends.
+    late_input: ClassVar[str] = "stop_when"
+
+    def rounds(self, inputs: InT) -> list[OutT]:
+        """Return nothing: how many rounds there are shows as they run."""
+        return []
+
+    @abc.abstractmethod
+    def round(self, inputs: InT, number: int) -> OutT:
+        """Return what the steps inside see in a round. The first is 1."""
+
+    @abc.abstractmethod
+    def limit(self, inputs: InT) -> int:
+        """Return how many rounds there are at most."""
+
+    @abc.abstractmethod
+    def after(self, inputs: InT, rounds: int, stopped: bool) -> OutT:
+        """Return what the steps after the loop see.
+
+        ``stopped`` says whether the condition held, and not the limit
+        ended the loop.
+        """
+
+
 class AskLoop(Loop[InT, OutT]):
     """A loop whose rounds are what the user answers, one answer at a time.
 

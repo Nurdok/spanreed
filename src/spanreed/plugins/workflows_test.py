@@ -56,6 +56,8 @@ def test_name() -> None:
         "core.continue-if",
         "core.if",
         "core.for-each",
+        "core.repeat",
+        "core.pick-random",
         "core.send-message",
         "core.notify",
         "core.command",
