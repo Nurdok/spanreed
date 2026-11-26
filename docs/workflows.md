@@ -244,6 +244,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `google-books.search-books` Search books | action | Google Books |
 | `audible.get-library` Get library | action | Audible |
 | `audible.link-note` Link a note to a book | action | Audible |
+| `claude.ask` Ask Claude | action | Claude |
 | `timekiller.journal` Journaling prompt | ask | Timekiller |
 | `timekiller.reading-check-in` Reading check-in | ask | Timekiller |
 | `timekiller.process-scan` Process a scan | ask | Timekiller |
@@ -574,6 +575,49 @@ A plugin from before it could:
 
 "Show supported API commands", in Obsidian's command palette, lists what the
 installed plugin knows: `get-daily-note` is the new one.
+
+### Claude
+
+"Ask Claude" sends one prompt to Claude and gives an answer in a shape
+that the steps after it can use. The Claude plugin holds the API key, the
+user's own, from the Claude Console. What a step sends goes to Anthropic.
+
+```json
+{"id": "read", "block": "claude.ask", "inputs": {
+  "prompt": "What was bought, and for how much?\n\n{{ trigger.body }}",
+  "files": "{{ attachments.files }}",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "shop": {"type": "string", "description": "The name of the shop"},
+      "total": {"type": "number", "description": "The total that was paid"}
+    },
+    "required": ["shop", "total"],
+    "additionalProperties": false
+  }}}
+```
+
+- **Schema** is a JSON schema of an object. The API guarantees that the
+  answer has its shape: every property that is required, of the type it
+  names. A step after this one reads `{{ read.data.shop }}`. A
+  `description` on a property tells Claude what belongs there.
+- **Files** takes a file or a list of files of an earlier step: PDFs,
+  pictures (JPEG, PNG, GIF, WebP) and text. Any other file fails the step.
+- **Instructions** say how Claude is to go about it, apart from what it is
+  asked: the system prompt.
+- **Model** is Claude Opus 5.5 unless the step picks Claude Sonnet 5.5 or
+  Claude Haiku 5.5, which cost less.
+- **`data`** is the answer, **`text`** the same as JSON text, and
+  **`model`** the model that answered.
+
+![An "Ask Claude" step in the editor](images/web-ui-workflow-claude-desktop.png)
+
+<img src="images/web-ui-workflow-claude-phone.png" alt="An Ask Claude step on a phone" width="390">
+
+The step fails, and says why in words, when the key is not accepted, the
+schema is one the API does not take, Claude declines to answer, or the
+answer is cut off for its length. A request that Opus or Sonnet declines
+for its safeguards is first handed to another model in the same call.
 
 ### Gmail
 
