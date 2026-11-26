@@ -11,6 +11,9 @@ On a phone the messages fill the screen. The command list is a drawer: tap
 Settings the same drawer holds the list of plugins. On a wider screen the
 list stays beside the messages.
 
+The name "Spanreed" at the top leads back to the conversation, from
+Workflows and from Settings.
+
 ![Web UI on a phone](images/web-ui-phone.png)
 ![The command drawer on a phone](images/web-ui-phone-drawer.png)
 
