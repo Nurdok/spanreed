@@ -582,7 +582,41 @@ def test_a_step_moved_before_what_it_needs_is_refused() -> None:
     asyncio.run(run())
 
 
-def test_the_trigger_of_a_workflow_cannot_be_changed() -> None:
+def test_a_workflow_can_get_another_trigger_and_starts_fresh_with_it() -> None:
+    async def run() -> None:
+        async with _workflows_app() as (client, engine, _):
+            from spanreed.workflows import store
+
+            fake = store.redis_api
+            workflow = await _install(engine)
+            await _login(client)
+            url = f"/app/api/workflows/{workflow.id}"
+            key = f"workflows:workflow:{workflow.id}"
+            # What the schedule kept, and what the steps remember.
+            await fake.hset(f"{key}:state", "last_fired", "2026-05-09T08:00:00")
+            await fake.set(f"{key}:last_event", "{}")
+            await fake.hset(f"{key}:memory", "note", "kept")
+            form = _form_of(await _json(await client.get(url)))
+            form["trigger"] = {"block": "core.command", "params": {}}
+
+            response = await client.put(url, json=form, headers=H)
+
+            assert response.status_code == 200, await _json(response)
+            shown = await _json(response)
+            assert shown["trigger"]["block"] == "core.command"
+            assert [step["block"] for step in shown["steps"]] == [
+                step.block for step in workflow.steps
+            ]
+            stored = await engine.store.get(workflow.id)
+            assert stored is not None and stored.trigger.block == "core.command"
+            assert await fake.hget(f"{key}:state", "last_fired") is None
+            assert await fake.get(f"{key}:last_event") is None
+            assert await fake.hget(f"{key}:memory", "note") is not None
+
+    asyncio.run(run())
+
+
+def test_a_trigger_that_is_none_is_refused() -> None:
     async def run() -> None:
         async with _workflows_app() as (client, engine, _):
             workflow = await _install(engine)
@@ -594,9 +628,9 @@ def test_the_trigger_of_a_workflow_cannot_be_changed() -> None:
             response = await client.put(url, json=form, headers=H)
 
             assert response.status_code == 400
-            assert (await _json(response))["problems"][0].startswith(
-                "The trigger of a workflow cannot be changed."
-            )
+            stored = await engine.store.get(workflow.id)
+            assert stored is not None
+            assert stored.trigger.block == workflow.trigger.block
 
     asyncio.run(run())
 

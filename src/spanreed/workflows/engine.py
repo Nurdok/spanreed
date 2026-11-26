@@ -536,6 +536,19 @@ class WorkflowEngine:
         await self._store.save(workflow)
         self._apply(workflow)
 
+    async def change_trigger(self, workflow: Workflow) -> None:
+        """Store a workflow that got another trigger, and start that one.
+
+        What the old trigger kept would not fit the new one: where it had
+        got to, the events that still waited for a run, and the last
+        event. All of it is dropped. The history and what the steps
+        remember stay.
+        """
+        self._stop_source(workflow.id)
+        self._failing.pop(workflow.id, None)
+        await self._store.forget_trigger(workflow.id)
+        await self.save(workflow)
+
     async def delete(self, workflow: Workflow) -> None:
         """Stop a workflow and delete it with its history."""
         self._stop_source(workflow.id)

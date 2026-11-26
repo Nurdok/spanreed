@@ -235,6 +235,18 @@ class WorkflowStore:
         )
         await redis_api.srem(_user_key(workflow.user_id), workflow.id)
 
+    async def forget_trigger(self, workflow_id: str) -> None:
+        """Delete what the trigger of a workflow kept: for a change of trigger.
+
+        That is what the trigger remembers, the events that still wait for
+        a run, and the last event. The history and what the steps remember
+        stay.
+        """
+        key = _workflow_key(workflow_id)
+        await redis_api.delete(
+            f"{key}:state", f"{key}:queue", f"{key}:queued", f"{key}:last_event"
+        )
+
     def trigger_state(self, workflow_id: str) -> StoredTriggerState:
         """Return what the trigger of a workflow remembers."""
         return StoredTriggerState(workflow_id)
