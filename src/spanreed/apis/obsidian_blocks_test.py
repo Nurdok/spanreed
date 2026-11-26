@@ -7,6 +7,16 @@ import pytest
 
 from spanreed.apis.obsidian import DailyNote, ObsidianPluginTooOld
 from spanreed.apis.obsidian_blocks import (
+    DeleteFile,
+    DeleteFileInput,
+    ListFiles,
+    ListFilesInput,
+    ListFilesOutput,
+    MoveFile,
+    MoveFileInput,
+    MoveFileOutput,
+    ReadFile,
+    ReadFileInput,
     AddToListProperty,
     AddToListPropertyInput,
     AppendToNote,
@@ -77,6 +87,10 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         "obsidian.write-file",
         "obsidian.write-note",
         "obsidian.append-to-note",
+        "obsidian.list-files",
+        "obsidian.read-file",
+        "obsidian.move-file",
+        "obsidian.delete-file",
         "obsidian.stopped-answering",
     ]
 
@@ -785,3 +799,208 @@ def test_write_note_writes_each_property_as_its_type(mock_obsidian: AsyncMock) -
 
     text = mock_obsidian.write_binary_file.await_args.args[1].decode("utf-8")
     assert text == "---\nreps: 5\nwarmup: false\ntags:\n- a\n- b\n---\n\n"
+
+
+# -- the files of the vault -----------------------------------------------------
+
+SCANS = [
+    "Assets/scans/2026-05-02 Scan.pdf",
+    "Assets/scans/2026-05-01 Scan 2.pdf",
+    "Assets/scans/2026-04-30 Water bill.pdf",
+    "Assets/scans/2026-05-03 Scan.PDF",
+    "Assets/scans/notes.md",
+    "Assets/scans/old/2026-01-01 Scan.pdf",
+    "Assets/scans-of-others/2026-05-01 Scan.pdf",
+]
+
+
+def _list(mock_obsidian: AsyncMock, **inputs: Any) -> ListFilesOutput:
+    mock_obsidian.list_dir.return_value = list(SCANS)
+    values: dict[str, Any] = {"folder": "Assets/scans"}
+    values.update(inputs)
+    return asyncio.run(ListFiles().run(_context(), ListFilesInput(**values)))
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_list_files_gives_the_files_of_the_folder_itself_by_name(
+    mock_obsidian: AsyncMock,
+) -> None:
+    output = _list(mock_obsidian, folder="/Assets/scans/")
+
+    mock_obsidian.list_dir.assert_awaited_once_with("Assets/scans")
+    assert [file.name for file in output.files] == [
+        "2026-04-30 Water bill.pdf",
+        "2026-05-01 Scan 2.pdf",
+        "2026-05-02 Scan.pdf",
+        "2026-05-03 Scan.PDF",
+        "notes.md",
+    ]
+    assert output.count == 5
+    assert output.first == "Assets/scans/2026-04-30 Water bill.pdf"
+    first = output.files[0]
+    assert (first.stem, first.extension) == ("2026-04-30 Water bill", ".pdf")
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_list_files_can_ask_for_a_name_an_extension_and_leave_paths_out(
+    mock_obsidian: AsyncMock,
+) -> None:
+    output = _list(
+        mock_obsidian,
+        pattern=r"^\d{4}-\d{2}-\d{2} Scan",
+        extension=".pdf",
+        leave_out=["Assets/scans/2026-05-01 Scan 2.pdf"],
+    )
+
+    assert [file.path for file in output.files] == [
+        "Assets/scans/2026-05-02 Scan.pdf",
+        "Assets/scans/2026-05-03 Scan.PDF",
+    ]
+    assert output.first == "Assets/scans/2026-05-02 Scan.pdf"
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_list_files_with_nothing_found_has_no_first(mock_obsidian: AsyncMock) -> None:
+    output = _list(mock_obsidian, extension="png")
+
+    assert (output.files, output.count, output.first) == ([], 0, "")
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_list_files_says_when_the_pattern_is_no_regular_expression(
+    mock_obsidian: AsyncMock,
+) -> None:
+    with pytest.raises(ValueError, match="no regular expression"):
+        _list(mock_obsidian, pattern="(Scan")
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_read_file_is_the_file_with_its_name_and_type(
+    mock_obsidian: AsyncMock,
+) -> None:
+    mock_obsidian.read_binary_file.return_value = b"%PDF-1.7"
+
+    file = asyncio.run(
+        ReadFile().run(
+            _context(), ReadFileInput(path="Assets/scans/2026-05-02 Scan.pdf")
+        )
+    )
+
+    mock_obsidian.read_binary_file.assert_awaited_once_with(
+        "Assets/scans/2026-05-02 Scan.pdf"
+    )
+    assert (file.name, file.stem, file.extension) == (
+        "2026-05-02 Scan.pdf",
+        "2026-05-02 Scan",
+        ".pdf",
+    )
+    assert (file.type, file.data, file.size) == ("application/pdf", b"%PDF-1.7", 8)
+
+
+def _move(mock_obsidian: AsyncMock, **inputs: Any) -> MoveFileOutput:
+    values: dict[str, Any] = {
+        "path": "Assets/scans/2026-05-02 Scan.pdf",
+        "to": "Assets/scans/2026-05-02 Water bill.pdf",
+    }
+    values.update(inputs)
+    return asyncio.run(MoveFile().run(_context(), MoveFileInput(**values)))
+
+
+def _taken(*paths: str) -> Any:
+    async def move(from_path: str, to_path: str) -> None:
+        if to_path in paths:
+            raise FileExistsError(to_path)
+
+    return move
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_move_file_moves_the_file_and_says_where_it_is(
+    mock_obsidian: AsyncMock,
+) -> None:
+    output = _move(mock_obsidian)
+
+    mock_obsidian.move_file.assert_awaited_once_with(
+        "Assets/scans/2026-05-02 Scan.pdf", "Assets/scans/2026-05-02 Water bill.pdf"
+    )
+    assert (output.path, output.moved) == (
+        "Assets/scans/2026-05-02 Water bill.pdf",
+        True,
+    )
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_move_file_fails_when_there_is_a_file_there(mock_obsidian: AsyncMock) -> None:
+    mock_obsidian.move_file.side_effect = _taken(
+        "Assets/scans/2026-05-02 Water bill.pdf"
+    )
+
+    with pytest.raises(FileExistsError, match="2026-05-02 Water bill.pdf already"):
+        _move(mock_obsidian)
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_move_file_can_leave_the_file_where_it_is(mock_obsidian: AsyncMock) -> None:
+    mock_obsidian.move_file.side_effect = _taken(
+        "Assets/scans/2026-05-02 Water bill.pdf"
+    )
+
+    output = _move(mock_obsidian, if_exists="skip")
+
+    assert (output.path, output.moved) == ("Assets/scans/2026-05-02 Scan.pdf", False)
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_move_file_can_add_a_number_to_a_name_that_is_taken(
+    mock_obsidian: AsyncMock,
+) -> None:
+    mock_obsidian.move_file.side_effect = _taken(
+        "Assets/scans/2026-05-02 Water bill.pdf",
+        "Assets/scans/2026-05-02 Water bill 2.pdf",
+    )
+
+    output = _move(mock_obsidian, if_exists="add a number")
+
+    assert (output.path, output.moved) == (
+        "Assets/scans/2026-05-02 Water bill 3.pdf",
+        True,
+    )
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_move_file_adds_the_number_to_a_name_without_an_extension(
+    mock_obsidian: AsyncMock,
+) -> None:
+    mock_obsidian.move_file.side_effect = _taken("Archive.v2/Bill")
+
+    output = _move(mock_obsidian, to="Archive.v2/Bill", if_exists="add a number")
+
+    assert output.path == "Archive.v2/Bill 2"
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_delete_file_deletes_the_file(mock_obsidian: AsyncMock) -> None:
+    output = asyncio.run(
+        DeleteFile().run(_context(), DeleteFileInput(path="Assets/scans/a.pdf"))
+    )
+
+    mock_obsidian.delete_file.assert_awaited_once_with("Assets/scans/a.pdf")
+    assert output.deleted is True
+
+
+@patch_obsidian("spanreed.apis.obsidian_blocks")
+def test_delete_file_of_a_file_that_is_not_there(mock_obsidian: AsyncMock) -> None:
+    mock_obsidian.delete_file.side_effect = FileNotFoundError("a.pdf")
+
+    output = asyncio.run(
+        DeleteFile().run(_context(), DeleteFileInput(path="Assets/scans/a.pdf"))
+    )
+    assert output.deleted is False
+
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(
+            DeleteFile().run(
+                _context(),
+                DeleteFileInput(path="Assets/scans/a.pdf", if_missing="fail"),
+            )
+        )

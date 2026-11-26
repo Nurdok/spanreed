@@ -1,0 +1,198 @@
+{
+  "id": "obsidian-name-scans",
+  "name": "Name scans",
+  "description": "Takes a scan that has no name yet, lets Claude read it and suggest a name, and asks you: use that name, give another, delete the scan, or skip it for good.",
+  "requires": [
+    "claude",
+    "obsidian"
+  ],
+  "trigger": {
+    "block": "core.called",
+    "params": {}
+  },
+  "steps": [
+    {
+      "id": "skipped",
+      "block": "core.recall",
+      "inputs": {
+        "name": "skipped-scans"
+      }
+    },
+    {
+      "id": "scans",
+      "block": "obsidian.list-files",
+      "inputs": {
+        "folder": "Assets/scans",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2} Scan",
+        "extension": "pdf",
+        "leave_out": "{{ skipped.value or [] }}"
+      }
+    },
+    {
+      "id": "any",
+      "block": "core.continue-if",
+      "inputs": {
+        "condition": "{{ scans.count > 0 }}"
+      }
+    },
+    {
+      "id": "scan",
+      "block": "obsidian.read-file",
+      "inputs": {
+        "path": "{{ scans.first }}"
+      }
+    },
+    {
+      "id": "show",
+      "block": "core.send-file",
+      "inputs": {
+        "name": "{{ scan.name }}",
+        "content": "{{ scan.data }}"
+      }
+    },
+    {
+      "id": "read",
+      "block": "claude.ask",
+      "inputs": {
+        "prompt": "This is a scanned document. Its file is called “{{ scan.name }}”, which starts with the day it was scanned. Suggest a short name for the file that says what the document is, such as “Water bill” or “Lease for the flat”, in the language of the document, and give the date of the document.",
+        "files": "{{ scan }}",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "A name for the file, of a few words, without a date, an extension or a slash"
+            },
+            "date": {
+              "type": "string",
+              "description": "The date written on the document, as YYYY-MM-DD. If it has none, the date its file name starts with"
+            }
+          },
+          "required": [
+            "name",
+            "date"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "id": "what",
+      "block": "core.ask-choice",
+      "inputs": {
+        "question": "What should happen to this scan?",
+        "options": [
+          "Name it “{{ read.data.date }} {{ read.data.name | replace('/', '-') }}”",
+          "Another name",
+          "Delete",
+          "Skip for good"
+        ],
+        "cancel": "Not now"
+      }
+    },
+    {
+      "id": "suggested",
+      "block": "core.if",
+      "inputs": {
+        "condition": "{{ what.index == 1 }}"
+      },
+      "steps": [
+        {
+          "id": "rename",
+          "block": "obsidian.move-file",
+          "inputs": {
+            "path": "{{ scans.first }}",
+            "to": "Assets/scans/{{ read.data.date }} {{ read.data.name | replace('/', '-') }}.pdf",
+            "if_exists": "add a number"
+          }
+        },
+        {
+          "id": "renamed",
+          "block": "core.send-message",
+          "inputs": {
+            "message": "It is now {{ rename.path }}."
+          }
+        }
+      ]
+    },
+    {
+      "id": "other",
+      "block": "core.if",
+      "inputs": {
+        "condition": "{{ what.index == 2 }}"
+      },
+      "steps": [
+        {
+          "id": "name",
+          "block": "core.ask-text",
+          "inputs": {
+            "question": "What should it be called? The date {{ read.data.date }} goes in front."
+          }
+        },
+        {
+          "id": "named",
+          "block": "core.continue-if",
+          "inputs": {
+            "condition": "{{ name.answered }}"
+          }
+        },
+        {
+          "id": "rename_as_told",
+          "block": "obsidian.move-file",
+          "inputs": {
+            "path": "{{ scans.first }}",
+            "to": "Assets/scans/{{ read.data.date }} {{ name.answer | replace('/', '-') }}.pdf",
+            "if_exists": "add a number"
+          }
+        },
+        {
+          "id": "renamed_as_told",
+          "block": "core.send-message",
+          "inputs": {
+            "message": "It is now {{ rename_as_told.path }}."
+          }
+        }
+      ]
+    },
+    {
+      "id": "unwanted",
+      "block": "core.if",
+      "inputs": {
+        "condition": "{{ what.index == 3 }}"
+      },
+      "steps": [
+        {
+          "id": "delete",
+          "block": "obsidian.delete-file",
+          "inputs": {
+            "path": "{{ scans.first }}"
+          }
+        },
+        {
+          "id": "deleted",
+          "block": "core.send-message",
+          "inputs": {
+            "message": "Deleted {{ scan.name }}."
+          }
+        }
+      ]
+    },
+    {
+      "id": "skip",
+      "block": "core.if",
+      "inputs": {
+        "condition": "{{ what.index == 4 }}"
+      },
+      "steps": [
+        {
+          "id": "remember",
+          "block": "core.remember",
+          "inputs": {
+            "name": "skipped-scans",
+            "value": "{{ (skipped.value or []) + [scans.first] }}"
+          }
+        }
+      ]
+    }
+  ]
+}

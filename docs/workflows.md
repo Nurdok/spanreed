@@ -233,6 +233,10 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `obsidian.write-file` Write file | action | Obsidian |
 | `obsidian.write-note` Write note | action | Obsidian |
 | `obsidian.append-to-note` Append to note | action | Obsidian |
+| `obsidian.list-files` List files | action | Obsidian |
+| `obsidian.read-file` Read file | action | Obsidian |
+| `obsidian.move-file` Move file | action | Obsidian |
+| `obsidian.delete-file` Delete file | action | Obsidian |
 | `obsidian.stopped-answering` Vault stopped answering | trigger | Obsidian |
 | `health-connect.day-changed` A day's data changed | trigger | Health Connect |
 | `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
@@ -505,6 +509,8 @@ its `size`. A trace shows the size of the data, not the data.
   the run is tried again, if the server does not answer or has an error.
 - `obsidian.write-file` takes a text or the data of a file as its content.
   **If exists**: `skip` leaves a file that is there and sets `skipped`.
+- `obsidian.read-file` gives a file of the vault: see
+  [The files of the vault](#the-files-of-the-vault).
 - `core.send-file` sends a file to the user.
 
 This saves the PDF attachments of an email into the vault, and says for each
@@ -575,6 +581,62 @@ A plugin from before it could:
 
 "Show supported API commands", in Obsidian's command palette, lists what the
 installed plugin knows: `get-daily-note` is the new one.
+
+### The files of the vault
+
+Four steps work on the files that are in the vault already, whatever they
+are: scans, pictures, notes.
+
+- **List files** (`obsidian.list-files`) gives the files of a **Folder**,
+  not of the folders inside it, in the order of their names. **Pattern** is
+  a regular expression that a name has to match somewhere, **Extension**
+  keeps one kind of file, and **Leave out** takes a list of paths that are
+  not listed, such as the ones a workflow remembers as dealt with. It gives
+  `files` (each with `path`, `name`, `stem` and `extension`), `count`, and
+  `first`: the path of the first file, empty if there is none.
+- **Read file** (`obsidian.read-file`) gives the file at a **Path** as a
+  [file](#files): `{{ step.data }}` goes to "Send file" or "Write file",
+  and `{{ step }}` to the **Files** of "Ask Claude".
+- **Move file** (`obsidian.move-file`) gives a file another name, another
+  folder, or both. **If exists** says what happens when there is a file at
+  the new path: `fail`, `skip` (the file stays, and `moved` is no), or
+  `add a number` ("Bill.pdf" becomes "Bill 2.pdf", then "Bill 3.pdf").
+  `path` is where the file is afterwards.
+- **Delete file** (`obsidian.delete-file`) deletes a file for good: it does
+  not go to the trash. A file that is not there is skipped, and `deleted`
+  is no, unless **If missing** is `fail`.
+
+The recipe "Name scans" is made of these. It takes the first scan that has
+no name yet, sends it, lets Claude read it and suggest a name and a date,
+and asks what to do with it:
+
+![The recipe "Name scans" in the editor](images/web-ui-workflow-name-scans-desktop.png)
+
+<img src="images/web-ui-workflow-name-scans-phone.png" alt="The recipe Name scans on a phone" width="390">
+
+"Move file" as the recipe has it, in the editor on a phone:
+
+<img src="images/web-ui-workflow-move-file-phone.png" alt="A Move file step in the editor on a phone" width="390">
+
+```json
+{"id": "skipped", "block": "core.recall", "inputs": {"name": "skipped-scans"}},
+{"id": "scans", "block": "obsidian.list-files",
+ "inputs": {"folder": "Assets/scans", "pattern": "^\\d{4}-\\d{2}-\\d{2} Scan",
+            "extension": "pdf", "leave_out": "{{ skipped.value or [] }}"}},
+{"id": "any", "block": "core.continue-if", "inputs": {"condition": "{{ scans.count > 0 }}"}},
+{"id": "scan", "block": "obsidian.read-file", "inputs": {"path": "{{ scans.first }}"}},
+{"id": "show", "block": "core.send-file",
+ "inputs": {"name": "{{ scan.name }}", "content": "{{ scan.data }}"}},
+{"id": "read", "block": "claude.ask", "inputs": {"prompt": "…", "files": "{{ scan }}", "schema": {"…": "name and date"}}}
+```
+
+Then "Ask for a choice" offers the suggested name, another name, Delete and
+Skip for good, and an "If" for each does it: "Move file" with
+`add a number`, "Delete file", or "Remember" with the list of skipped scans
+and this one added. It is called "Name scans", not "Scan Processing", so
+"Kill time" does not run it until its **Run** list names it. It does the
+work of Timekiller's "Process a scan", which stays as it is; the two keep
+their own lists of skipped scans.
 
 ### Claude
 
