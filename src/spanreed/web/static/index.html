@@ -34,6 +34,9 @@
   header { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
            border-bottom: 1px solid var(--line); background: var(--card); }
   header h1 { font-size: 17px; margin: 0; flex: 1; }
+  /* The name leads to the conversation, from wherever it is clicked. */
+  header h1 a { color: inherit; text-decoration: none; }
+  header h1 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   header .who { color: var(--muted); font-size: 14px; }
   .link { background: none; border: 0; color: var(--accent); padding: 4px; white-space: nowrap; }
   .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 0; }
@@ -393,7 +396,7 @@
 <div class="app">
   <header>
     <button id="drawer-toggle" class="link" aria-label="Commands" aria-expanded="false">☰</button>
-    <h1>Spanreed</h1>
+    <h1><a id="home" href="/app/" title="To the conversation">Spanreed</a></h1>
     <span id="conn" class="conn" hidden>Reconnecting…</span>
     <span id="who" class="who"></span>
     <button id="push-toggle" class="link" hidden></button>
@@ -2251,6 +2254,12 @@ document.addEventListener("touchend", (e) => {
   setDrawer(dx > 0);
 }, { passive: true });
 
+// The name of the app is the way home: to the conversation.
+$("home").onclick = (e) => {
+  e.preventDefault();
+  setDrawer(false);
+  if (view !== "commands") showView("commands");
+};
 $("settings-toggle").onclick = () => { setDrawer(false); showView(view === "settings" ? "commands" : "settings"); };
 $("workflows-toggle").onclick = () => { setDrawer(false); showView(view === "workflows" ? "commands" : "workflows"); };
 $("filter").oninput = renderCommands;
