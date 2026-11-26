@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from spanreed.apis.claude import ClaudePlugin
 from spanreed.apis.audible import AudiblePlugin
 from spanreed.apis.google_books import GoogleBooksPlugin
 from spanreed.apis.obsidian import ObsidianPlugin
@@ -40,6 +41,7 @@ def _real_registry() -> BlockRegistry:
             GoogleBooksPlugin(),
             AudiblePlugin(),
             TimekillerPlugin(),
+            ClaudePlugin(),
         ]
     )
 

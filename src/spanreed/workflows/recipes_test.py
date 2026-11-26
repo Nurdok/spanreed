@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from spanreed.apis.claude import Answer, ClaudePlugin
 from spanreed.apis.todoist import Task
 from spanreed.interaction import commands
 from spanreed.plugin import Plugin
@@ -46,6 +47,7 @@ def _real_registry() -> BlockRegistry:
             GoogleBooksPlugin(),
             AudiblePlugin(),
             TimekillerPlugin(),
+            ClaudePlugin(),
         ]
     )
 
@@ -165,3 +167,124 @@ def test_the_recipe_that_replaces_a_plugin_keeps_the_command_menu_as_it_was() ->
     # Todoist No Overdue had no command, so its recipe ships with the
     # command hidden.
     assert all_recipes()["todoist-no-overdue"].command_hidden
+
+
+SCAN = "Assets/scans/2026-05-02 Scan.pdf"
+SKIPPED_SCAN = "Assets/scans/2026-05-01 Scan.pdf"
+
+
+def _name_scans(
+    mock_bot: AsyncMock, choice: int, typed: str = "", runs: int = 1
+) -> tuple[Any, Any, list[dict[str, Any]]]:
+    """Run "Name scans" by hand, with what the user chooses and types.
+
+    Return the Obsidian mock, the Claude mock and the traces of the runs.
+    """
+    registry = _real_registry()
+    mock_bot.request_user_choice.return_value = choice
+    mock_bot.request_user_input.return_value = typed
+    claude = MagicMock()
+    claude.ask = AsyncMock(
+        return_value=Answer(
+            data={"name": "Water/gas bill", "date": "2026-04-28"},
+            model="claude-opus-5-5",
+        )
+    )
+
+    async def scenario() -> list[dict[str, Any]]:
+        engine = WorkflowEngine(registry)
+        user = mock_user_find_by_id(4)
+        workflow = await engine.install(user, all_recipes()["obsidian-name-scans"])
+        for _ in range(runs):
+            await engine.run_by_hand(workflow.id, user)
+        found = await engine.store.recent_runs(workflow.id, 10)
+        await engine.stop()
+        return list(reversed(found))
+
+    with fake_storage(), patch(
+        "spanreed.apis.obsidian_blocks.ObsidianApi", autospec=True
+    ) as obsidian, patch(
+        "spanreed.apis.claude_blocks.ClaudeApi.for_user", AsyncMock(return_value=claude)
+    ), patch.object(
+        Plugin, "is_registered", async_return_true
+    ), patch(
+        "spanreed.workflows.blocks.UserInteractionApi", new=mock_bot
+    ):
+        obsidian.for_user = AsyncMock(return_value=obsidian)
+        obsidian.list_dir = AsyncMock(
+            return_value=[SKIPPED_SCAN, SCAN, "Assets/scans/2026-04-01 Lease.pdf"]
+        )
+        obsidian.read_binary_file = AsyncMock(return_value=b"%PDF-1.7")
+        obsidian.move_file = AsyncMock()
+        obsidian.delete_file = AsyncMock()
+        return obsidian, claude, asyncio.run(scenario())
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_name_scans_gives_a_scan_the_name_that_claude_suggests(
+    mock_bot: AsyncMock,
+) -> None:
+    obsidian, claude, (run,) = _name_scans(mock_bot, choice=0)
+
+    assert run["status"] == "finished", run
+    obsidian.read_binary_file.assert_awaited_once_with(SKIPPED_SCAN)
+    mock_bot.send_document.assert_awaited_once_with("2026-05-01 Scan.pdf", b"%PDF-1.7")
+    (file,) = claude.ask.await_args.kwargs["files"]
+    assert (file.name, file.type) == ("2026-05-01 Scan.pdf", "application/pdf")
+    assert mock_bot.request_user_choice.await_args.args[1] == [
+        "Name it “2026-04-28 Water-gas bill”",
+        "Another name",
+        "Delete",
+        "Skip for good",
+        "Not now",
+    ]
+    obsidian.move_file.assert_awaited_once_with(
+        SKIPPED_SCAN, "Assets/scans/2026-04-28 Water-gas bill.pdf"
+    )
+    obsidian.delete_file.assert_not_awaited()
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_name_scans_takes_another_name(mock_bot: AsyncMock) -> None:
+    obsidian, _, (run,) = _name_scans(mock_bot, choice=1, typed="Gas bill")
+
+    assert run["status"] == "finished", run
+    obsidian.move_file.assert_awaited_once_with(
+        SKIPPED_SCAN, "Assets/scans/2026-04-28 Gas bill.pdf"
+    )
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_name_scans_deletes_a_scan(mock_bot: AsyncMock) -> None:
+    obsidian, _, (run,) = _name_scans(mock_bot, choice=2)
+
+    assert run["status"] == "finished", run
+    obsidian.delete_file.assert_awaited_once_with(SKIPPED_SCAN)
+    obsidian.move_file.assert_not_awaited()
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_name_scans_does_not_ask_again_about_a_scan_that_was_skipped(
+    mock_bot: AsyncMock,
+) -> None:
+    obsidian, _, runs = _name_scans(mock_bot, choice=3, runs=3)
+
+    assert [run["status"] for run in runs] == ["finished", "finished", "stopped"]
+    assert [c.args[0] for c in obsidian.read_binary_file.await_args_list] == [
+        SKIPPED_SCAN,
+        SCAN,
+    ]
+    obsidian.move_file.assert_not_awaited()
+    obsidian.delete_file.assert_not_awaited()
+
+
+@patch_user_interaction("spanreed.workflows.engine")
+def test_name_scans_leaves_a_scan_for_later(mock_bot: AsyncMock) -> None:
+    obsidian, _, runs = _name_scans(mock_bot, choice=4, runs=2)
+
+    assert [c.args[0] for c in obsidian.read_binary_file.await_args_list] == [
+        SKIPPED_SCAN,
+        SKIPPED_SCAN,
+    ]
+    obsidian.move_file.assert_not_awaited()
+    obsidian.delete_file.assert_not_awaited()

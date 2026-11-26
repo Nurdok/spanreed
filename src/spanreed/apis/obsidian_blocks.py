@@ -8,6 +8,7 @@ tries the run again.
 from __future__ import annotations
 
 import datetime
+import mimetypes
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -20,8 +21,8 @@ from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, StepContext
 from spanreed.workflows.editing import typed_rows
 from spanreed.workflows.values import in_words
-from spanreed.workflows.files import as_bytes
-from spanreed.config_form import described
+from spanreed.workflows.files import File, as_bytes, file_of
+from spanreed.config_form import HELP_KEY, described
 
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -619,6 +620,216 @@ class QueryDataview(Action[QueryDataviewInput, QueryDataviewOutput]):
         return QueryDataviewOutput(rows=rows, count=len(rows))
 
 
+# -- the files of the vault -----------------------------------------------------
+
+
+@dataclass
+class VaultFile:
+    """A file of the vault, by where it is."""
+
+    path: str = described("The path of the file in the vault")
+    name: str = described("The name of the file, with its extension")
+    stem: str = described("The name up to its extension")
+    extension: str = described("The extension with its dot: .pdf. Empty if none")
+
+
+def _vault_file(path: str) -> VaultFile:
+    name = path.rsplit("/", 1)[-1]
+    dot = name.rfind(".")
+    stem, extension = (name[:dot], name[dot:]) if dot > 0 else (name, "")
+    return VaultFile(path=path, name=name, stem=stem, extension=extension)
+
+
+@dataclass
+class ListFilesInput:
+    """Which files of the vault."""
+
+    folder: str = described("The folder to look in, such as Assets/scans")
+    pattern: str = described(
+        "A regular expression that the name of a file has to match somewhere. "
+        "Empty: any name",
+        default="",
+    )
+    extension: str = described(
+        "Only files with this extension, such as pdf. Empty: any",
+        default="",
+    )
+    leave_out: Any = described(
+        "Paths that are not listed: the ones that are dealt with already. "
+        "Empty: none",
+        default=None,
+    )
+
+
+@dataclass
+class ListFilesOutput:
+    """The files that were found, by name."""
+
+    files: list[VaultFile] = described("The files, in the order of their names")
+    count: int = described("How many files there are")
+    first: str = described("The path of the first file. Empty if there is none")
+
+
+class ListFiles(Action[ListFilesInput, ListFilesOutput]):
+    """List the files in a folder of the vault.
+
+    Only the files of the folder itself, not of the folders inside it.
+    """
+
+    id = "obsidian.list-files"
+    title = "List files"
+
+    async def run(self, ctx: StepContext, inputs: ListFilesInput) -> ListFilesOutput:
+        """Return the files of the folder that the inputs ask for."""
+        folder = inputs.folder.strip().strip("/")
+        try:
+            pattern = re.compile(inputs.pattern) if inputs.pattern else None
+        except re.error as e:
+            raise ValueError(
+                f"The pattern “{inputs.pattern}” is no regular expression: {e}."
+            ) from None
+        extension = inputs.extension.strip().lstrip(".").lower()
+        leave_out = inputs.leave_out or []
+        if isinstance(leave_out, str):
+            leave_out = [leave_out]
+        left_out = {str(path) for path in leave_out}
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        found = []
+        for path in sorted(await obsidian.list_dir(folder)):
+            file = _vault_file(path)
+            # The plugin lists what is under the folder, however deep.
+            if path.rsplit("/", 1)[0] != folder and "/" in path:
+                continue
+            if extension and file.extension.lower() != f".{extension}":
+                continue
+            if pattern is not None and pattern.search(file.name) is None:
+                continue
+            if path in left_out:
+                continue
+            found.append(file)
+        return ListFilesOutput(
+            files=found, count=len(found), first=found[0].path if found else ""
+        )
+
+
+@dataclass
+class ReadFileInput:
+    """Which file of the vault."""
+
+    path: str = described("The path of the file in the vault")
+
+
+class ReadFile(Action[ReadFileInput, File]):
+    """Read a file of the vault, for a step that sends it or asks about it.
+
+    The step itself is the file: "Send file" takes ``{{ step.data }}``, and
+    "Ask Claude" takes ``{{ step }}`` as one of its files.
+    """
+
+    id = "obsidian.read-file"
+    title = "Read file"
+
+    async def run(self, ctx: StepContext, inputs: ReadFileInput) -> File:
+        """Return the file, with its name and what is in it."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        data = await obsidian.read_binary_file(inputs.path)
+        name = inputs.path.rsplit("/", 1)[-1]
+        kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        if name.lower().endswith(".md"):
+            kind = "text/markdown"
+        return file_of(name, kind, data)
+
+
+# How many names "add a number" tries before it gives up.
+_NUMBERS_TRIED = 50
+
+
+@dataclass
+class MoveFileInput:
+    """Which file, and where to."""
+
+    path: str = described("The path of the file in the vault")
+    to: str = described("The path it gets: another name, another folder, or both")
+    if_exists: Literal["fail", "skip", "add a number"] = field(
+        default="fail",
+        metadata={
+            HELP_KEY: "What to do if there is a file at the new path. "
+            "add a number: “Bill.pdf” becomes “Bill 2.pdf”"
+        },
+    )
+
+
+@dataclass
+class MoveFileOutput:
+    """Where the file is now."""
+
+    path: str = described("The path of the file now: the old one if it was skipped")
+    moved: bool = described("Whether the file was moved")
+
+
+class MoveFile(Action[MoveFileInput, MoveFileOutput]):
+    """Move a file of the vault, or give it another name."""
+
+    id = "obsidian.move-file"
+    title = "Move file"
+
+    async def run(self, ctx: StepContext, inputs: MoveFileInput) -> MoveFileOutput:
+        """Move the file, and return where it is."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        target = inputs.to
+        dot = target.rfind(".", target.rfind("/") + 1)
+        stem, extension = (target[:dot], target[dot:]) if dot > 0 else (target, "")
+        for number in range(1, _NUMBERS_TRIED + 1):
+            try:
+                await obsidian.move_file(inputs.path, target)
+            except FileExistsError:
+                if inputs.if_exists == "skip":
+                    return MoveFileOutput(path=inputs.path, moved=False)
+                if inputs.if_exists == "fail":
+                    raise FileExistsError(
+                        f"There is a file at {target} already."
+                    ) from None
+                target = f"{stem} {number + 1}{extension}"
+            else:
+                return MoveFileOutput(path=target, moved=True)
+        raise FileExistsError(
+            f"There are files at {inputs.to} and at {_NUMBERS_TRIED} names after it."
+        )
+
+
+@dataclass
+class DeleteFileInput:
+    """Which file of the vault."""
+
+    path: str = described("The path of the file in the vault")
+    if_missing: Literal["skip", "fail"] = "skip"
+
+
+@dataclass
+class DeleteFileOutput:
+    """What happened to the file."""
+
+    deleted: bool = described("Whether the file was deleted. No if it was not there")
+
+
+class DeleteFile(Action[DeleteFileInput, DeleteFileOutput]):
+    """Delete a file of the vault for good. It is not moved to the trash."""
+
+    id = "obsidian.delete-file"
+    title = "Delete file"
+
+    async def run(self, ctx: StepContext, inputs: DeleteFileInput) -> DeleteFileOutput:
+        """Delete the file."""
+        obsidian = await ObsidianApi.for_user(ctx.user)
+        try:
+            await obsidian.delete_file(inputs.path)
+        except FileNotFoundError:
+            if inputs.if_missing == "fail":
+                raise
+            return DeleteFileOutput(deleted=False)
+        return DeleteFileOutput(deleted=True)
+
+
 def obsidian_blocks() -> list[Block]:
     """Return the blocks that the Obsidian plugin publishes."""
     return [
@@ -631,5 +842,9 @@ def obsidian_blocks() -> list[Block]:
         WriteFile(),
         WriteNote(),
         AppendToNote(),
+        ListFiles(),
+        ReadFile(),
+        MoveFile(),
+        DeleteFile(),
         StoppedAnswering(),
     ]

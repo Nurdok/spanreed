@@ -456,5 +456,5 @@ class ObsidianApi:
         await self._send_request("move-file", {"from": from_path, "to": to_path})
 
     async def delete_file(self, filepath: str) -> None:
-        """Delete a file from the vault (moved to trash by the companion plugin)."""
+        """Delete a file from the vault, for good: it is not moved to the trash."""
         await self._send_request("delete-file", {"filepath": filepath})
