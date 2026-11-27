@@ -289,6 +289,7 @@ A step cannot have an id that templates read as something else: `if`, `not`,
 | `obsidian.move-file` Move file | action | Obsidian |
 | `obsidian.delete-file` Delete file | action | Obsidian |
 | `obsidian.stopped-answering` Vault stopped answering | trigger | Obsidian |
+| `obsidian.answering-again` Vault answers again | trigger | Obsidian |
 | `health-connect.day-changed` A day's data changed | trigger | Health Connect |
 | `health-connect.raw-records-changed` Raw records changed | trigger | Health Connect |
 | `withings.new-measurements` New measurements for a day | trigger | Withings |
@@ -960,13 +961,28 @@ kept (see [Spanreed Monitor](#spanreed-monitor)), with its `text`. The
 plugin that runs the engine feeds both, and neither can be started by hand.
 
 `obsidian.stopped-answering` fires when Obsidian's plugin for Spanreed gave
-no sign of life for **After** minutes, and again every **At most every**
-minutes for as long as it stays quiet. It does not fire more often than
-that when Obsidian comes and goes either, or after a restart of Spanreed.
-The plugin says that it runs for as long as Obsidian is open, so the
-trigger fires whenever Obsidian is closed: it is for a vault that is meant
-to be open all the time. The Obsidian connector reads what the plugin says
-(`spanreed/apis/obsidian_watch.py`), for each of its users.
+no sign of life for a while, and `obsidian.answering-again` fires when it
+gives one again. The plugin says that it runs about once a minute for as
+long as Obsidian is open, a little more than a minute apart. So a vault
+counts as quiet when nothing came for two minutes and **After** minutes on
+top: three minutes as the recipes ship.
+
+- "Vault stopped answering" fires once for each time the vault goes quiet,
+  and not again until it has answered, also if Spanreed is started again in
+  between. With **Remind** it fires again every **At most every** minutes
+  for as long as the vault stays quiet. It never fires more often than **At
+  most every** minutes, also when Obsidian comes and goes. It gives
+  `last_seen` and the `minutes` since.
+- "Vault answers again" fires at the first sign of life after such a
+  silence, with `quiet_since` and the `minutes` it lasted. With the same
+  **After** as the other trigger, the two fire in pairs. A vault that went
+  quiet before Spanreed was started again fires when it answers afterwards.
+
+The recipes "Obsidian stopped answering" and "Obsidian is back" send a
+message for each. Obsidian is quiet whenever it is closed, so they are for
+a vault that is meant to be open all the time. The Obsidian connector reads
+what the plugin says (`spanreed/apis/obsidian_watch.py`), for each of its
+users.
 
 ## Commands
 
@@ -1391,6 +1407,9 @@ its user about that itself (see [What the engine does](#what-the-engine-does)).
   since the last heartbeat was never counted. The trigger counts it, so the
   workflow would speak up every time Obsidian is closed. It starts turned
   off, and the user is told that it is there.
+  It speaks up once for each time Obsidian goes quiet, three minutes in,
+  where the plugin was written to repeat itself every half hour: **Remind**
+  on the trigger brings that back.
 
   ![The workflow for a quiet vault, while editing](images/web-ui-workflow-watchdog-edit-desktop.png)
 

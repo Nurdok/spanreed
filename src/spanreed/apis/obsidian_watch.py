@@ -4,8 +4,8 @@ While Obsidian is open, its plugin puts two things in a list in Redis, one
 list for each user: a heartbeat, again and again, and each error it had.
 ``start_reading`` reads the list of a user:
 
-- The time of the last heartbeat is kept, for the trigger "Vault stopped
-  answering".
+- The time of the last heartbeat is kept, for the triggers "Vault stopped
+  answering" and "Vault answers again".
 - An error is reported as one of Spanreed's errors (see
   ``spanreed.errors``), at most one in ``ERROR_PAUSE``. The errors of a
   connection that dropped are left out: the plugin gets over those itself.
@@ -45,7 +45,18 @@ RETRY_S = 60.0
 # The seconds that one wait for the plugin takes, before the next starts.
 WAIT_S = 60
 
+# The plugin sends a heartbeat each time it has waited for a task, which
+# takes a minute, and a little longer on a slow connection. So a vault is
+# quiet only when this much has passed without one: two heartbeats.
+BEAT_SLACK = datetime.timedelta(minutes=2)
+# The seconds between two looks at a vault that is quiet, for its return.
+CHECK_S = 15.0
+
 _FIRED_AT = "fired_at"
+# Set once "Vault stopped answering" fired, until the vault answers again.
+_QUIET = "quiet"
+# Since when the vault is quiet, for "Vault answers again".
+_QUIET_FROM = "quiet_from"
 
 # Indirection so that tests can skip the waits.
 _sleep = asyncio.sleep
@@ -168,12 +179,20 @@ class Patience:
 
     after: int = field(
         default=1,
-        metadata={HELP_KEY: "Minutes without a sign of life from Obsidian"},
+        metadata={
+            HELP_KEY: "Minutes without a sign of life from Obsidian, on top of "
+            "the two that it may take between two signs"
+        },
     )
     at_most_every: int = field(
         default=30,
+        metadata={HELP_KEY: "Minutes before it can fire again"},
+    )
+    remind: bool = field(
+        default=False,
         metadata={
-            HELP_KEY: "Minutes before it fires again, while Obsidian stays quiet"
+            HELP_KEY: "Fire again every “At most every” minutes while Obsidian "
+            "stays quiet. Off: once for each time it goes quiet"
         },
     )
 
@@ -196,14 +215,30 @@ class Silence:
     )
 
 
+def _time(stored: str | None) -> datetime.datetime | None:
+    """Return a time that a trigger kept, or ``None`` if there is none."""
+    if not stored:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(stored)
+    except ValueError:
+        return None
+
+
+def _local(when: datetime.datetime, ctx: TriggerContext) -> str:
+    return when.astimezone(ctx.user.tzinfo).strftime("%Y-%m-%d %H:%M")
+
+
 class StoppedAnswering(Trigger[Patience, Silence]):
     """Fire when Obsidian gave no sign of life for a while.
 
-    Obsidian's plugin for Spanreed says that it runs, again and again,
+    Obsidian's plugin for Spanreed says that it runs, about once a minute,
     while Obsidian is open. The trigger fires when that stops for ``after``
-    minutes, and again every ``at_most_every`` minutes for as long as it
-    stays quiet. It does not fire more often than that either when
-    Obsidian comes and goes.
+    minutes more than two signs may be apart, once for each time the vault
+    goes quiet: not again until it has answered, also if Spanreed is
+    started again in between. With ``remind`` it fires again every
+    ``at_most_every`` minutes for as long as the vault stays quiet. It
+    never fires more often than that, also when Obsidian comes and goes.
 
     Obsidian is quiet whenever it is closed, so this is for a vault that
     is meant to be open all the time.
@@ -218,11 +253,22 @@ class StoppedAnswering(Trigger[Patience, Silence]):
         """Yield an event each time the vault was quiet for long enough."""
         start_reading(ctx.user)
         vault = vault_of(ctx.user.id)
-        after = datetime.timedelta(minutes=params.after)
+        after = BEAT_SLACK + datetime.timedelta(minutes=params.after)
         pause = datetime.timedelta(minutes=params.at_most_every)
         while True:
+            fired_at = _time(await ctx.state.get(_FIRED_AT))
+            quiet = await ctx.state.get(_QUIET) == "1"
+            if quiet and vault.last_seen is not None:
+                if fired_at is None or vault.last_seen > fired_at:
+                    # It has answered since: the next silence is a new one.
+                    await ctx.state.set(_QUIET, "")
+                    quiet = False
+            if quiet and not params.remind:
+                # It was said already. Nothing was heard since Spanreed
+                # started either, if it did: this is the same silence.
+                await _sleep(CHECK_S)
+                continue
             due = vault.quiet_since + after
-            fired_at = await self._fired_at(ctx)
             if fired_at is not None:
                 due = max(due, fired_at + pause)
             wait = (due - _now()).total_seconds()
@@ -234,23 +280,78 @@ class StoppedAnswering(Trigger[Patience, Silence]):
             # Kept before the run, so that a run that fails, and is tried
             # again for an hour, is not followed by the next one at once.
             await ctx.state.set(_FIRED_AT, now.isoformat())
+            await ctx.state.set(_QUIET, "1")
             yield Silence(
                 last_seen=(
-                    vault.last_seen.astimezone(ctx.user.tzinfo).strftime(
-                        "%Y-%m-%d %H:%M"
-                    )
-                    if vault.last_seen is not None
-                    else ""
+                    _local(vault.last_seen, ctx) if vault.last_seen is not None else ""
                 ),
                 minutes=int((now - vault.quiet_since).total_seconds() // 60),
             )
 
-    @staticmethod
-    async def _fired_at(ctx: TriggerContext) -> datetime.datetime | None:
-        stored = await ctx.state.get(_FIRED_AT)
-        if stored is None:
-            return None
-        try:
-            return datetime.datetime.fromisoformat(stored)
-        except ValueError:
-            return None
+
+@dataclass
+class Absence:
+    """How long a vault has to have been quiet for its return to count."""
+
+    after: int = field(
+        default=1,
+        metadata={
+            HELP_KEY: "Only after this many minutes without a sign of life, on "
+            "top of the two that it may take between two signs. The same as "
+            "on “Vault stopped answering” makes the two fire in pairs"
+        },
+    )
+
+    def __post_init__(self) -> None:
+        """Raise ``ValueError`` for a wait that means nothing."""
+        if self.after < 1:
+            raise ValueError("Give 1 minute or more.")
+
+
+@dataclass
+class Return:
+    """The event of ``AnsweringAgain``."""
+
+    quiet_since: str = described(
+        "When Obsidian went quiet, as 2026-05-09 18:30, in your timezone: "
+        "its last sign of life before, or when Spanreed started",
+    )
+    minutes: int = described("The whole minutes that it was quiet")
+
+
+class AnsweringAgain(Trigger[Absence, Return]):
+    """Fire when Obsidian gives a sign of life again after it was quiet.
+
+    It counts as quiet as for "Vault stopped answering": no sign of life
+    for ``after`` minutes more than two signs may be apart. A vault that
+    went quiet before Spanreed was started again, and answers afterwards,
+    fires too.
+    """
+
+    id = "obsidian.answering-again"
+    title = "Vault answers again"
+
+    async def events(
+        self, ctx: TriggerContext, params: Absence
+    ) -> AsyncGenerator[Return, bool | None]:
+        """Yield an event each time the vault answers after a silence."""
+        start_reading(ctx.user)
+        vault = vault_of(ctx.user.id)
+        after = BEAT_SLACK + datetime.timedelta(minutes=params.after)
+        while True:
+            quiet_from = _time(await ctx.state.get(_QUIET_FROM))
+            if quiet_from is None:
+                wait = (vault.quiet_since + after - _now()).total_seconds()
+                if wait > 0:
+                    await _sleep(wait)
+                    continue
+                await ctx.state.set(_QUIET_FROM, vault.quiet_since.isoformat())
+                continue
+            if vault.last_seen is None or vault.last_seen <= quiet_from:
+                await _sleep(CHECK_S)
+                continue
+            await ctx.state.set(_QUIET_FROM, "")
+            yield Return(
+                quiet_since=_local(quiet_from, ctx),
+                minutes=int((vault.last_seen - quiet_from).total_seconds() // 60),
+            )
