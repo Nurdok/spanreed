@@ -219,6 +219,9 @@ def _world() -> Iterator[World]:
         ),
         patch("spanreed.workflows.builtin._now", return_value=NOW),
         patch("spanreed.workflows.asking._now", return_value=NOW),
+        # How long ago something was remembered is counted from the same
+        # moment, not from the day the test runs on.
+        patch("spanreed.workflows.memory._now", return_value=NOW),
         patch("spanreed.plugins.timekiller_blocks._today", return_value=NOW.date()),
         patch("spanreed.plugins.timekiller_blocks.ObsidianApi", autospec=True) as vault,
         patch("spanreed.apis.obsidian_blocks.ObsidianApi", new=vault),

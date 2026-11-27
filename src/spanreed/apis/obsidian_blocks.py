@@ -16,7 +16,7 @@ from typing import Any, Literal
 import yaml
 
 from spanreed.apis.obsidian import ObsidianApi, ObsidianPluginTooOld
-from spanreed.apis.obsidian_watch import StoppedAnswering
+from spanreed.apis.obsidian_watch import AnsweringAgain, StoppedAnswering
 from spanreed.interaction import UserInteractionApi
 from spanreed.workflows.blocks import Action, Block, StepContext
 from spanreed.workflows.editing import typed_rows
@@ -847,4 +847,5 @@ def obsidian_blocks() -> list[Block]:
         MoveFile(),
         DeleteFile(),
         StoppedAnswering(),
+        AnsweringAgain(),
     ]

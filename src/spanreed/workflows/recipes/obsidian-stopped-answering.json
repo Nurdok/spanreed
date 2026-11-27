@@ -1,7 +1,7 @@
 {
   "id": "obsidian-stopped-answering",
   "name": "Obsidian stopped answering",
-  "description": "Tells you when Obsidian gave no sign of life for a minute, and again every half hour while it stays quiet. For a vault that is meant to be open all the time.",
+  "description": "Tells you when Obsidian gave no sign of life for a few minutes: once for each time it goes quiet. For a vault that is meant to be open all the time. “Obsidian is back” tells you when it answers again.",
   "requires": [
     "obsidian"
   ],
@@ -9,7 +9,8 @@
     "block": "obsidian.stopped-answering",
     "params": {
       "after": 1,
-      "at_most_every": 30
+      "at_most_every": 30,
+      "remind": false
     }
   },
   "steps": [

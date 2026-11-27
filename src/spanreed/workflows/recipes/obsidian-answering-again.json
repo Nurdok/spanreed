@@ -1,0 +1,23 @@
+{
+  "id": "obsidian-answering-again",
+  "name": "Obsidian is back",
+  "description": "Tells you when Obsidian answers again after it was quiet, and for how long it was. Goes with “Obsidian stopped answering”.",
+  "requires": [
+    "obsidian"
+  ],
+  "trigger": {
+    "block": "obsidian.answering-again",
+    "params": {
+      "after": 1
+    }
+  },
+  "steps": [
+    {
+      "id": "tell",
+      "block": "core.send-message",
+      "inputs": {
+        "message": "Obsidian is answering again. It was quiet for {{ trigger.minutes }} minutes, since {{ trigger.quiet_since }}."
+      }
+    }
+  ]
+}

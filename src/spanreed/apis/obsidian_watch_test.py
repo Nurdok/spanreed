@@ -12,7 +12,14 @@ import pytest
 
 from spanreed.apis import obsidian_watch
 from spanreed.apis.obsidian import ObsidianPlugin
-from spanreed.apis.obsidian_watch import Patience, Silence, StoppedAnswering
+from spanreed.apis.obsidian_watch import (
+    Absence,
+    AnsweringAgain,
+    Patience,
+    Return,
+    Silence,
+    StoppedAnswering,
+)
 from spanreed.plugin import Plugin
 from spanreed.test_utils import mock_user_find_by_id
 from spanreed.workflows.blocks import BlockRegistry, TriggerContext
@@ -252,84 +259,131 @@ def test_next_gives_nothing_when_the_wait_is_over() -> None:
 # -- Vault stopped answering -------------------------------------------------
 
 
-def test_the_trigger_is_well_formed() -> None:
+def test_the_triggers_are_well_formed() -> None:
     registry = BlockRegistry()
     registry.register(StoppedAnswering(), fake_plugin())
+    registry.register(AnsweringAgain(), fake_plugin())
 
     assert StoppedAnswering.Manual is None
-    assert from_data(Patience, {}) == Patience(after=1, at_most_every=30)
+    assert AnsweringAgain.Manual is None
+    assert from_data(Patience, {}) == Patience(after=1, at_most_every=30, remind=False)
+    assert from_data(Absence, {}) == Absence(after=1)
     for params in ({"after": 0}, {"at_most_every": 0}):
         with pytest.raises(ValueError):
             from_data(Patience, params)
+    with pytest.raises(ValueError):
+        from_data(Absence, {"after": 0})
+
+
+class _GaveUp(Exception):
+    """The trigger waited longer than a test lets it."""
 
 
 async def _events(
     clock: _Clock,
     ctx: TriggerContext,
-    params: Patience,
+    params: Any,
     count: int,
     beats_at: tuple[float, ...] = (),
-) -> list[tuple[float, Silence]]:
-    """Return the first events of the trigger, each with the minute it came at.
+    trigger: Any = None,
+    until: float = 24 * 60,
+) -> list[tuple[float, Any]]:
+    """Return the first events of a trigger, each with the minute it came at.
 
     ``beats_at`` are the minutes, from the start, at which a heartbeat
-    comes.
+    comes. The events are those of "Vault stopped answering" unless
+    another ``trigger`` is given. No event after minute ``until`` is
+    waited for.
     """
     beats = [START + datetime.timedelta(minutes=minutes) for minutes in beats_at]
+    end = START + datetime.timedelta(minutes=until)
 
     async def sleep(seconds: float) -> None:
         # The heartbeats that come while the trigger waits.
-        until = clock.now + datetime.timedelta(seconds=seconds)
-        while beats and beats[0] <= until:
+        wake = clock.now + datetime.timedelta(seconds=seconds)
+        while beats and beats[0] <= wake:
             clock.now = beats.pop(0)
             await obsidian_watch.take(4, BEAT)
-        clock.now = until
+        clock.now = wake
         clock.slept.append(seconds)
+        if clock.now > end:
+            raise _GaveUp()
         await asyncio.sleep(0)
 
     found = []
     with patch("spanreed.apis.obsidian_watch._sleep", sleep), patch(
         "spanreed.apis.obsidian_watch.start_reading"
     ) as start_reading:
-        events = StoppedAnswering().events(ctx, params)
-        async for event in events:
-            found.append(((clock.now - START).total_seconds() / 60, event))
-            if len(found) == count:
-                break
+        events = (trigger or StoppedAnswering()).events(ctx, params)
+        try:
+            async for event in events:
+                found.append(((clock.now - START).total_seconds() / 60, event))
+                if len(found) == count:
+                    break
+        except _GaveUp:
+            pass
         await events.aclose()
     # The trigger sees to it that the list of its user is read.
     start_reading.assert_called_once_with(ctx.user)
     return found
 
 
-def test_it_fires_after_the_quiet_minutes_and_then_at_most_every_so_often(
+def test_it_fires_once_for_a_silence_however_long_it_lasts(clock: _Clock) -> None:
+    found = asyncio.run(_events(clock, _ctx(), Patience(after=2), 3, until=600))
+
+    # Two minutes on top of the two that heartbeats may be apart. No sign
+    # of life since Spanreed started: there is no last time.
+    assert found == [(4, Silence(last_seen="", minutes=4))]
+
+
+def test_it_can_fire_again_and_again_while_the_vault_stays_quiet(
     clock: _Clock,
 ) -> None:
-    found = asyncio.run(_events(clock, _ctx(), Patience(after=2, at_most_every=30), 3))
+    found = asyncio.run(
+        _events(clock, _ctx(), Patience(after=2, at_most_every=30, remind=True), 3)
+    )
 
-    # No sign of life since Spanreed started: there is no last time.
     assert found == [
-        (2, Silence(last_seen="", minutes=2)),
-        (32, Silence(last_seen="", minutes=32)),
-        (62, Silence(last_seen="", minutes=62)),
+        (4, Silence(last_seen="", minutes=4)),
+        (34, Silence(last_seen="", minutes=34)),
+        (64, Silence(last_seen="", minutes=64)),
     ]
 
 
 def test_it_does_not_fire_while_the_heartbeats_come(clock: _Clock) -> None:
-    beats = tuple(minute / 2 for minute in range(1, 241))  # two hours of them
+    # Two hours of them, a little more than a minute apart, as the plugin
+    # sends them.
+    beats = tuple(minute * 1.01 for minute in range(1, 120))
 
     found = asyncio.run(
         _events(
             clock,
             _ctx(timezone="Asia/Jerusalem"),
-            Patience(after=1, at_most_every=30),
+            Patience(after=1),
             1,
             beats_at=beats,
         )
     )
 
-    # A minute after the last one, at 10:00 UTC.
-    assert found == [(121, Silence(last_seen="2026-11-24 12:00", minutes=1))]
+    # Three minutes after the last one, which came at 10:00 UTC.
+    assert [round(minute, 2) for minute, _ in found] == [round(119 * 1.01 + 3, 2)]
+    assert found[0][1] == Silence(last_seen="2026-11-24 12:00", minutes=3)
+
+
+def test_it_fires_again_for_the_next_silence(clock: _Clock) -> None:
+    found = asyncio.run(
+        _events(
+            clock,
+            _ctx(),
+            Patience(after=1, at_most_every=30),
+            2,
+            # Quiet from the start, back at minute 40, and quiet again.
+            beats_at=(40,),
+        )
+    )
+
+    assert [minute for minute, _ in found] == [3, 43]
+    assert found[1][1] == Silence(last_seen="2026-11-24 08:40", minutes=3)
 
 
 def test_a_vault_that_comes_and_goes_does_not_fire_more_often(clock: _Clock) -> None:
@@ -344,13 +398,31 @@ def test_a_vault_that_comes_and_goes_does_not_fire_more_often(clock: _Clock) -> 
         )
     )
 
-    assert [minute for minute, _ in found] == [1, 31]
-    assert found[1][1] == Silence(last_seen="2026-11-24 08:05", minutes=26)
+    assert [minute for minute, _ in found] == [3, 33]
+    assert found[1][1] == Silence(last_seen="2026-11-24 08:05", minutes=28)
+
+
+def test_a_restart_in_a_silence_that_was_told_does_not_fire_again(
+    clock: _Clock,
+) -> None:
+    state = _State()
+    # It fired two hours before Spanreed started again, and nothing was
+    # heard since.
+    state.values["fired_at"] = (START - datetime.timedelta(hours=2)).isoformat()
+    state.values["quiet"] = "1"
+
+    found = asyncio.run(
+        _events(clock, _ctx(state), Patience(), 2, beats_at=(50,), until=600)
+    )
+
+    # Only the silence after the vault answered, at minute 50.
+    assert [minute for minute, _ in found] == [53]
 
 
 def test_a_restart_does_not_fire_again_before_its_time(clock: _Clock) -> None:
     state = _State()
-    # It fired ten minutes before Spanreed started again.
+    # It fired ten minutes before Spanreed started again, for a silence
+    # that is over.
     state.values["fired_at"] = (START - datetime.timedelta(minutes=10)).isoformat()
 
     found = asyncio.run(_events(clock, _ctx(state), Patience(), 1))
@@ -365,4 +437,60 @@ def test_a_time_that_cannot_be_read_is_no_time(clock: _Clock) -> None:
 
     found = asyncio.run(_events(clock, _ctx(state), Patience(), 1))
 
-    assert [minute for minute, _ in found] == [1]
+    assert [minute for minute, _ in found] == [3]
+
+
+# -- the vault answers again ---------------------------------------------------
+
+
+def _returns(
+    clock: _Clock, state: _State | None = None, **how: Any
+) -> list[tuple[float, Return]]:
+    how.setdefault("until", 600)
+    return asyncio.run(
+        _events(
+            clock,
+            _ctx(state, timezone="Asia/Jerusalem"),
+            Absence(after=how.pop("after", 1)),
+            how.pop("count", 5),
+            trigger=AnsweringAgain(),
+            **how,
+        )
+    )
+
+
+def test_it_fires_when_a_quiet_vault_answers(clock: _Clock) -> None:
+    # Up for ten minutes, quiet for fifty, and up again.
+    beats = (*range(1, 11), *range(60, 70))
+
+    found = _returns(clock, beats_at=beats, until=120)
+
+    assert found == [(60, Return(quiet_since="2026-11-24 10:10", minutes=50))]
+
+
+def test_a_vault_that_answers_all_along_did_not_come_back(clock: _Clock) -> None:
+    assert _returns(clock, beats_at=tuple(range(1, 200)), until=180) == []
+
+
+def test_a_gap_shorter_than_the_wait_is_no_return(clock: _Clock) -> None:
+    # Five minutes between two signs, where only more than seven count.
+    assert _returns(clock, after=5, beats_at=(1, 2, 7, 8), until=8.5) == []
+
+
+def test_it_fires_for_each_return(clock: _Clock) -> None:
+    found = _returns(clock, beats_at=(1, 30, 31, 90), until=100)
+
+    assert [(minute, event.minutes) for minute, event in found] == [(30, 29), (90, 59)]
+
+
+def test_a_vault_that_was_quiet_before_a_restart_fires_when_it_answers(
+    clock: _Clock,
+) -> None:
+    state = _State()
+    # Quiet since three hours before Spanreed started again.
+    state.values["quiet_from"] = (START - datetime.timedelta(hours=3)).isoformat()
+
+    found = _returns(clock, state, beats_at=tuple(range(1, 12)), until=10)
+
+    assert found == [(1, Return(quiet_since="2026-11-24 07:00", minutes=181))]
+    assert state.values["quiet_from"] == ""

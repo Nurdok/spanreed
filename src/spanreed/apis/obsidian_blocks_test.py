@@ -92,6 +92,7 @@ def test_the_obsidian_blocks_are_well_formed() -> None:
         "obsidian.move-file",
         "obsidian.delete-file",
         "obsidian.stopped-answering",
+        "obsidian.answering-again",
     ]
 
 

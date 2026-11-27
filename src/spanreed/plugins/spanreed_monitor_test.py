@@ -395,18 +395,18 @@ def test_the_workflow_for_a_quiet_vault_tells_once_it_is_turned_on() -> None:
 
         watchdog.enabled = True
         await world.engine.save(watchdog)
-        await world.until(lambda: len(world.told()) >= 2)
+        await world.until(lambda: len(world.told()) >= 1)
+        # Long enough for the plugin to have said it again, half an hour on.
+        for _ in range(200):
+            await asyncio.sleep(0)
         await world.engine.stop()
 
-        # After a minute without a heartbeat, and again half an hour later.
-        assert world.lines[:2] == [
-            ["send", "Obsidian plugin watchdog timeout.", PLAIN],
-            ["send", "Obsidian plugin watchdog timeout.", PLAIN],
-        ]
+        # Once, three minutes without a heartbeat in: the plugin said it
+        # again every half hour, the workflow not until the vault answered.
+        assert world.lines == [["send", "Obsidian plugin watchdog timeout.", PLAIN]]
         runs = await world.engine.store.recent_runs(watchdog.id, 100)
-        assert [run["trigger"]["outputs"] for run in reversed(runs)][:2] == [
-            {"last_seen": "", "minutes": 1},
-            {"last_seen": "", "minutes": 31},
+        assert [run["trigger"]["outputs"] for run in runs] == [
+            {"last_seen": "", "minutes": 3},
         ]
 
     with (
